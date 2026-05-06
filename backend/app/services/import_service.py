@@ -175,8 +175,48 @@ def import_merchant_rows(db: Session, rows: list[dict[str, Any]], fallback_date:
     return len(rows)
 
 
-def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
+def _normalize_opencart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows or any(isinstance(row.get("products"), list) for row in rows):
+        return rows
+    if not any("product_id" in row or "product_name" in row for row in rows):
+        return rows
+
+    grouped: dict[str, dict[str, Any]] = {}
     for row in rows:
+        order_id = str(row.get("order_id") or row.get("id") or "")
+        if not order_id:
+            continue
+        order = grouped.setdefault(
+            order_id,
+            {
+                **row,
+                "shipping": row.get("shipping") or row.get("shipping_value"),
+                "products": [],
+            },
+        )
+        if row.get("product_id") or row.get("product_name"):
+            order["products"].append(
+                {
+                    "product_id": row.get("product_id"),
+                    "model": row.get("product_model"),
+                    "sku": row.get("product_sku") or row.get("product_model"),
+                    "name": row.get("product_name"),
+                    "manufacturer": row.get("manufacturer") or row.get("brand"),
+                    "brand": row.get("brand") or row.get("manufacturer"),
+                    "category": row.get("category"),
+                    "quantity": row.get("product_quantity"),
+                    "price": row.get("product_price"),
+                    "total": row.get("product_total"),
+                    "mpn": row.get("product_mpn"),
+                    "weight": row.get("product_weight"),
+                }
+            )
+    return list(grouped.values())
+
+
+def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
+    normalized_rows = _normalize_opencart_rows(rows)
+    for row in normalized_rows:
         order_id = str(row.get("order_id") or row.get("id") or "")
         if not order_id:
             continue
@@ -188,7 +228,7 @@ def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
         order.date_added = as_datetime(row.get("date_added"))
         order.order_status = row.get("order_status") or row.get("status")
         order.total = as_decimal(row.get("total"))
-        order.shipping = as_decimal(row.get("shipping"))
+        order.shipping = as_decimal(row.get("shipping") or row.get("shipping_value"))
         order.payment_method = row.get("payment_method")
         order.raw = row
         order.products.clear()
@@ -208,7 +248,7 @@ def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
                 )
             )
     db.commit()
-    return len(rows)
+    return len(normalized_rows)
 
 
 def import_shoply_sales(db: Session, rows: list[dict[str, Any]]) -> int:
