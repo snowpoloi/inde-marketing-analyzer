@@ -3,7 +3,7 @@ import io
 from datetime import date
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import CampaignDailyMetric, GA4DailyMetric, MerchantProductMetric, OpenCartOrder, OpenCartOrderProduct, ShoplySale
@@ -216,15 +216,22 @@ def _normalize_opencart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
     normalized_rows = _normalize_opencart_rows(rows)
+    order_ids = [str(row.get("order_id") or row.get("id") or "") for row in normalized_rows]
+    order_ids = [order_id for order_id in order_ids if order_id]
+    existing_orders = {
+        order.order_id: order
+        for order in db.scalars(select(OpenCartOrder).where(OpenCartOrder.order_id.in_(order_ids))).all()
+    }
     for row in normalized_rows:
         order_id = str(row.get("order_id") or row.get("id") or "")
         if not order_id:
             continue
-        order = db.query(OpenCartOrder).filter(OpenCartOrder.order_id == order_id).one_or_none()
+        order = existing_orders.get(order_id)
         if not order:
             order = OpenCartOrder(order_id=order_id, date_added=as_datetime(row.get("date_added")), raw=row)
             db.add(order)
             db.flush()
+            existing_orders[order_id] = order
         order.date_added = as_datetime(row.get("date_added"))
         order.order_status = row.get("order_status") or row.get("status")
         order.total = as_decimal(row.get("total"))
