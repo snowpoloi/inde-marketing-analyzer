@@ -168,27 +168,29 @@ def attribution_comparison(db: Session, date_from: date, date_to: date) -> dict[
 
 def brand_category_performance(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
     base_filter = func.date(OpenCartOrder.date_added).between(date_from, date_to)
+    brand_expr = func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown")
+    category_expr = func.coalesce(OpenCartOrderProduct.category, "Unknown")
     brand_rows = db.execute(
         select(
-            func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown").label("brand"),
+            brand_expr.label("brand"),
             func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
         .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
         .where(base_filter)
-        .group_by(func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown"))
+        .group_by(brand_expr)
         .order_by(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity).desc())
         .limit(20)
     ).all()
     category_rows = db.execute(
         select(
-            func.coalesce(OpenCartOrderProduct.category, "Unknown").label("category"),
+            category_expr.label("category"),
             func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
         .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
         .where(base_filter)
-        .group_by(func.coalesce(OpenCartOrderProduct.category, "Unknown"))
+        .group_by(category_expr)
         .order_by(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity).desc())
         .limit(20)
     ).all()
@@ -205,13 +207,15 @@ def brand_category_performance(db: Session, date_from: date, date_to: date) -> d
 
 
 def product_profitability_hints(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:
+    brand_expr = func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown")
+    category_expr = func.coalesce(OpenCartOrderProduct.category, "Unknown")
     rows = db.execute(
         select(
             OpenCartOrderProduct.product_id,
             OpenCartOrderProduct.sku,
             OpenCartOrderProduct.name,
-            func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown").label("brand"),
-            func.coalesce(OpenCartOrderProduct.category, "Unknown").label("category"),
+            brand_expr.label("brand"),
+            category_expr.label("category"),
             func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
@@ -221,8 +225,8 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
             OpenCartOrderProduct.product_id,
             OpenCartOrderProduct.sku,
             OpenCartOrderProduct.name,
-            func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown"),
-            func.coalesce(OpenCartOrderProduct.category, "Unknown"),
+            brand_expr,
+            category_expr,
         )
         .order_by(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity).desc())
         .limit(50)
