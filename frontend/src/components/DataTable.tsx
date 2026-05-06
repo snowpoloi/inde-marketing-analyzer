@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export type Column<T> = {
   key: string;
@@ -43,4 +43,3 @@ export function DataTable<T>({ rows, columns, empty }: { rows: T[]; columns: Col
     </div>
   );
 }
-

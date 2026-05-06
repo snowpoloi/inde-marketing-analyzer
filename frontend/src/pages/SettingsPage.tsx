@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Save } from "lucide-react";
-import { api, IntegrationSetting } from "../api/client";
+import { api } from "../api/client";
+import type { IntegrationSetting } from "../api/client";
 
 const placeholders: Record<string, Record<string, unknown>> = {
   meta_ads: {
@@ -104,4 +105,3 @@ export function SettingsPage() {
     </div>
   );
 }
-

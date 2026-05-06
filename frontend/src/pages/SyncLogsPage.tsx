@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Play, Upload } from "lucide-react";
-import { api, SyncRun } from "../api/client";
-import { Column, DataTable } from "../components/DataTable";
+import { api } from "../api/client";
+import { DataTable } from "../components/DataTable";
+import type { SyncRun } from "../api/client";
+import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 
 const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "opencart", "shoply"];

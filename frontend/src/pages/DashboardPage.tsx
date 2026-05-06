@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Banknote, MousePointerClick, ReceiptText, ShoppingCart, TrendingUp } from "lucide-react";
 import { api } from "../api/client";
-import { Column, DataTable } from "../components/DataTable";
+import { DataTable } from "../components/DataTable";
+import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 
