@@ -1,12 +1,20 @@
 import csv
 import io
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import CampaignDailyMetric, GA4DailyMetric, MerchantProductMetric, OpenCartOrder, OpenCartOrderProduct, ShoplySale
+from app.models import (
+    CampaignDailyMetric,
+    GA4DailyMetric,
+    MerchantProductMetric,
+    OpenCartOrder,
+    OpenCartOrderProduct,
+    ProductCatalog,
+    ShoplySale,
+)
 from app.services.parsing import as_date, as_datetime, as_decimal, as_int
 
 
@@ -214,8 +222,102 @@ def _normalize_opencart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(grouped.values())
 
 
+def _lookup_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def import_product_catalog(db: Session, rows: list[dict[str, Any]]) -> int:
+    rows_by_sku = {str(row.get("sku") or "").strip(): row for row in rows if str(row.get("sku") or "").strip()}
+    if not rows_by_sku:
+        return 0
+
+    existing = {
+        product.sku: product
+        for product in db.scalars(select(ProductCatalog).where(ProductCatalog.sku.in_(list(rows_by_sku.keys())))).all()
+    }
+    now = datetime.now(timezone.utc)
+    for sku, row in rows_by_sku.items():
+        product = existing.get(sku)
+        if not product:
+            product = ProductCatalog(sku=sku, name=str(row.get("name") or sku), raw=row)
+            db.add(product)
+            existing[sku] = product
+        product.model = row.get("model")
+        product.product_id = row.get("product_id")
+        product.name = str(row.get("name") or product.name or sku)
+        product.brand = row.get("brand") or row.get("manufacturer")
+        product.manufacturer = row.get("manufacturer") or row.get("brand")
+        product.category = row.get("category")
+        product.category_path = row.get("category_path")
+        product.status = row.get("status")
+        product.quantity = as_int(row.get("quantity"))
+        product.price = as_decimal(row.get("price"))
+        product.link = row.get("link")
+        product.image_url = row.get("image_url")
+        product.raw = row
+        product.last_seen_at = now
+    db.flush()
+    return len(rows_by_sku)
+
+
+def _product_lookup(db: Session) -> dict[str, ProductCatalog]:
+    lookup: dict[str, ProductCatalog] = {}
+    for product in db.scalars(select(ProductCatalog)).all():
+        for value in (
+            product.sku,
+            product.model,
+            product.product_id,
+            (product.raw or {}).get("isbn"),
+            (product.raw or {}).get("upc"),
+            (product.raw or {}).get("ean"),
+            (product.raw or {}).get("jan"),
+        ):
+            key = _lookup_key(value)
+            if key:
+                lookup[key] = product
+    return lookup
+
+
+def _enrich_order_product(product: dict[str, Any], lookup: dict[str, ProductCatalog]) -> dict[str, Any]:
+    catalog = None
+    for value in (
+        product.get("sku"),
+        product.get("model"),
+        product.get("product_id"),
+        product.get("mpn"),
+        product.get("isbn"),
+        product.get("upc"),
+        product.get("ean"),
+        product.get("jan"),
+    ):
+        catalog = lookup.get(_lookup_key(value))
+        if catalog:
+            break
+    if not catalog:
+        return product
+
+    enriched = {**product}
+    enriched["sku"] = enriched.get("sku") or catalog.sku
+    enriched["model"] = enriched.get("model") or catalog.model
+    enriched["product_id"] = enriched.get("product_id") or catalog.product_id
+    enriched["name"] = enriched.get("name") or catalog.name
+    enriched["manufacturer"] = enriched.get("manufacturer") or catalog.manufacturer or catalog.brand
+    enriched["brand"] = enriched.get("brand") or catalog.brand or catalog.manufacturer
+    enriched["category"] = enriched.get("category") or catalog.category
+    enriched["catalog"] = {
+        "sku": catalog.sku,
+        "status": catalog.status,
+        "quantity": catalog.quantity,
+        "price": str(catalog.price),
+        "link": catalog.link,
+        "image_url": catalog.image_url,
+    }
+    return enriched
+
+
 def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
     normalized_rows = _normalize_opencart_rows(rows)
+    catalog_lookup = _product_lookup(db)
     order_ids = [str(row.get("order_id") or row.get("id") or "") for row in normalized_rows]
     order_ids = [order_id for order_id in order_ids if order_id]
     existing_orders = {
@@ -240,6 +342,7 @@ def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
         order.raw = row
         order.products.clear()
         for product in row.get("products", []) or []:
+            product = _enrich_order_product(product, catalog_lookup)
             order.products.append(
                 OpenCartOrderProduct(
                     product_id=str(product.get("product_id") or "") or None,

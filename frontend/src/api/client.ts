@@ -60,6 +60,7 @@ export const api = {
   dashboard: (section: string, dateFrom: string, dateTo: string) =>
     request<{ data: any }>(`/dashboard/${section}?date_from=${dateFrom}&date_to=${dateTo}`),
   integrations: () => request<IntegrationSetting[]>("/settings/integrations"),
+  opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),
   saveIntegration: (provider: string, payload: Pick<IntegrationSetting, "is_enabled" | "config">) =>
     request<IntegrationSetting>(`/settings/integrations/${provider}`, {
       method: "PUT",
@@ -81,4 +82,3 @@ export const api = {
     return request<SyncRun>(path, { method: "POST", body });
   }
 };
-

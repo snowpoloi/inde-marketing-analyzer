@@ -2,10 +2,18 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, false, func, select
 from sqlalchemy.orm import Session
 
-from app.models import CampaignDailyMetric, GA4DailyMetric, MerchantProductMetric, OpenCartOrder, OpenCartOrderProduct
+from app.models import (
+    CampaignDailyMetric,
+    GA4DailyMetric,
+    IntegrationSetting,
+    MerchantProductMetric,
+    OpenCartOrder,
+    OpenCartOrderProduct,
+    ProductCatalog,
+)
 from app.services.parsing import dec_to_float
 
 
@@ -18,6 +26,32 @@ def _ratio(numerator: Decimal | float | int, denominator: Decimal | float | int)
     if denominator_float == 0:
         return 0.0
     return float(numerator or 0) / denominator_float
+
+
+def _configured_sale_statuses(db: Session) -> list[str] | None:
+    integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
+    config = integration.config if integration else {}
+    rules = (config or {}).get("order_status_rules") or []
+    if not rules:
+        return None
+    return [
+        str(rule.get("name") or "").strip().lower()
+        for rule in rules
+        if isinstance(rule, dict)
+        if rule.get("counts_as_sale") and str(rule.get("name") or "").strip()
+    ]
+
+
+def _opencart_sales_filter(db: Session, date_from: date, date_to: date):
+    conditions = [func.date(OpenCartOrder.date_added).between(date_from, date_to)]
+    sale_statuses = _configured_sale_statuses(db)
+    if sale_statuses is not None:
+        if not sale_statuses:
+            conditions.append(false())
+        else:
+            status_expr = func.lower(func.trim(func.coalesce(OpenCartOrder.order_status, "")))
+            conditions.append(status_expr.in_(sale_statuses))
+    return and_(*conditions)
 
 
 def executive_summary(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
@@ -35,7 +69,7 @@ def executive_summary(db: Session, date_from: date, date_to: date) -> dict[str, 
             func.count(OpenCartOrder.id),
             func.coalesce(func.sum(OpenCartOrder.total), 0),
             func.coalesce(func.sum(OpenCartOrder.shipping), 0),
-        ).where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+        ).where(_opencart_sales_filter(db, date_from, date_to))
     ).one()
     ga4_row = db.execute(
         select(
@@ -109,7 +143,7 @@ def opencart_sales(db: Session, date_from: date, date_to: date) -> dict[str, Any
             func.count(OpenCartOrder.id).label("orders"),
             func.coalesce(func.sum(OpenCartOrder.total), 0).label("revenue"),
         )
-        .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+        .where(_opencart_sales_filter(db, date_from, date_to))
         .group_by(func.date(OpenCartOrder.date_added))
         .order_by(func.date(OpenCartOrder.date_added))
     ).all()
@@ -141,7 +175,7 @@ def attribution_comparison(db: Session, date_from: date, date_to: date) -> dict[
         )
     )
     opencart_orders_count = db.scalar(
-        select(func.count(OpenCartOrder.id)).where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+        select(func.count(OpenCartOrder.id)).where(_opencart_sales_filter(db, date_from, date_to))
     )
     actual = int(opencart_orders_count or 0)
 
@@ -167,7 +201,7 @@ def attribution_comparison(db: Session, date_from: date, date_to: date) -> dict[
 
 
 def brand_category_performance(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
-    base_filter = func.date(OpenCartOrder.date_added).between(date_from, date_to)
+    base_filter = _opencart_sales_filter(db, date_from, date_to)
     brand_expr = func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown")
     category_expr = func.coalesce(OpenCartOrderProduct.category, "Unknown")
     brand_rows = db.execute(
@@ -220,7 +254,7 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
         .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
-        .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+        .where(_opencart_sales_filter(db, date_from, date_to))
         .group_by(
             OpenCartOrderProduct.product_id,
             OpenCartOrderProduct.sku,
@@ -267,6 +301,69 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
             }
         )
     return hints
+
+
+def product_performance(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:
+    rows = db.execute(
+        select(
+            OpenCartOrderProduct.product_id,
+            OpenCartOrderProduct.sku,
+            OpenCartOrderProduct.model,
+            OpenCartOrderProduct.name,
+            OpenCartOrderProduct.brand,
+            OpenCartOrderProduct.manufacturer,
+            OpenCartOrderProduct.category,
+            func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
+            func.count(func.distinct(OpenCartOrder.id)).label("orders"),
+            func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
+            func.max(OpenCartOrder.date_added).label("last_sold_at"),
+        )
+        .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
+        .where(_opencart_sales_filter(db, date_from, date_to))
+        .group_by(
+            OpenCartOrderProduct.product_id,
+            OpenCartOrderProduct.sku,
+            OpenCartOrderProduct.model,
+            OpenCartOrderProduct.name,
+            OpenCartOrderProduct.brand,
+            OpenCartOrderProduct.manufacturer,
+            OpenCartOrderProduct.category,
+        )
+        .order_by(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity).desc())
+        .limit(300)
+    ).all()
+
+    catalog_lookup = {
+        product.sku: product
+        for product in db.scalars(select(ProductCatalog)).all()
+        if product.sku
+    }
+    results = []
+    for row in rows:
+        catalog = catalog_lookup.get(row.sku or "")
+        brand = row.brand or row.manufacturer or (catalog.brand if catalog else None) or "Unknown"
+        category = row.category or (catalog.category if catalog else None) or "Unknown"
+        results.append(
+            {
+                "product_id": row.product_id,
+                "sku": row.sku,
+                "model": row.model,
+                "name": row.name,
+                "brand": brand,
+                "category": category,
+                "quantity": int(row.quantity or 0),
+                "orders": int(row.orders or 0),
+                "revenue": dec_to_float(row.revenue),
+                "average_unit_price": _ratio(row.revenue, row.quantity),
+                "last_sold_at": row.last_sold_at.isoformat() if row.last_sold_at else None,
+                "catalog_status": catalog.status if catalog else None,
+                "catalog_quantity": catalog.quantity if catalog else None,
+                "catalog_price": dec_to_float(catalog.price) if catalog else None,
+                "image_url": catalog.image_url if catalog else None,
+                "link": catalog.link if catalog else None,
+            }
+        )
+    return results
 
 
 def campaign_recommendations(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:

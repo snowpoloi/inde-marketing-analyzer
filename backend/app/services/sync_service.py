@@ -18,6 +18,7 @@ from app.services.import_service import (
     import_merchant_rows,
     import_meta_ads_rows,
     import_opencart_orders,
+    import_product_catalog,
     import_shoply_sales,
 )
 
@@ -80,7 +81,20 @@ def run_provider_sync(
     try:
         config = integration.config or {}
         if provider == "opencart":
-            rows = OpenCartConnector(config).fetch_orders(date_from, date_to)
+            connector = OpenCartConnector(config)
+            product_count = 0
+            product_feed_error = None
+            try:
+                product_rows = connector.fetch_product_catalog()
+            except Exception as exc:
+                product_rows = []
+                product_feed_error = str(exc)
+            rows = connector.fetch_orders(date_from, date_to)
+            try:
+                product_count = import_product_catalog(db, product_rows)
+            except Exception as exc:
+                db.rollback()
+                product_feed_error = str(exc)
             count = import_opencart_orders(db, rows)
         elif provider == "meta_ads":
             rows = MetaAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
@@ -99,7 +113,12 @@ def run_provider_sync(
             count = import_shoply_sales(db, rows)
         else:
             count = 0
-        return finish_run(db, run, "success", count)
+        meta = None
+        if provider == "opencart":
+            meta = {"product_catalog_records": product_count}
+            if product_feed_error:
+                meta["product_feed_error"] = product_feed_error
+        return finish_run(db, run, "success", count, meta=meta)
     except Exception as exc:
         db.rollback()
         run = db.get(SyncRun, run.id)
@@ -109,4 +128,3 @@ def run_provider_sync(
 def run_many(db: Session, providers: list[str] | None, date_from: date | None, date_to: date | None, sync_type: str = "manual") -> list[SyncRun]:
     selected = providers or list(PROVIDERS.keys())
     return [run_provider_sync(db, provider, date_from, date_to, sync_type=sync_type) for provider in selected]
-

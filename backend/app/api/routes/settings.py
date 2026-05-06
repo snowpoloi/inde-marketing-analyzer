@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
 from app.db.session import get_db
-from app.models import IntegrationSetting, User
+from app.models import IntegrationSetting, OpenCartOrder, User
 from app.schemas.settings import IntegrationSettingResponse, IntegrationSettingUpdate
 from app.services.constants import PROVIDERS
 from app.services.seed import ensure_default_integrations
@@ -51,3 +51,13 @@ def update_integration(
         config=integration.config or {},
     )
 
+
+@router.get("/opencart/order-statuses", response_model=list[str])
+def list_opencart_order_statuses(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    statuses = db.scalars(
+        select(OpenCartOrder.order_status)
+        .where(OpenCartOrder.order_status.is_not(None), OpenCartOrder.order_status != "")
+        .distinct()
+        .order_by(OpenCartOrder.order_status)
+    ).all()
+    return [status for status in statuses if status]

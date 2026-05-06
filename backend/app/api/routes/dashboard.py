@@ -14,6 +14,7 @@ from app.services.dashboard_service import (
     executive_summary,
     opencart_sales,
     product_profitability_hints,
+    product_performance,
     source_performance,
 )
 
@@ -73,3 +74,8 @@ def product_profitability(date_from: date | None = None, date_to: date | None = 
     start, end = _window(date_from, date_to)
     return DashboardResponse(data={"rows": product_profitability_hints(db, start, end)})
 
+
+@router.get("/products", response_model=DashboardResponse)
+def products(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _window(date_from, date_to)
+    return DashboardResponse(data={"rows": product_performance(db, start, end)})

@@ -112,10 +112,22 @@ MVP supports a scheduled CSV export URL.
 
 ```json
 {
-  "endpoint_url": "https://inde.gr/index.php?route=api/marketing_analyzer/orders",
-  "api_key": "optional-token"
+  "endpoint_url": "https://inde.gr/shopor/an.json",
+  "product_feed_url": "https://inde.gr/index.php?route=feed/universal_feed&feed=findbar.xml",
+  "api_key": "optional-token",
+  "timeout_seconds": 60,
+  "order_status_rules": [
+    { "name": "Complete", "counts_as_sale": true },
+    { "name": "Replacement", "counts_as_sale": false },
+    { "name": "Cancelled", "counts_as_sale": false }
+  ]
 }
 ```
+
+When `order_status_rules` is empty, all OpenCart orders count as sales. Once rules exist, only checked statuses are used
+for daily revenue, actual orders, attribution comparison, brand/category performance, and product reports. Re-running the
+OpenCart sync updates existing orders, including status changes, so later cancellations or returns are reflected in the
+dashboard.
 
 ### Shoply
 
@@ -177,6 +189,7 @@ Auth:
 Settings:
 
 - `GET /api/settings/integrations`
+- `GET /api/settings/opencart/order-statuses`
 - `PUT /api/settings/integrations/{provider}`
 
 Sync:
@@ -199,6 +212,7 @@ Dashboard:
 - `GET /api/dashboard/recommendations`
 - `GET /api/dashboard/brand-category`
 - `GET /api/dashboard/product-profitability`
+- `GET /api/dashboard/products`
 
 All dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`.
 
@@ -247,6 +261,7 @@ Initial Alembic migration creates:
 - `merchant_product_metrics`
 - `opencart_orders`
 - `opencart_order_products`
+- `product_catalog`
 - `shoply_sales`
 - `campaign_recommendations`
 

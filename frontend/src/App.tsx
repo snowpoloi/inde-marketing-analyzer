@@ -3,14 +3,15 @@ import { api, clearToken } from "./api/client";
 import { Layout } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ProductsPage } from "./pages/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SyncLogsPage } from "./pages/SyncLogsPage";
 
-type View = "dashboard" | "settings" | "sync";
+type View = "dashboard" | "products" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "");
-  if (hash === "settings" || hash === "sync") {
+  if (hash === "products" || hash === "settings" || hash === "sync") {
     return hash;
   }
   return "dashboard";
@@ -49,9 +50,9 @@ export function App() {
       }}
     >
       {view === "dashboard" ? <DashboardPage /> : null}
+      {view === "products" ? <ProductsPage /> : null}
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}
     </Layout>
   );
 }
-

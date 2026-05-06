@@ -176,6 +176,40 @@ textarea {
   font-weight: 700;
 }
 
+.secondary-action,
+.icon-button {
+  border: 1px solid #d5d7d2;
+  background: #ffffff;
+  color: #222525;
+  border-radius: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.secondary-action:hover,
+.icon-button:hover {
+  background: #eef2ef;
+}
+
+.secondary-action.compact {
+  height: 38px;
+  width: max-content;
+}
+
+.icon-button {
+  width: 40px;
+  padding: 0;
+}
+
+.icon-button.danger {
+  color: #a13228;
+}
+
 .primary-action:hover {
   background: #115642;
 }
@@ -247,6 +281,10 @@ textarea {
   gap: 14px;
   align-items: flex-start;
   margin-bottom: 14px;
+}
+
+.panel-title.tight {
+  margin-bottom: 8px;
 }
 
 .two-column {
@@ -369,6 +407,98 @@ tr:last-child td {
   gap: 12px;
 }
 
+.opencart-controls {
+  display: grid;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #e1e6e1;
+  border-radius: 8px;
+  background: #f8faf8;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3f4641;
+}
+
+.status-rules,
+.status-rule-list {
+  display: grid;
+  gap: 10px;
+}
+
+.status-rule-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 160px 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #3f4641;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.checkbox-label input {
+  width: 16px;
+  height: 16px;
+}
+
+.helper-text {
+  color: #66706a;
+  font-size: 13px;
+}
+
+.detected-statuses {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.detected-statuses > span {
+  color: #66706a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.detected-statuses > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-chip {
+  border: 1px solid #d5d7d2;
+  background: #ffffff;
+  color: #222525;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-chip:hover {
+  background: #eef2ef;
+}
+
 .switch {
   position: relative;
   display: inline-block;
@@ -470,6 +600,43 @@ tr:last-child td {
   text-align: right;
 }
 
+.product-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 340px;
+}
+
+.product-cell img,
+.product-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  border: 1px solid #e1e6e1;
+  background: #eef2ef;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.product-cell span,
+.feed-status span {
+  display: block;
+  margin-top: 4px;
+  color: #66706a;
+  font-size: 12px;
+}
+
+.feed-status {
+  display: grid;
+  gap: 4px;
+}
+
+.icon-link {
+  color: #166b57;
+  display: inline-grid;
+  place-items: center;
+}
+
 .empty-state {
   display: flex;
   justify-content: center;
@@ -548,7 +715,7 @@ tr:last-child td {
   }
 
   .sidebar nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .sidebar button {
@@ -588,5 +755,10 @@ tr:last-child td {
 
   .bar-row strong {
     text-align: left;
+  }
+
+  .form-grid,
+  .status-rule-row {
+    grid-template-columns: 1fr;
   }
 }

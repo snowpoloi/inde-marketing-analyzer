@@ -7,6 +7,7 @@ from app.models.entities import (
     MerchantProductMetric,
     OpenCartOrder,
     OpenCartOrderProduct,
+    ProductCatalog,
     ShoplySale,
     SyncRun,
     User,
@@ -21,8 +22,8 @@ __all__ = [
     "MerchantProductMetric",
     "OpenCartOrder",
     "OpenCartOrderProduct",
+    "ProductCatalog",
     "ShoplySale",
     "SyncRun",
     "User",
 ]
-
