@@ -129,14 +129,55 @@ class OpenCartOrder(TimestampMixin, Base):
     id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     order_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     date_added: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    date_modified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    order_status_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     order_status: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    store_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    store_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    customer_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    customer_group_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    customer_group: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    sub_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    tax: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
     shipping: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
     payment_method: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_code: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    shipping_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    shipping_method: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    shipping_code: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    tracking_carrier: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    payment_country: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_zone: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_city: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    payment_postcode: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    shipping_country: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    shipping_zone: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    shipping_city: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    shipping_postcode: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    currency_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     products: Mapped[list["OpenCartOrderProduct"]] = relationship(
         back_populates="order", cascade="all, delete-orphan", passive_deletes=True
     )
+    changes: Mapped[list["OpenCartOrderChange"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class OpenCartOrderChange(TimestampMixin, Base):
+    __tablename__ = "opencart_order_changes"
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    order_pk: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("opencart_orders.id", ondelete="CASCADE"))
+    order_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    field_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    order: Mapped[OpenCartOrder] = relationship(back_populates="changes")
 
 
 class OpenCartOrderProduct(TimestampMixin, Base):

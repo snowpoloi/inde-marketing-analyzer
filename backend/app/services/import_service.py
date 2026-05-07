@@ -1,6 +1,7 @@
 import csv
 import io
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -11,6 +12,7 @@ from app.models import (
     GA4DailyMetric,
     MerchantProductMetric,
     OpenCartOrder,
+    OpenCartOrderChange,
     OpenCartOrderProduct,
     ProductCatalog,
     ShoplySale,
@@ -226,6 +228,93 @@ def _lookup_key(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _datetime_or_none(value: Any):
+    if value is None or value == "":
+        return None
+    return as_datetime(value)
+
+
+def _change_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _values_differ(old_value: Any, new_value: Any) -> bool:
+    if isinstance(old_value, Decimal) or isinstance(new_value, Decimal):
+        return as_decimal(old_value) != as_decimal(new_value)
+    return _change_text(old_value) != _change_text(new_value)
+
+
+def _set_order_field(
+    db: Session,
+    order: OpenCartOrder,
+    field_name: str,
+    new_value: Any,
+    source_modified_at: datetime | None,
+    raw: dict[str, Any],
+    *,
+    record_change: bool = True,
+) -> None:
+    old_value = getattr(order, field_name)
+    if _values_differ(old_value, new_value):
+        if record_change:
+            db.add(
+                OpenCartOrderChange(
+                    order_pk=order.id,
+                    order_id=order.order_id,
+                    field_name=field_name,
+                    old_value=_change_text(old_value),
+                    new_value=_change_text(new_value),
+                    source_modified_at=source_modified_at,
+                    raw=raw,
+                )
+            )
+        setattr(order, field_name, new_value)
+
+
+def _order_values(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date_added": as_datetime(row.get("date_added")),
+        "date_modified": _datetime_or_none(row.get("date_modified")),
+        "order_status_id": _text_or_none(row.get("order_status_id")),
+        "order_status": _text_or_none(row.get("order_status") or row.get("status")),
+        "store_id": _text_or_none(row.get("store_id")),
+        "store_name": _text_or_none(row.get("store_name")),
+        "customer_id": _text_or_none(row.get("customer_id")),
+        "customer_group_id": _text_or_none(row.get("customer_group_id")),
+        "customer_group": _text_or_none(row.get("customer_group")),
+        "sub_total": as_decimal(row.get("sub_total_value") or row.get("sub_total")),
+        "tax": as_decimal(row.get("tax_value") or row.get("tax")),
+        "total": as_decimal(row.get("total") or row.get("total_value") or row.get("total_in_order_currency")),
+        "shipping": as_decimal(row.get("shipping") or row.get("shipping_value")),
+        "payment_method": _text_or_none(row.get("payment_method")),
+        "payment_code": _text_or_none(row.get("payment_code")),
+        "shipping_title": _text_or_none(row.get("shipping_title")),
+        "shipping_method": _text_or_none(row.get("shipping_method")),
+        "shipping_code": _text_or_none(row.get("shipping_code")),
+        "tracking_carrier": _text_or_none(row.get("tracking_carrier")),
+        "payment_country": _text_or_none(row.get("payment_country")),
+        "payment_zone": _text_or_none(row.get("payment_zone")),
+        "payment_city": _text_or_none(row.get("payment_city")),
+        "payment_postcode": _text_or_none(row.get("payment_postcode")),
+        "shipping_country": _text_or_none(row.get("shipping_country")),
+        "shipping_zone": _text_or_none(row.get("shipping_zone")),
+        "shipping_city": _text_or_none(row.get("shipping_city")),
+        "shipping_postcode": _text_or_none(row.get("shipping_postcode")),
+        "currency_code": _text_or_none(row.get("currency_code")),
+    }
+
+
 def import_product_catalog(db: Session, rows: list[dict[str, Any]]) -> int:
     rows_by_sku = {str(row.get("sku") or "").strip(): row for row in rows if str(row.get("sku") or "").strip()}
     if not rows_by_sku:
@@ -328,17 +417,18 @@ def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
         order_id = str(row.get("order_id") or row.get("id") or "")
         if not order_id:
             continue
+        order_values = _order_values(row)
+        source_modified_at = order_values["date_modified"]
         order = existing_orders.get(order_id)
+        is_new = False
         if not order:
-            order = OpenCartOrder(order_id=order_id, date_added=as_datetime(row.get("date_added")), raw=row)
+            order = OpenCartOrder(order_id=order_id, date_added=order_values["date_added"], raw=row)
             db.add(order)
             db.flush()
             existing_orders[order_id] = order
-        order.date_added = as_datetime(row.get("date_added"))
-        order.order_status = row.get("order_status") or row.get("status")
-        order.total = as_decimal(row.get("total"))
-        order.shipping = as_decimal(row.get("shipping") or row.get("shipping_value"))
-        order.payment_method = row.get("payment_method")
+            is_new = True
+        for field_name, new_value in order_values.items():
+            _set_order_field(db, order, field_name, new_value, source_modified_at, row, record_change=not is_new)
         order.raw = row
         order.products.clear()
         for product in row.get("products", []) or []:

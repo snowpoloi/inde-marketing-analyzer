@@ -129,6 +129,12 @@ for daily revenue, actual orders, attribution comparison, brand/category perform
 OpenCart sync updates existing orders, including status changes, so later cancellations or returns are reflected in the
 dashboard.
 
+OpenCart sync stores the latest order snapshot and product lines, plus structured analytics fields for future reports:
+order status/id, date modified, store, customer group/id, payment method/code, shipping title/method/code, tracking
+carrier, shipping/payment country/zone/city/postcode, subtotal, tax, shipping, total, and currency. Meaningful changes
+are also written to `opencart_order_changes` with old/new values, so status changes, cancellations, returns,
+shipping/payment updates, and amount corrections remain auditable over time.
+
 ### Shoply
 
 ```json
@@ -261,6 +267,7 @@ Initial Alembic migration creates:
 - `ga4_daily_metrics`
 - `merchant_product_metrics`
 - `opencart_orders`
+- `opencart_order_changes`
 - `opencart_order_products`
 - `product_catalog`
 - `shoply_sales`
