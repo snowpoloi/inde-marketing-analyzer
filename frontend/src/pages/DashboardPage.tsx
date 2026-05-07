@@ -223,6 +223,8 @@ export function DashboardPage() {
             { key: "name", header: "Product", render: (row) => <strong>{row.name}</strong> },
             { key: "sku", header: "SKU", render: (row) => row.sku || row.product_id || "-" },
             { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
+            { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders ?? 0) },
+            { key: "qpo", header: "Qty/order", align: "right", render: (row) => number.format(row.average_quantity_per_order ?? 0) },
             { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
             { key: "hint", header: "Hint", render: (row) => <StatusBadge value={row.hint} /> },
             { key: "reason", header: "Reason", render: (row) => row.reason }

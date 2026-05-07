@@ -220,6 +220,7 @@ def brand_category_performance(db: Session, date_from: date, date_to: date) -> d
         select(
             category_expr.label("category"),
             func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
+            func.count(func.distinct(OpenCartOrder.id)).label("orders"),
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
         .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
@@ -276,14 +277,19 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
     hints = []
     for row in rows:
         merchant = merchant_by_item.get(row.sku or "") or merchant_by_item.get(row.product_id or "")
+        order_count = int(row.orders or 0)
+        average_quantity_per_order = _ratio(row.quantity, order_count)
         action = "monitor"
         reason = "Sales exist; add margin/COGS to turn this into net profit."
         if merchant and merchant.availability and merchant.availability.lower() not in {"in stock", "in_stock"}:
             action = "investigate product/feed"
             reason = f"OpenCart has sales, but Merchant availability is {merchant.availability}."
-        elif row.quantity >= 5 and row.revenue > 0:
+        elif order_count <= 1 and row.quantity >= 5:
+            action = "monitor"
+            reason = "Bulk quantity from one order; wait for more distinct orders before treating it as strong demand."
+        elif order_count >= 3 and row.quantity >= 5 and row.revenue > 0:
             action = "scale"
-            reason = "Strong sales volume in OpenCart; consider pushing only if margin is healthy."
+            reason = "Sales came from multiple orders; stronger demand signal than a single bulk purchase."
         elif row.quantity <= 1:
             action = "reduce"
             reason = "Low sales volume; review margin, feed quality, price, and campaign match."
@@ -295,6 +301,8 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
                 "brand": row.brand,
                 "category": row.category,
                 "quantity": int(row.quantity or 0),
+                "orders": order_count,
+                "average_quantity_per_order": average_quantity_per_order,
                 "revenue": dec_to_float(row.revenue),
                 "hint": action,
                 "reason": reason,
@@ -355,6 +363,7 @@ def product_performance(db: Session, date_from: date, date_to: date) -> list[dic
                 "orders": int(row.orders or 0),
                 "revenue": dec_to_float(row.revenue),
                 "average_unit_price": _ratio(row.revenue, row.quantity),
+                "average_quantity_per_order": _ratio(row.quantity, row.orders),
                 "last_sold_at": row.last_sold_at.isoformat() if row.last_sold_at else None,
                 "catalog_status": catalog.status if catalog else None,
                 "catalog_quantity": catalog.quantity if catalog else None,

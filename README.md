@@ -235,6 +235,7 @@ date,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressio
 ## Reporting Logic
 
 - OpenCart is the source of truth for actual orders and revenue.
+- Product analysis separates item quantity from distinct order count, so one bulk order is not treated as strongly as the same quantity spread across many orders.
 - Meta, Google Ads, and GA4 are attribution sources.
 - Reconciliation compares:
   - Meta purchases

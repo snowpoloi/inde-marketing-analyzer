@@ -25,6 +25,7 @@ type ProductRow = {
   orders: number;
   revenue: number;
   average_unit_price: number;
+  average_quantity_per_order: number;
   last_sold_at: string | null;
   catalog_status: string | null;
   catalog_quantity: number | null;
@@ -77,6 +78,7 @@ export function ProductsPage() {
       { key: "category", header: "Category", render: (row) => row.category },
       { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
       { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders) },
+      { key: "qpo", header: "Qty/order", align: "right", render: (row) => number.format(row.average_quantity_per_order) },
       { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
       { key: "avg", header: "Avg.", align: "right", render: (row) => currency.format(row.average_unit_price) },
       {
