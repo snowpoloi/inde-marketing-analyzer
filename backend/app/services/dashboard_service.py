@@ -252,6 +252,7 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
             brand_expr.label("brand"),
             category_expr.label("category"),
             func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
+            func.count(func.distinct(OpenCartOrder.id)).label("orders"),
             func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
         )
         .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
