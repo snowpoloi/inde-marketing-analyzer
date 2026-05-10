@@ -321,6 +321,38 @@ th {
   text-transform: uppercase;
 }
 
+.sortable-header {
+  width: 100%;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-weight: 800;
+  text-transform: inherit;
+}
+
+.sortable-header.align-right {
+  justify-content: flex-end;
+}
+
+.sortable-header.align-center {
+  justify-content: center;
+}
+
+.sortable-header svg {
+  color: #66706a;
+  flex: 0 0 auto;
+}
+
+.sortable-header:hover {
+  color: #166b57;
+}
+
 tr:last-child td {
   border-bottom: 0;
 }

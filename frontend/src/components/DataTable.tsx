@@ -1,10 +1,14 @@
 import type { ReactNode } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 export type Column<T> = {
   key: string;
   header: string;
   render: (row: T) => ReactNode;
   align?: "left" | "right" | "center";
+  sortable?: boolean;
+  sortDirection?: "asc" | "desc" | null;
+  onSort?: () => void;
 };
 
 export function DataTable<T>({ rows, columns, empty }: { rows: T[]; columns: Column<T>[]; empty: string }) {
@@ -15,7 +19,25 @@ export function DataTable<T>({ rows, columns, empty }: { rows: T[]; columns: Col
           <tr>
             {columns.map((column) => (
               <th key={column.key} className={column.align ? `align-${column.align}` : undefined}>
-                {column.header}
+                {column.sortable ? (
+                  <button
+                    type="button"
+                    className={`sortable-header ${column.align ? `align-${column.align}` : ""}`}
+                    onClick={column.onSort}
+                    aria-label={`Sort by ${column.header}`}
+                  >
+                    <span>{column.header}</span>
+                    {column.sortDirection === "asc" ? (
+                      <ArrowUp size={13} />
+                    ) : column.sortDirection === "desc" ? (
+                      <ArrowDown size={13} />
+                    ) : (
+                      <ArrowUpDown size={13} />
+                    )}
+                  </button>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
           </tr>

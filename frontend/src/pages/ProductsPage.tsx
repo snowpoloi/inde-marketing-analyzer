@@ -34,11 +34,41 @@ type ProductRow = {
   link: string | null;
 };
 
+type SortDirection = "asc" | "desc";
+type SortKey =
+  | "product"
+  | "brand"
+  | "category"
+  | "quantity"
+  | "orders"
+  | "average_quantity_per_order"
+  | "revenue"
+  | "average_unit_price"
+  | "feed";
+
+type SortState = {
+  key: SortKey;
+  direction: SortDirection;
+};
+
+function textValue(value: string | null | undefined) {
+  return value?.trim() || "";
+}
+
+function compareText(a: string | null | undefined, b: string | null | undefined) {
+  return textValue(a).localeCompare(textValue(b), "el", { sensitivity: "base", numeric: true });
+}
+
+function compareNumber(a: number | null | undefined, b: number | null | undefined) {
+  return (a ?? 0) - (b ?? 0);
+}
+
 export function ProductsPage() {
   const today = isoDate();
   const [dateTo, setDateTo] = useState(today);
   const [dateFrom, setDateFrom] = useState(isoDate(-30));
   const [rows, setRows] = useState<ProductRow[]>([]);
+  const [sort, setSort] = useState<SortState>({ key: "revenue", direction: "desc" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -55,15 +85,65 @@ export function ProductsPage() {
     }
   }
 
+  function toggleSort(key: SortKey) {
+    setSort((current) =>
+      current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: "desc" }
+    );
+  }
+
   useEffect(() => {
     load();
   }, []);
+
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      let result = 0;
+      switch (sort.key) {
+        case "product":
+          result = compareText(a.name, b.name);
+          break;
+        case "brand":
+          result = compareText(a.brand, b.brand);
+          break;
+        case "category":
+          result = compareText(a.category, b.category);
+          break;
+        case "quantity":
+          result = compareNumber(a.quantity, b.quantity);
+          break;
+        case "orders":
+          result = compareNumber(a.orders, b.orders);
+          break;
+        case "average_quantity_per_order":
+          result = compareNumber(a.average_quantity_per_order, b.average_quantity_per_order);
+          break;
+        case "revenue":
+          result = compareNumber(a.revenue, b.revenue);
+          break;
+        case "average_unit_price":
+          result = compareNumber(a.average_unit_price, b.average_unit_price);
+          break;
+        case "feed":
+          result =
+            compareText(a.catalog_status, b.catalog_status) ||
+            compareNumber(a.catalog_quantity, b.catalog_quantity) ||
+            compareText(a.name, b.name);
+          break;
+      }
+      return sort.direction === "asc" ? result : -result;
+    });
+  }, [rows, sort]);
+
+  const sortDirection = (key: SortKey) => (sort.key === key ? sort.direction : null);
 
   const columns: Column<ProductRow>[] = useMemo(
     () => [
       {
         key: "product",
         header: "Product",
+        sortable: true,
+        sortDirection: sortDirection("product"),
+        onSort: () => toggleSort("product"),
         render: (row) => (
           <div className="product-cell">
             {row.image_url ? <img src={row.image_url} alt="" loading="lazy" /> : <span className="product-thumb" />}
@@ -74,16 +154,73 @@ export function ProductsPage() {
           </div>
         )
       },
-      { key: "brand", header: "Brand", render: (row) => row.brand },
-      { key: "category", header: "Category", render: (row) => row.category },
-      { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
-      { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders) },
-      { key: "qpo", header: "Qty/order", align: "right", render: (row) => number.format(row.average_quantity_per_order) },
-      { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
-      { key: "avg", header: "Avg.", align: "right", render: (row) => currency.format(row.average_unit_price) },
+      {
+        key: "brand",
+        header: "Brand",
+        sortable: true,
+        sortDirection: sortDirection("brand"),
+        onSort: () => toggleSort("brand"),
+        render: (row) => row.brand
+      },
+      {
+        key: "category",
+        header: "Category",
+        sortable: true,
+        sortDirection: sortDirection("category"),
+        onSort: () => toggleSort("category"),
+        render: (row) => row.category
+      },
+      {
+        key: "qty",
+        header: "Qty",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("quantity"),
+        onSort: () => toggleSort("quantity"),
+        render: (row) => number.format(row.quantity)
+      },
+      {
+        key: "orders",
+        header: "Orders",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("orders"),
+        onSort: () => toggleSort("orders"),
+        render: (row) => number.format(row.orders)
+      },
+      {
+        key: "qpo",
+        header: "Qty/order",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("average_quantity_per_order"),
+        onSort: () => toggleSort("average_quantity_per_order"),
+        render: (row) => number.format(row.average_quantity_per_order)
+      },
+      {
+        key: "revenue",
+        header: "Revenue",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("revenue"),
+        onSort: () => toggleSort("revenue"),
+        render: (row) => currency.format(row.revenue)
+      },
+      {
+        key: "avg",
+        header: "Avg.",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("average_unit_price"),
+        onSort: () => toggleSort("average_unit_price"),
+        render: (row) => currency.format(row.average_unit_price)
+      },
       {
         key: "stock",
         header: "Feed",
+        sortable: true,
+        sortDirection: sortDirection("feed"),
+        onSort: () => toggleSort("feed"),
         render: (row) =>
           row.catalog_status ? (
             <div className="feed-status">
@@ -106,7 +243,7 @@ export function ProductsPage() {
           ) : null
       }
     ],
-    []
+    [sort]
   );
 
   return (
@@ -133,7 +270,7 @@ export function ProductsPage() {
           <h2>Product sales</h2>
           <span>{loading ? "Loading" : `${number.format(rows.length)} products`}</span>
         </div>
-        <DataTable rows={rows} columns={columns} empty="No product sales for this period." />
+        <DataTable rows={sortedRows} columns={columns} empty="No product sales for this period." />
       </section>
     </div>
   );
