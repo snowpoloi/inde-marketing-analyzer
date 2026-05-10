@@ -1,5 +1,7 @@
 import csv
 import io
+import re
+import unicodedata
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -84,8 +86,215 @@ def import_google_ads_rows(db: Session, rows: list[dict[str, Any]], fallback_dat
     return len(rows)
 
 
+_GOOGLE_ADS_HEADER_ALIASES = {
+    "date": "date",
+    "day": "date",
+    "ημερα": "date",
+    "ημερομηνια": "date",
+    "campaign": "campaign_name",
+    "campaign name": "campaign_name",
+    "campaign_name": "campaign_name",
+    "καμπανια": "campaign_name",
+    "campaign id": "campaign_id",
+    "campaign_id": "campaign_id",
+    "id καμπανιας": "campaign_id",
+    "αναγνωριστικο καμπανιας": "campaign_id",
+    "campaign type": "campaign_type",
+    "campaign_type": "campaign_type",
+    "τυπος καμπανιας": "campaign_type",
+    "cost": "cost",
+    "κοστος": "cost",
+    "clicks": "clicks",
+    "κλικ": "clicks",
+    "impr.": "impressions",
+    "impressions": "impressions",
+    "εμφ.": "impressions",
+    "εμφανισεις": "impressions",
+    "conversions": "conversions",
+    "conv.": "conversions",
+    "μετατρ.": "conversions",
+    "μετατροπες": "conversions",
+    "conversion value": "conversion_value",
+    "conv. value": "conversion_value",
+    "conversions value": "conversion_value",
+    "conversion_value": "conversion_value",
+    "τιμη μετατρ.": "conversion_value",
+    "αξια μετατρ.": "conversion_value",
+    "roas": "roas",
+    "conv. value / cost": "roas",
+    "conversion value / cost": "roas",
+    "value / cost": "roas",
+    "τιμη μετατρ./κοστος": "roas",
+    "αξια συνολικων μετατρ. / κοστος": "roas",
+    "avg. cpc": "avg_cpc",
+    "average cpc": "avg_cpc",
+    "μεσο cpc": "avg_cpc",
+    "cost / conv.": "cost_per_conversion",
+    "cost/conv.": "cost_per_conversion",
+    "cost per conversion": "cost_per_conversion",
+    "κοστος/μετατρ.": "cost_per_conversion",
+}
+
+_GOOGLE_ADS_NUMERIC_FIELDS = {
+    "cost",
+    "clicks",
+    "impressions",
+    "conversions",
+    "conversion_value",
+    "roas",
+    "avg_cpc",
+    "cost_per_conversion",
+}
+
+_GOOGLE_ADS_MONTHS = {
+    "jan": 1,
+    "january": 1,
+    "ιαν": 1,
+    "ιανουαριου": 1,
+    "feb": 2,
+    "february": 2,
+    "φεβ": 2,
+    "φεβρουαριου": 2,
+    "mar": 3,
+    "march": 3,
+    "μαρ": 3,
+    "μαρτιου": 3,
+    "apr": 4,
+    "april": 4,
+    "απρ": 4,
+    "απριλιου": 4,
+    "may": 5,
+    "μαι": 5,
+    "μαιου": 5,
+    "jun": 6,
+    "june": 6,
+    "ιουν": 6,
+    "ιουνιου": 6,
+    "jul": 7,
+    "july": 7,
+    "ιουλ": 7,
+    "ιουλιου": 7,
+    "aug": 8,
+    "august": 8,
+    "αυγ": 8,
+    "αυγουστου": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "σεπ": 9,
+    "σεπτεμβριου": 9,
+    "oct": 10,
+    "october": 10,
+    "οκτ": 10,
+    "οκτωβριου": 10,
+    "nov": 11,
+    "november": 11,
+    "νοε": 11,
+    "νοεμβριου": 11,
+    "dec": 12,
+    "december": 12,
+    "δεκ": 12,
+    "δεκεμβριου": 12,
+}
+
+
+def _normalize_csv_key(value: Any) -> str:
+    text = str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip().casefold()
+    normalized = unicodedata.normalize("NFKD", text)
+    without_marks = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", without_marks)
+
+
+def _google_ads_number(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\u00a0", " ").strip()
+    if text in {"", "-", "--", "—"}:
+        return ""
+    text = text.replace("€", "").replace("%", "").replace(" ", "")
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"-?\d{1,3}(\.\d{3})+", text):
+        text = text.replace(".", "")
+    text = re.sub(r"[^0-9.\-]", "", text)
+    return text
+
+
+def _parse_google_ads_date(value: Any, fallback: date) -> date:
+    text = str(value or "").replace("\ufeff", "").strip()
+    if not text or text in {"-", "--", "—"}:
+        return fallback
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+
+    match = re.search(r"(\d{1,2})\s+([^\s,]+)\s+(\d{4})", text)
+    if match:
+        day = int(match.group(1))
+        month_key = _normalize_csv_key(match.group(2).strip("."))
+        month = _GOOGLE_ADS_MONTHS.get(month_key)
+        if month:
+            return date(int(match.group(3)), month, day)
+    return fallback
+
+
+def _google_ads_report_date(lines: list[str], fallback: date) -> date:
+    for line in lines[:5]:
+        parts = [part.strip() for part in re.split(r"\s+-\s+", line) if part.strip()]
+        if len(parts) == 2:
+            start = _parse_google_ads_date(parts[0], fallback)
+            end = _parse_google_ads_date(parts[1], fallback)
+            if start == end:
+                return start
+    return fallback
+
+
+def _google_ads_header_index(lines: list[str]) -> int:
+    for index, line in enumerate(lines):
+        columns = next(csv.reader([line]))
+        keys = {_normalize_csv_key(column) for column in columns}
+        if {"campaign", "campaign name", "campaign_name", "καμπανια"} & keys and {"cost", "κοστος"} & keys:
+            return index
+    return 0
+
+
+def _normalize_google_ads_csv_row(row: dict[str, Any], fallback_date: date) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    raw = {str(key or ""): value for key, value in row.items()}
+    for header, value in raw.items():
+        field = _GOOGLE_ADS_HEADER_ALIASES.get(_normalize_csv_key(header))
+        if not field:
+            continue
+        if field == "date":
+            normalized["date"] = _parse_google_ads_date(value, fallback_date).isoformat()
+        elif field in _GOOGLE_ADS_NUMERIC_FIELDS:
+            normalized[field] = _google_ads_number(value)
+        else:
+            normalized[field] = str(value or "").strip()
+
+    if not normalized.get("date"):
+        normalized["date"] = fallback_date.isoformat()
+    normalized["raw_csv"] = raw
+    return normalized
+
+
+def _google_ads_csv_rows(text: str, fallback_date: date) -> list[dict[str, Any]]:
+    lines = text.splitlines()
+    header_index = _google_ads_header_index(lines)
+    report_date = _google_ads_report_date(lines[:header_index], fallback_date)
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
+    normalized_rows = [_normalize_google_ads_csv_row(row, report_date) for row in rows]
+    return [
+        row
+        for row in normalized_rows
+        if row.get("campaign_name") and not _normalize_csv_key(row.get("campaign_name")).startswith(("total", "συνολο"))
+    ]
+
+
 def import_google_ads_csv(db: Session, text: str, fallback_date: date) -> int:
-    rows = list(csv.DictReader(io.StringIO(text)))
+    rows = _google_ads_csv_rows(text, fallback_date)
     return import_google_ads_rows(db, rows, fallback_date)
 
 
