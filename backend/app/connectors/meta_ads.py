@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -15,6 +15,13 @@ class MetaAdsConnector:
         self.account_id = account_id
         self.graph_version = config.get("graph_version", "v20.0")
         self.timeout = float(config.get("timeout_seconds", 60))
+        self.max_days_per_request = self._positive_int(config.get("max_days_per_request"), 7)
+
+    def _positive_int(self, value: Any, default: int) -> int:
+        try:
+            return max(1, int(value or default))
+        except (TypeError, ValueError):
+            return default
 
     def _request(self, client: httpx.Client, url: str, params: dict[str, Any]) -> dict[str, Any]:
         response = client.get(url, params=params)
@@ -59,16 +66,22 @@ class MetaAdsConnector:
             )
         return " ".join(parts)
 
-    def fetch_campaign_metrics(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
-        if not self.access_token or not self.account_id:
-            raise ValueError("Meta Ads access_token and ad_account_id are required.")
+    def _date_windows(self, date_from: date, date_to: date) -> list[tuple[date, date]]:
+        windows = []
+        cursor = date_from
+        while cursor <= date_to:
+            window_to = min(cursor + timedelta(days=self.max_days_per_request - 1), date_to)
+            windows.append((cursor, window_to))
+            cursor = window_to + timedelta(days=1)
+        return windows
 
-        url = f"https://graph.facebook.com/{self.graph_version}/act_{self.account_id}/insights"
-        params = {
+    def _base_params(self, date_from: date, date_to: date) -> dict[str, Any]:
+        return {
             "access_token": self.access_token,
             "time_range": f'{{"since":"{date_from.isoformat()}","until":"{date_to.isoformat()}"}}',
             "time_increment": 1,
             "level": "ad",
+            "limit": 500,
             "fields": ",".join(
                 [
                     "date_start",
@@ -92,11 +105,29 @@ class MetaAdsConnector:
             ),
         }
 
+    def _fetch_window(self, client: httpx.Client, date_from: date, date_to: date) -> list[dict[str, Any]]:
+        url = f"https://graph.facebook.com/{self.graph_version}/act_{self.account_id}/insights"
+        base_params = self._base_params(date_from, date_to)
+        rows: list[dict[str, Any]] = []
+        after = None
+        while True:
+            params = dict(base_params)
+            if after:
+                params["after"] = after
+            payload = self._request(client, url, params)
+            rows.extend(payload.get("data", []))
+            paging = payload.get("paging", {})
+            after = paging.get("cursors", {}).get("after")
+            if not paging.get("next") or not after:
+                break
+        return rows
+
+    def fetch_campaign_metrics(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
+        if not self.access_token or not self.account_id:
+            raise ValueError("Meta Ads access_token and ad_account_id are required.")
+
         rows: list[dict[str, Any]] = []
         with httpx.Client(timeout=self.timeout) as client:
-            while url:
-                payload = self._request(client, url, params)
-                rows.extend(payload.get("data", []))
-                url = payload.get("paging", {}).get("next")
-                params = {}
+            for window_from, window_to in self._date_windows(date_from, date_to):
+                rows.extend(self._fetch_window(client, window_from, window_to))
         return rows
