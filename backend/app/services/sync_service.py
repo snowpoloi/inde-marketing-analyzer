@@ -10,6 +10,7 @@ from app.connectors.merchant_center import MerchantCenterConnector
 from app.connectors.meta_ads import MetaAdsConnector
 from app.connectors.opencart import OpenCartConnector
 from app.connectors.shoply import ShoplyConnector
+from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
 from app.services.import_service import (
@@ -50,7 +51,7 @@ def start_run(db: Session, provider: str, sync_type: str, date_from: date, date_
 def finish_run(db: Session, run: SyncRun, status: str, records: int = 0, error: str | None = None, meta: dict[str, Any] | None = None) -> SyncRun:
     run.status = status
     run.records_processed = records
-    run.error_message = error
+    run.error_message = redact_sensitive(error)
     run.finished_at = datetime.now(timezone.utc)
     if meta:
         run.meta = {**(run.meta or {}), **meta}

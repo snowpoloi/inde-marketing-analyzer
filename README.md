@@ -76,6 +76,10 @@ For the MVP these credentials are stored in PostgreSQL, so restrict admin access
 }
 ```
 
+The token must include `ads_read`, and the token owner or system user must be assigned to the same ad account in Meta
+Business Settings. A `403` from Meta usually means the token is valid but does not have permission to read that ad
+account. Sync logs redact access tokens automatically.
+
 ### Google Ads
 
 ```json
