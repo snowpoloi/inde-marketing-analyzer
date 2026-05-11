@@ -166,6 +166,7 @@ export function DashboardPage() {
 
       <section className="stats-grid">
         <StatCard label="Actual revenue" value={currency.format(summary.opencart_revenue ?? 0)} detail={`${number.format(summary.opencart_orders ?? 0)} orders`} icon={Banknote} />
+        <StatCard label="GA4 purchases" value={number.format(summary.ga4_purchases ?? 0)} detail={`${currency.format(summary.ga4_revenue ?? 0)} GA4 revenue`} icon={ShoppingCart} />
         <StatCard label="Ad spend" value={currency.format(summary.ad_spend ?? 0)} detail={`${number.format(summary.ad_clicks ?? 0)} clicks`} icon={MousePointerClick} />
         <StatCard label="Actual ROAS" value={number.format(summary.actual_roas ?? 0)} detail="OpenCart revenue / spend" icon={TrendingUp} />
         <StatCard label="Attributed revenue" value={currency.format(summary.attributed_revenue ?? 0)} detail={`${number.format(summary.attributed_conversions ?? 0)} conversions`} icon={ReceiptText} />
