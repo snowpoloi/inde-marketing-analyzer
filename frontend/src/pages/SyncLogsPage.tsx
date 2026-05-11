@@ -7,6 +7,8 @@ import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 
 const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "opencart", "shoply"];
+const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
+const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 
 function isoDate(daysOffset = 0) {
   const value = new Date();
@@ -28,6 +30,15 @@ function syncDetails(row: SyncRun) {
   }
   if (meta.product_feed_error) {
     details.push(`Feed error: ${String(meta.product_feed_error)}`);
+  }
+  if (meta.ga4_rows !== undefined) {
+    details.push(`GA4 rows: ${number.format(Number(meta.ga4_rows) || 0)}`);
+  }
+  if (meta.ga4_purchases !== undefined) {
+    details.push(`GA4 purchases: ${number.format(Number(meta.ga4_purchases) || 0)}`);
+  }
+  if (meta.ga4_purchase_revenue !== undefined) {
+    details.push(`GA4 revenue: ${currency.format(Number(meta.ga4_purchase_revenue) || 0)}`);
   }
   return details.length ? details.join(" | ") : "-";
 }
