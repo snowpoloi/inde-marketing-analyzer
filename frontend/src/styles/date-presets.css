@@ -1,0 +1,47 @@
+.preset-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #d5d7d2;
+  background: #ffffff;
+  border-radius: 8px;
+}
+
+.date-preset {
+  border: 0;
+  background: transparent;
+  color: #555d58;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.date-preset:hover {
+  background: #eef2ef;
+}
+
+.date-preset.active {
+  background: #166b57;
+  color: #ffffff;
+}
+
+.date-preset:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+@media (max-width: 760px) {
+  .preset-tabs {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .date-controls .date-preset {
+    flex: 1 1 120px;
+    width: auto;
+  }
+}
