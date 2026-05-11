@@ -114,6 +114,15 @@ def _field_value(fields: dict[str, str], *names: str) -> str | None:
     return None
 
 
+def _limit_text(value: str | None, max_length: int) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:max_length]
+
+
 def _clean_price(value: str | None) -> str | None:
     if not value:
         return None
@@ -161,17 +170,18 @@ def _product_from_item(item: ElementTree.Element) -> dict[str, Any] | None:
         return None
     brand = _field_value(fields, "brand", "manufacturer", "make", "vendor")
     manufacturer = _field_value(fields, "manufacturer", "brand", "make", "vendor")
+    category = _clean_category(category_path, category_shortest)
     return {
-        "sku": sku,
-        "model": _field_value(fields, "model", "sku", "mpn"),
-        "product_id": _field_value(fields, "product_id", "productid", "identifier", "id", "item_id", "offer_id"),
-        "name": _field_value(fields, "name", "title", "product_name") or sku,
+        "sku": _limit_text(sku, 255),
+        "model": _limit_text(_field_value(fields, "model", "sku", "mpn"), 255),
+        "product_id": _limit_text(_field_value(fields, "product_id", "productid", "identifier", "id", "item_id", "offer_id"), 120),
+        "name": _limit_text(_field_value(fields, "name", "title", "product_name") or sku, 500),
         "description": _field_value(fields, "description", "short_description"),
-        "brand": brand or manufacturer,
-        "manufacturer": manufacturer,
-        "category": _clean_category(category_path, category_shortest),
-        "category_path": category_path,
-        "status": _field_value(fields, "status", "availability", "stock_status"),
+        "brand": _limit_text(brand or manufacturer, 255),
+        "manufacturer": _limit_text(manufacturer, 255),
+        "category": _limit_text(category, 500),
+        "category_path": _limit_text(category_path, 1000),
+        "status": _limit_text(_field_value(fields, "status", "availability", "stock_status"), 120),
         "quantity": _field_value(fields, "quantity", "stock", "inventory"),
         "price": _clean_price(_field_value(fields, "price", "sale_price")),
         "link": _field_value(fields, "link", "url", "product_url"),
