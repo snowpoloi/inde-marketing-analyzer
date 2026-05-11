@@ -22,6 +22,7 @@ from app.services.import_service import (
     import_product_catalog,
     import_shoply_sales,
 )
+from app.services.product_catalog_service import enrich_order_products_from_catalog
 
 
 def default_sync_window() -> tuple[date, date]:
@@ -84,19 +85,26 @@ def run_provider_sync(
         if provider == "opencart":
             connector = OpenCartConnector(config)
             product_count = 0
+            order_count = 0
+            order_product_updates = 0
             product_feed_error = None
+            order_error = None
             try:
                 product_rows = connector.fetch_product_catalog()
-            except Exception as exc:
-                product_rows = []
-                product_feed_error = str(exc)
-            rows = connector.fetch_orders(date_from, date_to)
-            try:
                 product_count = import_product_catalog(db, product_rows)
+                db.commit()
+                order_product_updates = enrich_order_products_from_catalog(db)
             except Exception as exc:
                 db.rollback()
                 product_feed_error = str(exc)
-            count = import_opencart_orders(db, rows)
+            if connector.endpoint_url:
+                try:
+                    rows = connector.fetch_orders(date_from, date_to)
+                    order_count = import_opencart_orders(db, rows)
+                except Exception as exc:
+                    db.rollback()
+                    order_error = str(exc)
+            count = product_count + order_count
         elif provider == "meta_ads":
             rows = MetaAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
             count = import_meta_ads_rows(db, rows, date_from)
@@ -116,9 +124,17 @@ def run_provider_sync(
             count = 0
         meta = None
         if provider == "opencart":
-            meta = {"product_catalog_records": product_count}
+            meta = {
+                "product_catalog_records": product_count,
+                "order_records": order_count,
+                "order_product_updates": order_product_updates,
+            }
             if product_feed_error:
                 meta["product_feed_error"] = product_feed_error
+            if order_error:
+                return finish_run(db, run, "failed", count, error=order_error, meta=meta)
+            if product_feed_error and connector.product_feed_url and order_count == 0:
+                return finish_run(db, run, "failed", count, error=product_feed_error, meta=meta)
         return finish_run(db, run, "success", count, meta=meta)
     except Exception as exc:
         db.rollback()
