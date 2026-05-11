@@ -187,13 +187,18 @@ def _product_from_item(item: ElementTree.Element) -> dict[str, Any] | None:
 
 def parse_product_feed_file(source: Any) -> list[dict[str, Any]]:
     products: list[dict[str, Any]] = []
-    for _, item in ElementTree.iterparse(source, events=("end",)):
-        if _feed_key(item.tag) not in {"item", "product", "entry", "offer", "shopitem"}:
-            continue
-        product = _product_from_item(item)
-        if product:
-            products.append(product)
-        item.clear()
+    try:
+        for _, item in ElementTree.iterparse(source, events=("end",)):
+            if _feed_key(item.tag) not in {"item", "product", "entry", "offer", "shopitem"}:
+                continue
+            product = _product_from_item(item)
+            if product:
+                products.append(product)
+            item.clear()
+    except ElementTree.ParseError as exc:
+        if products and "junk after document element" in str(exc):
+            return products
+        raise
     return products
 
 
