@@ -14,6 +14,24 @@ function isoDate(daysOffset = 0) {
   return value.toISOString().slice(0, 10);
 }
 
+function syncDetails(row: SyncRun) {
+  const meta = row.meta || {};
+  const details: string[] = [];
+  if (meta.product_catalog_records !== undefined) {
+    details.push(`Products: ${String(meta.product_catalog_records)}`);
+  }
+  if (meta.order_records !== undefined) {
+    details.push(`Orders: ${String(meta.order_records)}`);
+  }
+  if (meta.order_product_updates !== undefined) {
+    details.push(`Updated products: ${String(meta.order_product_updates)}`);
+  }
+  if (meta.product_feed_error) {
+    details.push(`Feed error: ${String(meta.product_feed_error)}`);
+  }
+  return details.length ? details.join(" | ") : "-";
+}
+
 export function SyncLogsPage() {
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [dateTo, setDateTo] = useState(isoDate());
@@ -55,6 +73,7 @@ export function SyncLogsPage() {
     { key: "status", header: "Status", render: (row) => <StatusBadge value={row.status} /> },
     { key: "period", header: "Period", render: (row) => `${row.date_from ?? "-"} to ${row.date_to ?? "-"}` },
     { key: "records", header: "Records", align: "right", render: (row) => row.records_processed },
+    { key: "details", header: "Details", render: syncDetails },
     { key: "started", header: "Started", render: (row) => new Date(row.started_at).toLocaleString("el-GR") },
     { key: "error", header: "Error", render: (row) => row.error_message || "-" }
   ];
