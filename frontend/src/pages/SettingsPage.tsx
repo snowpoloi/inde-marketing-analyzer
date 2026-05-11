@@ -28,7 +28,7 @@ const placeholders: Record<string, Record<string, unknown>> = {
     endpoint_url: "https://inde.gr/shopor/an.json",
     product_feed_url: "https://inde.gr/index.php?route=feed/universal_feed&feed=findbar.xml",
     api_key: "optional-token",
-    timeout_seconds: 60,
+    timeout_seconds: 300,
     order_status_rules: [
       { name: "Completed", counts_as_sale: true },
       { name: "Replacement", counts_as_sale: false },
@@ -156,9 +156,9 @@ export function SettingsPage() {
             <span>Timeout seconds</span>
             <input
               type="number"
-              min="10"
-              value={String(config.timeout_seconds ?? 60)}
-              onChange={(event) => updateOpenCartConfig({ timeout_seconds: Number(event.target.value) || 60 })}
+              min="30"
+              value={String(config.timeout_seconds ?? 300)}
+              onChange={(event) => updateOpenCartConfig({ timeout_seconds: Number(event.target.value) || 300 })}
             />
           </label>
           <label>
