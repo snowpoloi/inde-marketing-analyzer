@@ -19,7 +19,14 @@ const placeholders: Record<string, Record<string, unknown>> = {
   },
   ga4: {
     property_id: "123456789",
-    service_account_json: {}
+    service_account_json: {
+      type: "service_account",
+      project_id: "...",
+      private_key_id: "...",
+      private_key: "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n",
+      client_email: "...@...iam.gserviceaccount.com",
+      client_id: "..."
+    }
   },
   merchant_center: {
     csv_url: "https://..."
@@ -66,6 +73,17 @@ function orderStatusRules(config: Record<string, unknown>): OrderStatusRule[] {
   });
 }
 
+function serviceAccountText(config: Record<string, unknown>): string {
+  const value = config.service_account_json;
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 export function SettingsPage() {
   const [items, setItems] = useState<IntegrationSetting[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -101,9 +119,34 @@ export function SettingsPage() {
     );
   }
 
+  function updateProviderConfig(provider: string, patch: Record<string, unknown>) {
+    setDrafts((existing) => {
+      const current = parseDraft(existing[provider]);
+      return { ...existing, [provider]: JSON.stringify({ ...current, ...patch }, null, 2) };
+    });
+  }
+
   function updateOpenCartConfig(patch: Record<string, unknown>) {
-    const current = parseDraft(drafts.opencart);
-    setDrafts((existing) => ({ ...existing, opencart: JSON.stringify({ ...current, ...patch }, null, 2) }));
+    updateProviderConfig("opencart", patch);
+  }
+
+  function updateGa4Config(patch: Record<string, unknown>) {
+    updateProviderConfig("ga4", patch);
+  }
+
+  function updateGa4ServiceAccount(text: string) {
+    if (!text.trim()) {
+      updateGa4Config({ service_account_json: {} });
+      return;
+    }
+    let value: unknown = text;
+    try {
+      const parsed = JSON.parse(text);
+      value = parsed && typeof parsed === "object" ? parsed : text;
+    } catch {
+      value = text;
+    }
+    updateGa4Config({ service_account_json: value });
   }
 
   function updateStatusRule(index: number, patch: Partial<OrderStatusRule>) {
@@ -134,7 +177,7 @@ export function SettingsPage() {
     const ruleNames = new Set(rules.map((rule) => rule.name.trim().toLowerCase()));
     const missingDetectedStatuses = detectedStatuses.filter((status) => !ruleNames.has(status.trim().toLowerCase()));
     return (
-      <div className="opencart-controls">
+      <div className="integration-controls">
         <div className="form-grid">
           <label>
             <span>Orders JSON endpoint</span>
@@ -223,6 +266,34 @@ export function SettingsPage() {
     );
   }
 
+  function renderGa4Controls() {
+    const config = parseDraft(drafts.ga4);
+    return (
+      <div className="integration-controls">
+        <div className="form-grid">
+          <label>
+            <span>GA4 property ID</span>
+            <input
+              value={String(config.property_id ?? "")}
+              onChange={(event) => updateGa4Config({ property_id: event.target.value })}
+              placeholder="123456789"
+            />
+          </label>
+          <label className="form-grid-span">
+            <span>Service account JSON</span>
+            <textarea
+              className="credential-textarea"
+              value={serviceAccountText(config)}
+              onChange={(event) => updateGa4ServiceAccount(event.target.value)}
+              placeholder={JSON.stringify(placeholders.ga4.service_account_json, null, 2)}
+              spellCheck={false}
+            />
+          </label>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <header className="page-header">
@@ -252,6 +323,7 @@ export function SettingsPage() {
               spellCheck={false}
             />
             {item.provider === "opencart" ? renderOpenCartControls() : null}
+            {item.provider === "ga4" ? renderGa4Controls() : null}
             <button className="primary-action compact" onClick={() => save(item)}>
               <Save size={17} />
               Save
