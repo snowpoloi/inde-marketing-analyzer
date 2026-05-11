@@ -5,6 +5,7 @@ import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
@@ -13,6 +14,27 @@ function isoDate(daysOffset = 0) {
   const value = new Date();
   value.setDate(value.getDate() + daysOffset);
   return value.toISOString().slice(0, 10);
+}
+
+type DatePreset = {
+  key: string;
+  label: string;
+  fromOffset: number;
+  toOffset: number;
+};
+
+const datePresets: DatePreset[] = [
+  { key: "today", label: "Today", fromOffset: 0, toOffset: 0 },
+  { key: "yesterday", label: "Yesterday", fromOffset: -1, toOffset: -1 },
+  { key: "last-7", label: "Last 7 days", fromOffset: -6, toOffset: 0 },
+  { key: "last-30", label: "Last 30 days", fromOffset: -29, toOffset: 0 }
+];
+
+function presetRange(preset: DatePreset) {
+  return {
+    from: isoDate(preset.fromOffset),
+    to: isoDate(preset.toOffset)
+  };
 }
 
 type PerformanceRow = {
@@ -41,7 +63,7 @@ type RecommendationRow = {
 export function DashboardPage() {
   const today = isoDate();
   const [dateTo, setDateTo] = useState(today);
-  const [dateFrom, setDateFrom] = useState(isoDate(-30));
+  const [dateFrom, setDateFrom] = useState(isoDate(-29));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<any>({});
@@ -53,19 +75,19 @@ export function DashboardPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [salesDaily, setSalesDaily] = useState<any[]>([]);
 
-  async function load() {
+  async function load(nextDateFrom = dateFrom, nextDateTo = dateTo) {
     setLoading(true);
     setError("");
     try {
       const [summaryRes, metaRes, googleRes, attributionRes, recRes, brandRes, productRes, salesRes] = await Promise.all([
-        api.dashboard("summary", dateFrom, dateTo),
-        api.dashboard("meta-performance", dateFrom, dateTo),
-        api.dashboard("google-performance", dateFrom, dateTo),
-        api.dashboard("attribution", dateFrom, dateTo),
-        api.dashboard("recommendations", dateFrom, dateTo),
-        api.dashboard("brand-category", dateFrom, dateTo),
-        api.dashboard("product-profitability", dateFrom, dateTo),
-        api.dashboard("opencart-sales", dateFrom, dateTo)
+        api.dashboard("summary", nextDateFrom, nextDateTo),
+        api.dashboard("meta-performance", nextDateFrom, nextDateTo),
+        api.dashboard("google-performance", nextDateFrom, nextDateTo),
+        api.dashboard("attribution", nextDateFrom, nextDateTo),
+        api.dashboard("recommendations", nextDateFrom, nextDateTo),
+        api.dashboard("brand-category", nextDateFrom, nextDateTo),
+        api.dashboard("product-profitability", nextDateFrom, nextDateTo),
+        api.dashboard("opencart-sales", nextDateFrom, nextDateTo)
       ]);
       setSummary(summaryRes.data);
       setMeta(metaRes.data.rows ?? []);
@@ -85,6 +107,18 @@ export function DashboardPage() {
   useEffect(() => {
     load();
   }, []);
+
+  function applyPreset(preset: DatePreset) {
+    const range = presetRange(preset);
+    setDateFrom(range.from);
+    setDateTo(range.to);
+    load(range.from, range.to);
+  }
+
+  const activePreset = datePresets.find((preset) => {
+    const range = presetRange(preset);
+    return range.from === dateFrom && range.to === dateTo;
+  })?.key;
 
   const performanceColumns: Column<PerformanceRow>[] = useMemo(
     () => [
@@ -107,9 +141,21 @@ export function DashboardPage() {
           <p>OpenCart is treated as the source of truth for actual sales.</p>
         </div>
         <div className="date-controls">
+          <div className="preset-tabs" aria-label="Date presets">
+            {datePresets.map((preset) => (
+              <button
+                className={`date-preset ${activePreset === preset.key ? "active" : ""}`}
+                key={preset.key}
+                onClick={() => applyPreset(preset)}
+                disabled={loading}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="primary-action compact" onClick={load} disabled={loading}>
+          <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <TrendingUp size={17} />
             Refresh
           </button>
