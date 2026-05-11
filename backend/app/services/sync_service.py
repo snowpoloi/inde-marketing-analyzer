@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from app.services.import_service import (
     import_product_catalog,
     import_shoply_sales,
 )
+from app.services.parsing import as_decimal
 from app.services.product_catalog_service import enrich_order_products_from_catalog
 
 
@@ -62,6 +64,24 @@ def finish_run(db: Session, run: SyncRun, status: str, records: int = 0, error: 
     return run
 
 
+def _json_number(value: Decimal) -> int | float:
+    integral = value.to_integral_value()
+    return int(integral) if value == integral else float(value)
+
+
+def ga4_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int | float]:
+    purchases = sum((as_decimal(row.get("purchases") or row.get("ecommercePurchases")) for row in rows), Decimal("0"))
+    revenue = sum(
+        (as_decimal(row.get("purchase_revenue") or row.get("purchaseRevenue")) for row in rows),
+        Decimal("0"),
+    )
+    return {
+        "ga4_rows": len(rows),
+        "ga4_purchases": _json_number(purchases),
+        "ga4_purchase_revenue": _json_number(revenue),
+    }
+
+
 def run_provider_sync(
     db: Session,
     provider: str,
@@ -82,6 +102,7 @@ def run_provider_sync(
 
     try:
         config = integration.config or {}
+        meta = None
         if provider == "opencart":
             connector = OpenCartConnector(config)
             product_count = 0
@@ -114,6 +135,7 @@ def run_provider_sync(
         elif provider == "ga4":
             rows = GA4Connector(config).fetch_daily_metrics(date_from, date_to)
             count = import_ga4_rows(db, rows, date_from)
+            meta = ga4_sync_meta(rows)
         elif provider == "merchant_center":
             rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
             count = import_merchant_rows(db, rows, date_from)
@@ -122,7 +144,6 @@ def run_provider_sync(
             count = import_shoply_sales(db, rows)
         else:
             count = 0
-        meta = None
         if provider == "opencart":
             meta = {
                 "product_catalog_records": product_count,
