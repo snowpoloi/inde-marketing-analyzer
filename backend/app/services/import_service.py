@@ -199,7 +199,7 @@ _GOOGLE_ADS_MONTHS = {
 
 
 def _normalize_csv_key(value: Any) -> str:
-    text = str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip().casefold()
+    text = str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip().lower()
     normalized = unicodedata.normalize("NFKD", text)
     without_marks = "".join(
         char
@@ -257,14 +257,17 @@ def _google_ads_report_date(lines: list[str], fallback: date) -> date:
 
 def _google_ads_header_index(lines: list[str]) -> int:
     for index, line in enumerate(lines):
-        line_key = _normalize_csv_key(line)
-        if (
-            "," in line
-            and ("καμπανια" in line_key or "campaign" in line_key)
-            and ("κοστος" in line_key or "cost" in line_key)
-        ):
+        if "," not in line:
+            continue
+        try:
+            columns = next(csv.reader([line]))
+        except csv.Error:
+            continue
+        fields = {_google_ads_field_for_header(column) for column in columns}
+        fields.discard(None)
+        if {"campaign_name", "cost"} <= fields:
             return index
-        columns = next(csv.reader([line]))
+
         keys = {_normalize_csv_key(column) for column in columns}
         if {"campaign", "campaign name", "campaign_name", "καμπανια"} & keys and {"cost", "κοστος"} & keys:
             return index
@@ -332,7 +335,9 @@ def _google_ads_csv_rows(text: str, fallback_date: date) -> list[dict[str, Any]]
     imported_rows = [
         row
         for row in normalized_rows
-        if row.get("campaign_name") and not _normalize_csv_key(row.get("campaign_name")).startswith(("total", "συνολο"))
+        if row.get("campaign_name")
+        and _normalize_csv_key(row.get("campaign_name")) not in {"-", "--", "—"}
+        and not _normalize_csv_key(row.get("campaign_name")).startswith(("total", "συνολο"))
     ]
     if not imported_rows and rows:
         headers = [str(header or "").strip() for header in rows[0].keys()]
