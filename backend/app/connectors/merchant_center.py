@@ -59,7 +59,7 @@ class MerchantCenterConnector:
         if account_id:
             return account_id.removeprefix("accounts/")
 
-        response = self._request("GET", "/accounts/v1beta/accounts?pageSize=10")
+        response = self._request("GET", "/accounts/v1/accounts?pageSize=10")
         accounts = response.get("accounts") or []
         account_name = str(accounts[0].get("name") if accounts else "")
         if account_name.startswith("accounts/"):
