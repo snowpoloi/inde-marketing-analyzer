@@ -19,7 +19,7 @@ const placeholders: Record<string, Record<string, unknown>> = {
   },
   ga4: {
     property_id: "123456789",
-    service_account_json: {
+    credentials_json: {
       type: "service_account",
       project_id: "...",
       private_key_id: "...",
@@ -73,8 +73,8 @@ function orderStatusRules(config: Record<string, unknown>): OrderStatusRule[] {
   });
 }
 
-function serviceAccountText(config: Record<string, unknown>): string {
-  const value = config.service_account_json;
+function ga4CredentialsText(config: Record<string, unknown>): string {
+  const value = config.credentials_json ?? config.service_account_json;
   if (!value) {
     return "";
   }
@@ -134,9 +134,9 @@ export function SettingsPage() {
     updateProviderConfig("ga4", patch);
   }
 
-  function updateGa4ServiceAccount(text: string) {
+  function updateGa4Credentials(text: string) {
     if (!text.trim()) {
-      updateGa4Config({ service_account_json: {} });
+      updateGa4Config({ credentials_json: {} });
       return;
     }
     let value: unknown = text;
@@ -146,7 +146,7 @@ export function SettingsPage() {
     } catch {
       value = text;
     }
-    updateGa4Config({ service_account_json: value });
+    updateGa4Config({ credentials_json: value });
   }
 
   function updateStatusRule(index: number, patch: Partial<OrderStatusRule>) {
@@ -280,12 +280,12 @@ export function SettingsPage() {
             />
           </label>
           <label className="form-grid-span">
-            <span>Service account JSON</span>
+            <span>Credentials JSON</span>
             <textarea
               className="credential-textarea"
-              value={serviceAccountText(config)}
-              onChange={(event) => updateGa4ServiceAccount(event.target.value)}
-              placeholder={JSON.stringify(placeholders.ga4.service_account_json, null, 2)}
+              value={ga4CredentialsText(config)}
+              onChange={(event) => updateGa4Credentials(event.target.value)}
+              placeholder={JSON.stringify(placeholders.ga4.credentials_json, null, 2)}
               spellCheck={false}
             />
           </label>
