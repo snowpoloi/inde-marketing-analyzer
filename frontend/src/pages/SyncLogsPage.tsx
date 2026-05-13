@@ -40,6 +40,22 @@ function syncDetails(row: SyncRun) {
   if (meta.ga4_purchase_revenue !== undefined) {
     details.push(`GA4 revenue: ${currency.format(Number(meta.ga4_purchase_revenue) || 0)}`);
   }
+  if (meta.merchant_rows !== undefined) {
+    details.push(`Merchant rows: ${number.format(Number(meta.merchant_rows) || 0)}`);
+  }
+  if (meta.merchant_clicks !== undefined) {
+    details.push(`Merchant clicks: ${number.format(Number(meta.merchant_clicks) || 0)}`);
+  }
+  if (meta.merchant_impressions !== undefined) {
+    details.push(`Merchant impressions: ${number.format(Number(meta.merchant_impressions) || 0)}`);
+  }
+  if (meta.merchant_disapproved !== undefined || meta.merchant_limited !== undefined || meta.merchant_pending !== undefined) {
+    details.push(
+      `Merchant issues: ${number.format(Number(meta.merchant_disapproved) || 0)} disapproved, ${number.format(
+        Number(meta.merchant_limited) || 0
+      )} limited, ${number.format(Number(meta.merchant_pending) || 0)} pending`
+    );
+  }
   return details.length ? details.join(" | ") : "-";
 }
 

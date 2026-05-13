@@ -23,7 +23,7 @@ from app.services.import_service import (
     import_product_catalog,
     import_shoply_sales,
 )
-from app.services.parsing import as_decimal
+from app.services.parsing import as_decimal, as_int
 from app.services.product_catalog_service import enrich_order_products_from_catalog
 
 
@@ -79,6 +79,18 @@ def ga4_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int | float]:
         "ga4_rows": len(rows),
         "ga4_purchases": _json_number(purchases),
         "ga4_purchase_revenue": _json_number(revenue),
+    }
+
+
+def merchant_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
+    statuses = [str(row.get("merchant_status") or "").upper() for row in rows]
+    return {
+        "merchant_rows": len(rows),
+        "merchant_clicks": sum(as_int(row.get("clicks")) for row in rows),
+        "merchant_impressions": sum(as_int(row.get("impressions")) for row in rows),
+        "merchant_disapproved": sum(1 for status in statuses if "DISAPPROVED" in status),
+        "merchant_limited": sum(1 for status in statuses if "LIMITED" in status),
+        "merchant_pending": sum(1 for status in statuses if "PENDING" in status),
     }
 
 
@@ -139,6 +151,7 @@ def run_provider_sync(
         elif provider == "merchant_center":
             rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
             count = import_merchant_rows(db, rows, date_from)
+            meta = merchant_sync_meta(rows)
         elif provider == "shoply":
             rows = ShoplyConnector(config).fetch_sales(date_from, date_to)
             count = import_shoply_sales(db, rows)

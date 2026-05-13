@@ -29,7 +29,13 @@ const placeholders: Record<string, Record<string, unknown>> = {
     }
   },
   merchant_center: {
-    csv_url: "https://..."
+    account_id: "123456789",
+    credentials_json: {
+      type: "authorized_user",
+      client_id: "...apps.googleusercontent.com",
+      client_secret: "...",
+      refresh_token: "..."
+    }
   },
   opencart: {
     endpoint_url: "https://inde.gr/shopor/an.json",
