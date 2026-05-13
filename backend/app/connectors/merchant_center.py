@@ -8,8 +8,11 @@ MERCHANT_API_BASE = "https://merchantapi.googleapis.com"
 class MerchantCenterConnector:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
+        self._token: str | None = None
 
     def _access_token(self) -> str:
+        if self._token:
+            return self._token
         try:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
@@ -34,7 +37,8 @@ class MerchantCenterConnector:
         credentials.refresh(Request())
         if not credentials.token:
             raise ValueError("Merchant Center OAuth token refresh failed.")
-        return credentials.token
+        self._token = credentials.token
+        return self._token
 
     def _request(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
         import httpx
@@ -55,8 +59,9 @@ class MerchantCenterConnector:
         if account_id:
             return account_id.removeprefix("accounts/")
 
-        response = self._request("GET", "/accounts/v1beta/accounts:getAccountForGcpRegistration")
-        account_name = str(response.get("name") or "")
+        response = self._request("GET", "/accounts/v1beta/accounts?pageSize=10")
+        accounts = response.get("accounts") or []
+        account_name = str(accounts[0].get("name") if accounts else "")
         if account_name.startswith("accounts/"):
             return account_name.removeprefix("accounts/")
         raise ValueError("Merchant Center account_id is required.")
