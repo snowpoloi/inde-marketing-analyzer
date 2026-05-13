@@ -7,7 +7,8 @@ def as_decimal(value: Any, default: str = "0") -> Decimal:
     if value is None or value == "":
         return Decimal(default)
     try:
-        return Decimal(str(value).replace(",", "").strip())
+        parsed = Decimal(str(value).replace(",", "").strip())
+        return parsed if parsed.is_finite() else Decimal(default)
     except (InvalidOperation, ValueError):
         return Decimal(default)
 

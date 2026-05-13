@@ -139,12 +139,12 @@ class MerchantCenterConnector:
                     "clicks": view.get("clicks"),
                     "impressions": view.get("impressions"),
                     "ctr": view.get("clickThroughRate"),
-                    "raw": row,
+                    "raw": {"productPerformanceView": view},
                 }
             )
         return rows
 
-    def _fetch_product_health(self, account_id: str) -> dict[str, dict[str, Any]]:
+    def _fetch_product_health(self, account_id: str, *, limit: int | None = None) -> dict[str, dict[str, Any]]:
         query = """
             SELECT
               id,
@@ -159,6 +159,8 @@ class MerchantCenterConnector:
               click_potential
             FROM product_view
         """
+        if limit:
+            query = f"{query}\nLIMIT {limit}"
         products: dict[str, dict[str, Any]] = {}
         for row in self._search_report(account_id, query):
             view = row.get("productView") or {}
@@ -177,7 +179,7 @@ class MerchantCenterConnector:
                 "price": self._price_value(view.get("price")),
                 "merchant_status": view.get("aggregatedReportingContextStatus"),
                 "click_potential": view.get("clickPotential"),
-                "raw_product_view": row,
+                "raw_product_view": {"productView": view},
             }
         return products
 
@@ -204,7 +206,15 @@ class MerchantCenterConnector:
 
         account_id = self._account_id()
         performance_rows = self._fetch_product_performance(account_id, date_from, date_to)
-        product_health = self._fetch_product_health(account_id)
+        include_product_health = bool(self.config.get("include_product_health"))
+        if performance_rows and not include_product_health:
+            return performance_rows
+
+        product_health_limit = int(self.config.get("product_health_limit", 5000))
+        product_health = self._fetch_product_health(
+            account_id,
+            limit=None if include_product_health else product_health_limit,
+        )
         for row in performance_rows:
             health = product_health.get(str(row.get("offer_id") or ""))
             if health:
