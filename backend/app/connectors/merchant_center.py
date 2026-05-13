@@ -44,15 +44,24 @@ class MerchantCenterConnector:
         import httpx
 
         timeout = float(self.config.get("timeout_seconds", 60))
-        response = httpx.request(
-            method,
-            f"{MERCHANT_API_BASE}{path}",
-            headers={"Authorization": f"Bearer {self._access_token()}"},
-            json=json,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(2):
+            response = httpx.request(
+                method,
+                f"{MERCHANT_API_BASE}{path}",
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+                json=json,
+                timeout=timeout,
+            )
+            if response.status_code == 401 and attempt == 0:
+                self._token = None
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                details = response.text[:1000]
+                raise RuntimeError(f"Merchant API {response.status_code} for {path}: {details}") from exc
+            return response.json()
+        raise RuntimeError(f"Merchant API request failed for {path}.")
 
     def _account_id(self) -> str:
         account_id = str(self.config.get("account_id") or self.config.get("merchant_id") or "").strip()
