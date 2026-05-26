@@ -6,7 +6,7 @@ import type { SyncRun } from "../api/client";
 import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 
-const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "opencart", "shoply"];
+const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "search_console", "opencart", "shoply"];
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 
@@ -55,6 +55,15 @@ function syncDetails(row: SyncRun) {
         Number(meta.merchant_limited) || 0
       )} limited, ${number.format(Number(meta.merchant_pending) || 0)} pending`
     );
+  }
+  if (meta.search_console_rows !== undefined) {
+    details.push(`Search Console rows: ${number.format(Number(meta.search_console_rows) || 0)}`);
+  }
+  if (meta.search_console_clicks !== undefined) {
+    details.push(`Search Console clicks: ${number.format(Number(meta.search_console_clicks) || 0)}`);
+  }
+  if (meta.search_console_impressions !== undefined) {
+    details.push(`Search Console impressions: ${number.format(Number(meta.search_console_impressions) || 0)}`);
   }
   return details.length ? details.join(" | ") : "-";
 }

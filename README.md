@@ -112,6 +112,26 @@ MVP supports a scheduled CSV export URL.
 }
 ```
 
+### Google Search Console
+
+```json
+{
+  "site_url": "https://inde.gr/",
+  "client_id": "...apps.googleusercontent.com",
+  "client_secret": "...",
+  "refresh_token": "...",
+  "search_type": "web",
+  "dimensions": ["date", "query", "page", "device", "country"],
+  "row_limit": 25000
+}
+```
+
+Create the refresh token with OAuth Playground using the scope
+`https://www.googleapis.com/auth/webmasters.readonly`. The Google account must have access to the Search Console
+property in `site_url`. If the property is domain-based, use the exact property value, for example `sc-domain:inde.gr`.
+Search Console sync stores query, page, country, device, clicks, impressions, CTR, and average position by day for SEO
+audit.
+
 ### OpenCart
 
 ```json
@@ -270,6 +290,7 @@ Initial Alembic migration creates:
 - `campaign_daily_metrics`
 - `ga4_daily_metrics`
 - `merchant_product_metrics`
+- `search_console_daily_metrics`
 - `opencart_orders`
 - `opencart_order_changes`
 - `opencart_order_products`

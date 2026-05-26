@@ -14,6 +14,7 @@ from app.models import (
     OpenCartOrderChange,
     OpenCartOrderProduct,
     ProductCatalog,
+    SearchConsoleDailyMetric,
 )
 from app.services.parsing import dec_to_float
 
@@ -753,6 +754,87 @@ def _ga4_channel_audit(db: Session, date_from: date, date_to: date) -> tuple[lis
     return audited, actions
 
 
+def _search_console_audit(
+    db: Session, date_from: date, date_to: date
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    query_expr = func.coalesce(SearchConsoleDailyMetric.query, "(not provided)")
+    page_expr = func.coalesce(SearchConsoleDailyMetric.page, "-")
+    rows = db.execute(
+        select(
+            query_expr.label("query"),
+            page_expr.label("page"),
+            func.coalesce(func.sum(SearchConsoleDailyMetric.clicks), 0).label("clicks"),
+            func.coalesce(func.sum(SearchConsoleDailyMetric.impressions), 0).label("impressions"),
+            func.coalesce(func.avg(SearchConsoleDailyMetric.position), 0).label("position"),
+        )
+        .where(_period_filter(SearchConsoleDailyMetric.metric_date, date_from, date_to))
+        .group_by(query_expr, page_expr)
+        .order_by(func.sum(SearchConsoleDailyMetric.clicks).desc(), func.sum(SearchConsoleDailyMetric.impressions).desc())
+        .limit(80)
+    ).all()
+
+    audited = []
+    actions = []
+    for row in rows:
+        clicks = int(row.clicks or 0)
+        impressions = int(row.impressions or 0)
+        ctr = _ratio(clicks, impressions) * 100
+        position = float(row.position or 0)
+        action = "monitor"
+        severity = "low"
+        reason = "Organic search signal is within normal monitoring range."
+        if impressions >= 1000 and ctr < 1:
+            action = "investigate seo"
+            severity = "medium"
+            reason = "High organic impressions with weak CTR; improve title/meta, offer clarity, or SERP snippet."
+        elif impressions >= 500 and 10 < position <= 30:
+            action = "optimize seo"
+            severity = "medium"
+            reason = "Query is near ranking distance; optimize landing page relevance and internal links."
+        elif clicks >= 50 and ctr >= 2:
+            action = "scale"
+            severity = "positive"
+            reason = "Query already brings organic clicks; connect it to products, paid campaigns, and content."
+        elif position <= 5 and impressions >= 100:
+            action = "protect"
+            severity = "positive"
+            reason = "Strong ranking position; protect page quality, stock, speed, and internal links."
+
+        audited.append(
+            {
+                "query": row.query,
+                "page": row.page,
+                "clicks": clicks,
+                "impressions": impressions,
+                "ctr": ctr,
+                "position": position,
+                "audit_action": action,
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+        if severity in {"medium", "positive"}:
+            actions.append(
+                _audit_action(
+                    "SEO",
+                    str(row.query or row.page or "Search Console"),
+                    severity,
+                    action,
+                    reason,
+                    "Clicks / impressions",
+                    f"{clicks} / {impressions}",
+                )
+            )
+    audited.sort(
+        key=lambda item: (
+            _severity_rank(item["severity"]),
+            -int(item.get("clicks") or 0),
+            -int(item.get("impressions") or 0),
+        )
+    )
+    return audited, actions
+
+
 def _product_audit(db: Session, date_from: date, date_to: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     products = product_performance(db, date_from, date_to)
     merchant = _merchant_metrics(db, date_from, date_to)
@@ -1058,6 +1140,16 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
     if failure:
         priority_actions.append(failure)
 
+    search_console_result, failure = _safe_audit_section(
+        db,
+        "Search Console",
+        ([], []),
+        lambda: _search_console_audit(db, date_from, date_to),
+    )
+    search_console, search_console_actions = search_console_result
+    if failure:
+        priority_actions.append(failure)
+
     product_result, failure = _safe_audit_section(
         db,
         "Products",
@@ -1078,7 +1170,9 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
     if failure:
         priority_actions.append(failure)
 
-    priority_actions.extend(tracking_actions + campaign_actions + channel_actions + product_actions + operation_actions)
+    priority_actions.extend(
+        tracking_actions + campaign_actions + channel_actions + search_console_actions + product_actions + operation_actions
+    )
     if not priority_actions and summary.get("opencart_orders", 0):
         priority_actions.append(
             _audit_action(
@@ -1115,6 +1209,7 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
         "tracking": tracking,
         "campaigns": campaigns,
         "channels": channels,
+        "search_console": search_console,
         "products": products,
         "feed": feed,
         "operations": operations,

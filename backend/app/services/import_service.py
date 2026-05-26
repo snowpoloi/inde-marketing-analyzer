@@ -17,6 +17,7 @@ from app.models import (
     OpenCartOrderChange,
     OpenCartOrderProduct,
     ProductCatalog,
+    SearchConsoleDailyMetric,
     ShoplySale,
 )
 from app.services.parsing import as_date, as_datetime, as_decimal, as_int
@@ -442,6 +443,38 @@ def import_merchant_rows(db: Session, rows: list[dict[str, Any]], fallback_date:
                 clicks=as_int(row.get("clicks")),
                 impressions=as_int(row.get("impressions")),
                 ctr=as_decimal(row.get("ctr")),
+                raw=row,
+            )
+        )
+    db.commit()
+    return len(rows)
+
+
+def import_search_console_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date) -> int:
+    touched_dates = {as_date(row.get("date"), fallback_date) for row in rows} or {fallback_date}
+    touched_sites = {
+        str(row.get("site_url") or row.get("site") or "").strip()
+        for row in rows
+        if str(row.get("site_url") or row.get("site") or "").strip()
+    }
+    query = delete(SearchConsoleDailyMetric).where(SearchConsoleDailyMetric.metric_date.in_(touched_dates))
+    if touched_sites:
+        query = query.where(SearchConsoleDailyMetric.site_url.in_(touched_sites))
+    db.execute(query)
+
+    for row in rows:
+        db.add(
+            SearchConsoleDailyMetric(
+                metric_date=as_date(row.get("date"), fallback_date),
+                site_url=str(row.get("site_url") or row.get("site") or ""),
+                query=row.get("query"),
+                page=row.get("page"),
+                country=row.get("country"),
+                device=row.get("device"),
+                clicks=as_int(row.get("clicks")),
+                impressions=as_int(row.get("impressions")),
+                ctr=as_decimal(row.get("ctr")),
+                position=as_decimal(row.get("position")),
                 raw=row,
             )
         )

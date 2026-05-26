@@ -96,6 +96,18 @@ type ChannelAuditRow = {
   reason: string;
 };
 
+type SearchConsoleAuditRow = {
+  query: string | null;
+  page: string | null;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+  audit_action: string;
+  severity: string;
+  reason: string;
+};
+
 type ProductAuditRow = {
   name: string;
   sku: string | null;
@@ -168,6 +180,7 @@ type AuditData = {
   tracking: { rows: TrackingRow[] };
   campaigns: CampaignAuditRow[];
   channels: ChannelAuditRow[];
+  search_console: SearchConsoleAuditRow[];
   products: ProductAuditRow[];
   feed: FeedAuditRow[];
   operations: {
@@ -195,6 +208,7 @@ const emptyAudit: AuditData = {
   tracking: { rows: [] },
   campaigns: [],
   channels: [],
+  search_console: [],
   products: [],
   feed: [],
   operations: {
@@ -230,6 +244,7 @@ const initialAuditSorts: SortMap = {
   tracking: { key: "status", direction: "desc" },
   campaigns: { key: "roas", direction: "desc" },
   channels: { key: "revenue", direction: "desc" },
+  "search-console": { key: "clicks", direction: "desc" },
   products: { key: "revenue", direction: "desc" },
   feed: { key: "clicks", direction: "desc" },
   "op-statuses": { key: "orders", direction: "desc" },
@@ -253,11 +268,17 @@ const severityRank: Record<string, number> = {
 
 const actionRank: Record<string, number> = {
   investigate_tracking: 6,
+  "investigate tracking": 6,
   investigate_product_feed: 5,
+  "investigate product/feed": 5,
+  "investigate seo": 5,
+  "investigate operations": 5,
   investigate: 5,
+  "optimize seo": 4,
   pause: 4,
   reduce: 3,
   monitor: 2,
+  protect: 1,
   scale: 1
 };
 
@@ -366,6 +387,17 @@ const channelSorters: SortAccessors<ChannelAuditRow> = {
   revenue: (row) => row.revenue,
   cr: (row) => row.conversion_rate,
   rps: (row) => row.revenue_per_session,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
+const searchConsoleSorters: SortAccessors<SearchConsoleAuditRow> = {
+  query: (row) => row.query ?? "",
+  page: (row) => row.page ?? "",
+  clicks: (row) => row.clicks,
+  impressions: (row) => row.impressions,
+  ctr: (row) => row.ctr,
+  position: (row) => row.position,
   action: (row) => ranked(row.audit_action, actionRank),
   reason: (row) => row.reason
 };
@@ -479,6 +511,10 @@ export function AuditPage() {
   const sortedTrackingRows = useMemo(() => sortRows(audit.tracking.rows, sorts.tracking, trackingSorters), [audit.tracking.rows, sorts]);
   const sortedCampaigns = useMemo(() => sortRows(audit.campaigns, sorts.campaigns, campaignSorters), [audit.campaigns, sorts]);
   const sortedChannels = useMemo(() => sortRows(audit.channels, sorts.channels, channelSorters), [audit.channels, sorts]);
+  const sortedSearchConsole = useMemo(
+    () => sortRows(audit.search_console, sorts["search-console"], searchConsoleSorters),
+    [audit.search_console, sorts]
+  );
   const sortedProducts = useMemo(() => sortRows(audit.products, sorts.products, productSorters), [audit.products, sorts]);
   const sortedFeed = useMemo(() => sortRows(audit.feed, sorts.feed, feedSorters), [audit.feed, sorts]);
   const sortedStatuses = useMemo(
@@ -567,6 +603,37 @@ export function AuditPage() {
       { key: "rps", header: "Rev/session", align: "right", ...sortable("channels", "rps"), render: (row) => currency.format(row.revenue_per_session) },
       { key: "action", header: "Action", ...sortable("channels", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
       { key: "reason", header: "Reason", ...sortable("channels", "reason"), render: (row) => row.reason }
+    ],
+    [sorts]
+  );
+
+  const searchConsoleColumns: Column<SearchConsoleAuditRow>[] = useMemo(
+    () => [
+      {
+        key: "query",
+        header: "Query",
+        ...sortable("search-console", "query"),
+        render: (row) => <strong>{row.query || "(not provided)"}</strong>
+      },
+      { key: "page", header: "Page", ...sortable("search-console", "page"), render: (row) => row.page || "-" },
+      { key: "clicks", header: "Clicks", align: "right", ...sortable("search-console", "clicks"), render: (row) => number.format(row.clicks) },
+      {
+        key: "impressions",
+        header: "Impressions",
+        align: "right",
+        ...sortable("search-console", "impressions"),
+        render: (row) => number.format(row.impressions)
+      },
+      { key: "ctr", header: "CTR", align: "right", ...sortable("search-console", "ctr"), render: (row) => pct(row.ctr) },
+      {
+        key: "position",
+        header: "Avg. position",
+        align: "right",
+        ...sortable("search-console", "position"),
+        render: (row) => number.format(row.position)
+      },
+      { key: "action", header: "Action", ...sortable("search-console", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("search-console", "reason"), render: (row) => row.reason }
     ],
     [sorts]
   );
@@ -700,6 +767,16 @@ export function AuditPage() {
         { header: "Action", value: (row) => row.audit_action },
         { header: "Reason", value: (row) => row.reason }
       ]),
+      buildCsvSection("Search Console SEO audit", sortedSearchConsole, [
+        { header: "Query", value: (row) => row.query || "(not provided)" },
+        { header: "Page", value: (row) => row.page || "-" },
+        { header: "Clicks", value: (row) => row.clicks },
+        { header: "Impressions", value: (row) => row.impressions },
+        { header: "CTR", value: (row) => pct(row.ctr) },
+        { header: "Average position", value: (row) => number.format(row.position) },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
       buildCsvSection("Product opportunities", sortedProducts, [
         { header: "Product", value: (row) => row.name },
         { header: "SKU", value: (row) => metricId(row) },
@@ -823,6 +900,14 @@ export function AuditPage() {
           <DataTable rows={sortedChannels} columns={channelColumns} empty="No GA4 channel data yet." />
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>Search Console SEO audit</h2>
+          <span>Organic queries, landing pages, CTR and position gaps</span>
+        </div>
+        <DataTable rows={sortedSearchConsole} columns={searchConsoleColumns} empty="No Search Console data yet." />
+      </section>
 
       <section className="panel">
         <div className="panel-title">

@@ -37,6 +37,15 @@ const placeholders: Record<string, Record<string, unknown>> = {
       refresh_token: "..."
     }
   },
+  search_console: {
+    site_url: "https://inde.gr/",
+    client_id: "...apps.googleusercontent.com",
+    client_secret: "...",
+    refresh_token: "...",
+    search_type: "web",
+    dimensions: ["date", "query", "page", "device", "country"],
+    row_limit: 25000
+  },
   opencart: {
     endpoint_url: "https://inde.gr/shopor/an.json",
     product_feed_url: "https://inde.gr/index.php?route=feed/universal_feed&feed=findbar.xml",

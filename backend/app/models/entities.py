@@ -122,6 +122,23 @@ class MerchantProductMetric(TimestampMixin, Base):
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class SearchConsoleDailyMetric(TimestampMixin, Base):
+    __tablename__ = "search_console_daily_metrics"
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    site_url: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+    query: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    page: Mapped[str | None] = mapped_column(Text, nullable=True)
+    country: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    device: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    clicks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ctr: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=0, nullable=False)
+    position: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=0, nullable=False)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class OpenCartOrder(TimestampMixin, Base):
     __tablename__ = "opencart_orders"
     __table_args__ = (UniqueConstraint("order_id", name="uq_opencart_orders_order_id"),)

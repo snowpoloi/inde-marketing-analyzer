@@ -10,6 +10,7 @@ from app.connectors.google_ads import GoogleAdsConnector
 from app.connectors.merchant_center import MerchantCenterConnector
 from app.connectors.meta_ads import MetaAdsConnector
 from app.connectors.opencart import OpenCartConnector
+from app.connectors.search_console import SearchConsoleConnector
 from app.connectors.shoply import ShoplyConnector
 from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun
@@ -21,6 +22,7 @@ from app.services.import_service import (
     import_meta_ads_rows,
     import_opencart_orders,
     import_product_catalog,
+    import_search_console_rows,
     import_shoply_sales,
 )
 from app.services.parsing import as_decimal, as_int
@@ -94,6 +96,14 @@ def merchant_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def search_console_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "search_console_rows": len(rows),
+        "search_console_clicks": sum(as_int(row.get("clicks")) for row in rows),
+        "search_console_impressions": sum(as_int(row.get("impressions")) for row in rows),
+    }
+
+
 def run_provider_sync(
     db: Session,
     provider: str,
@@ -152,6 +162,10 @@ def run_provider_sync(
             rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
             count = import_merchant_rows(db, rows, date_from)
             meta = merchant_sync_meta(rows)
+        elif provider == "search_console":
+            rows = SearchConsoleConnector(config).fetch_search_analytics(date_from, date_to)
+            count = import_search_console_rows(db, rows, date_from)
+            meta = search_console_sync_meta(rows)
         elif provider == "shoply":
             rows = ShoplyConnector(config).fetch_sales(date_from, date_to)
             count = import_shoply_sales(db, rows)
