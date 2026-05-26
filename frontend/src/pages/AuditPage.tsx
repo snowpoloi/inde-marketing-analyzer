@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, RefreshCw, SearchCheck, ShieldCheck, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  RefreshCw,
+  SearchCheck,
+  ShieldCheck,
+  TrendingUp
+} from "lucide-react";
 import { api } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -132,6 +141,18 @@ type ChangeRow = {
   last_detected_at: string | null;
 };
 
+type SortDirection = "asc" | "desc";
+type SortConfig = {
+  key: string;
+  direction: SortDirection;
+};
+type SortMap = Record<string, SortConfig>;
+type SortAccessors<T> = Record<string, (row: T) => unknown>;
+type ExportColumn<T> = {
+  header: string;
+  value: (row: T) => unknown;
+};
+
 type AuditData = {
   overview: {
     readiness_score: number;
@@ -204,11 +225,196 @@ function formatDateTime(value: string | null) {
   }).format(new Date(value));
 }
 
+const initialAuditSorts: SortMap = {
+  priority: { key: "severity", direction: "desc" },
+  tracking: { key: "status", direction: "desc" },
+  campaigns: { key: "roas", direction: "desc" },
+  channels: { key: "revenue", direction: "desc" },
+  products: { key: "revenue", direction: "desc" },
+  feed: { key: "clicks", direction: "desc" },
+  "op-statuses": { key: "orders", direction: "desc" },
+  "op-payments": { key: "orders", direction: "desc" },
+  "op-shipping": { key: "orders", direction: "desc" },
+  "op-regions": { key: "orders", direction: "desc" },
+  "op-customer-groups": { key: "orders", direction: "desc" },
+  "op-changes": { key: "last", direction: "desc" }
+};
+
+const severityRank: Record<string, number> = {
+  critical: 6,
+  high: 5,
+  warning: 4,
+  medium: 3,
+  low: 2,
+  positive: 1,
+  success: 1,
+  skipped: 0
+};
+
+const actionRank: Record<string, number> = {
+  investigate_tracking: 6,
+  investigate_product_feed: 5,
+  investigate: 5,
+  pause: 4,
+  reduce: 3,
+  monitor: 2,
+  scale: 1
+};
+
+function ranked(value: string | null | undefined, rankMap: Record<string, number>) {
+  return rankMap[(value ?? "").toLowerCase()] ?? value ?? "";
+}
+
+function isEmptySortValue(value: unknown) {
+  return value === null || value === undefined || value === "";
+}
+
+function compareSortValues(a: unknown, b: unknown) {
+  if (isEmptySortValue(a) && isEmptySortValue(b)) {
+    return 0;
+  }
+  if (isEmptySortValue(a)) {
+    return 1;
+  }
+  if (isEmptySortValue(b)) {
+    return -1;
+  }
+  if (typeof a === "number" && typeof b === "number") {
+    return a - b;
+  }
+  if (typeof a === "boolean" && typeof b === "boolean") {
+    return Number(a) - Number(b);
+  }
+  return String(a).localeCompare(String(b), "el", { numeric: true, sensitivity: "base" });
+}
+
+function sortRows<T>(rows: T[], sort: SortConfig | undefined, accessors: SortAccessors<T>) {
+  if (!sort || !accessors[sort.key]) {
+    return rows;
+  }
+  return [...rows].sort((a, b) => {
+    const result = compareSortValues(accessors[sort.key](a), accessors[sort.key](b));
+    return sort.direction === "asc" ? result : -result;
+  });
+}
+
+function csvCell(value: unknown) {
+  const text = value === null || value === undefined ? "" : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function csvLine(values: unknown[]) {
+  return values.map(csvCell).join(";");
+}
+
+function buildCsvSection<T>(title: string, rows: T[], columns: ExportColumn<T>[]) {
+  return [
+    csvLine([title]),
+    csvLine(columns.map((column) => column.header)),
+    ...rows.map((row) => csvLine(columns.map((column) => column.value(row))))
+  ].join("\r\n");
+}
+
+function downloadCsv(filename: string, content: string) {
+  const blob = new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+const actionSorters: SortAccessors<AuditAction> = {
+  area: (row) => row.area,
+  severity: (row) => ranked(row.severity, severityRank),
+  title: (row) => row.title,
+  action: (row) => ranked(row.action, actionRank),
+  reason: (row) => row.reason
+};
+
+const trackingSorters: SortAccessors<TrackingRow> = {
+  source: (row) => row.source,
+  role: (row) => row.role,
+  orders: (row) => row.reported_orders,
+  revenue: (row) => row.reported_revenue,
+  orderCoverage: (row) => row.order_coverage_percent,
+  revenueCoverage: (row) => row.revenue_coverage_percent,
+  status: (row) => ranked(row.status, severityRank),
+  recommendation: (row) => row.recommendation
+};
+
+const campaignSorters: SortAccessors<CampaignAuditRow> = {
+  source: (row) => row.source_label ?? row.source ?? "",
+  campaign: (row) => row.campaign_name,
+  cost: (row) => row.cost,
+  conv: (row) => row.conversions,
+  value: (row) => row.conversion_value,
+  roas: (row) => row.roas,
+  ctr: (row) => row.ctr,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
+const channelSorters: SortAccessors<ChannelAuditRow> = {
+  channel: (row) => row.channel,
+  source: (row) => row.source_medium,
+  sessions: (row) => row.sessions,
+  purchases: (row) => row.purchases,
+  revenue: (row) => row.revenue,
+  cr: (row) => row.conversion_rate,
+  rps: (row) => row.revenue_per_session,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
+const productSorters: SortAccessors<ProductAuditRow> = {
+  product: (row) => row.name,
+  sku: (row) => metricId(row),
+  orders: (row) => row.orders,
+  qty: (row) => row.quantity,
+  qpo: (row) => row.average_quantity_per_order,
+  revenue: (row) => row.revenue,
+  merchant: (row) => row.merchant_clicks,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
+const feedSorters: SortAccessors<FeedAuditRow> = {
+  title: (row) => row.title || row.item_id,
+  item: (row) => row.item_id,
+  clicks: (row) => row.clicks,
+  impressions: (row) => row.impressions,
+  ctr: (row) => row.ctr,
+  availability: (row) => row.availability ?? "",
+  status: (row) => row.merchant_status ?? "",
+  sales: (row) => row.has_opencart_sales,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
+const operationSorters: SortAccessors<OperationRow> = {
+  label: (row) => row.label ?? row.status ?? "",
+  orders: (row) => row.orders,
+  revenue: (row) => row.revenue,
+  aov: (row) => row.aov,
+  sale: (row) => row.counts_as_sale
+};
+
+const changeSorters: SortAccessors<ChangeRow> = {
+  field: (row) => row.field,
+  changes: (row) => row.changes,
+  last: (row) => (row.last_detected_at ? Date.parse(row.last_detected_at) : null)
+};
+
 export function AuditPage() {
   const today = isoDate();
   const [dateTo, setDateTo] = useState(today);
   const [dateFrom, setDateFrom] = useState(isoDate(-29));
   const [audit, setAudit] = useState<AuditData>(emptyAudit);
+  const [sorts, setSorts] = useState<SortMap>(initialAuditSorts);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -241,13 +447,73 @@ export function AuditPage() {
     return range.from === dateFrom && range.to === dateTo;
   })?.key;
 
+  function toggleSort(tableId: string, key: string) {
+    setSorts((current) => {
+      const active = current[tableId];
+      return {
+        ...current,
+        [tableId]: {
+          key,
+          direction: active?.key === key && active.direction === "desc" ? "asc" : "desc"
+        }
+      };
+    });
+  }
+
+  function sortDirection(tableId: string, key: string) {
+    return sorts[tableId]?.key === key ? sorts[tableId].direction : null;
+  }
+
+  function sortable(tableId: string, key: string) {
+    return {
+      sortable: true,
+      sortDirection: sortDirection(tableId, key),
+      onSort: () => toggleSort(tableId, key)
+    };
+  }
+
+  const sortedPriorityActions = useMemo(
+    () => sortRows(audit.priority_actions, sorts.priority, actionSorters),
+    [audit.priority_actions, sorts]
+  );
+  const sortedTrackingRows = useMemo(() => sortRows(audit.tracking.rows, sorts.tracking, trackingSorters), [audit.tracking.rows, sorts]);
+  const sortedCampaigns = useMemo(() => sortRows(audit.campaigns, sorts.campaigns, campaignSorters), [audit.campaigns, sorts]);
+  const sortedChannels = useMemo(() => sortRows(audit.channels, sorts.channels, channelSorters), [audit.channels, sorts]);
+  const sortedProducts = useMemo(() => sortRows(audit.products, sorts.products, productSorters), [audit.products, sorts]);
+  const sortedFeed = useMemo(() => sortRows(audit.feed, sorts.feed, feedSorters), [audit.feed, sorts]);
+  const sortedStatuses = useMemo(
+    () => sortRows(audit.operations.statuses, sorts["op-statuses"], operationSorters),
+    [audit.operations.statuses, sorts]
+  );
+  const sortedPayments = useMemo(
+    () => sortRows(audit.operations.payments, sorts["op-payments"], operationSorters),
+    [audit.operations.payments, sorts]
+  );
+  const sortedShipping = useMemo(
+    () => sortRows(audit.operations.shipping, sorts["op-shipping"], operationSorters),
+    [audit.operations.shipping, sorts]
+  );
+  const sortedRegions = useMemo(
+    () => sortRows(audit.operations.regions, sorts["op-regions"], operationSorters),
+    [audit.operations.regions, sorts]
+  );
+  const sortedCustomerGroups = useMemo(
+    () => sortRows(audit.operations.customer_groups, sorts["op-customer-groups"], operationSorters),
+    [audit.operations.customer_groups, sorts]
+  );
+  const sortedChanges = useMemo(
+    () => sortRows(audit.operations.changes, sorts["op-changes"], changeSorters),
+    [audit.operations.changes, sorts]
+  );
+
   const actionColumns: Column<AuditAction>[] = useMemo(
     () => [
-      { key: "area", header: "Area", render: (row) => row.area },
-      { key: "severity", header: "Severity", render: (row) => <StatusBadge value={row.severity} /> },
+      { key: "area", header: "Area", ...sortable("priority", "area"), render: (row) => row.area },
+      { key: "severity", header: "Severity", ...sortable("priority", "severity"), render: (row) => <StatusBadge value={row.severity} /> },
       {
         key: "title",
         header: "Priority",
+        ...sortable("priority", "title"),
         render: (row) => (
           <div className="audit-title-cell">
             <strong>{row.title}</strong>
@@ -255,102 +521,232 @@ export function AuditPage() {
           </div>
         )
       },
-      { key: "action", header: "Action", render: (row) => <StatusBadge value={row.action} /> },
-      { key: "reason", header: "Why it matters", render: (row) => row.reason }
+      { key: "action", header: "Action", ...sortable("priority", "action"), render: (row) => <StatusBadge value={row.action} /> },
+      { key: "reason", header: "Why it matters", ...sortable("priority", "reason"), render: (row) => row.reason }
     ],
-    []
+    [sorts]
   );
 
   const trackingColumns: Column<TrackingRow>[] = useMemo(
     () => [
-      { key: "source", header: "Source", render: (row) => <strong>{row.source}</strong> },
-      { key: "role", header: "Role", render: (row) => row.role },
-      { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.reported_orders) },
-      { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.reported_revenue) },
-      { key: "orderCoverage", header: "Order coverage", align: "right", render: (row) => pct(row.order_coverage_percent) },
-      { key: "revenueCoverage", header: "Revenue coverage", align: "right", render: (row) => pct(row.revenue_coverage_percent) },
-      { key: "status", header: "Status", render: (row) => <StatusBadge value={row.status} /> },
-      { key: "recommendation", header: "Recommendation", render: (row) => row.recommendation }
+      { key: "source", header: "Source", ...sortable("tracking", "source"), render: (row) => <strong>{row.source}</strong> },
+      { key: "role", header: "Role", ...sortable("tracking", "role"), render: (row) => row.role },
+      { key: "orders", header: "Orders", align: "right", ...sortable("tracking", "orders"), render: (row) => number.format(row.reported_orders) },
+      { key: "revenue", header: "Revenue", align: "right", ...sortable("tracking", "revenue"), render: (row) => currency.format(row.reported_revenue) },
+      { key: "orderCoverage", header: "Order coverage", align: "right", ...sortable("tracking", "orderCoverage"), render: (row) => pct(row.order_coverage_percent) },
+      { key: "revenueCoverage", header: "Revenue coverage", align: "right", ...sortable("tracking", "revenueCoverage"), render: (row) => pct(row.revenue_coverage_percent) },
+      { key: "status", header: "Status", ...sortable("tracking", "status"), render: (row) => <StatusBadge value={row.status} /> },
+      { key: "recommendation", header: "Recommendation", ...sortable("tracking", "recommendation"), render: (row) => row.recommendation }
     ],
-    []
+    [sorts]
   );
 
   const campaignColumns: Column<CampaignAuditRow>[] = useMemo(
     () => [
-      { key: "source", header: "Source", render: (row) => row.source_label ?? row.source ?? "-" },
-      { key: "campaign", header: "Campaign", render: (row) => <strong>{row.campaign_name}</strong> },
-      { key: "cost", header: "Cost", align: "right", render: (row) => currency.format(row.cost) },
-      { key: "conv", header: "Conv.", align: "right", render: (row) => number.format(row.conversions) },
-      { key: "value", header: "Value", align: "right", render: (row) => currency.format(row.conversion_value) },
-      { key: "roas", header: "ROAS", align: "right", render: (row) => number.format(row.roas) },
-      { key: "ctr", header: "CTR", align: "right", render: (row) => pct(row.ctr) },
-      { key: "action", header: "Action", render: (row) => <StatusBadge value={row.audit_action} /> },
-      { key: "reason", header: "Reason", render: (row) => row.reason }
+      { key: "source", header: "Source", ...sortable("campaigns", "source"), render: (row) => row.source_label ?? row.source ?? "-" },
+      { key: "campaign", header: "Campaign", ...sortable("campaigns", "campaign"), render: (row) => <strong>{row.campaign_name}</strong> },
+      { key: "cost", header: "Cost", align: "right", ...sortable("campaigns", "cost"), render: (row) => currency.format(row.cost) },
+      { key: "conv", header: "Conv.", align: "right", ...sortable("campaigns", "conv"), render: (row) => number.format(row.conversions) },
+      { key: "value", header: "Value", align: "right", ...sortable("campaigns", "value"), render: (row) => currency.format(row.conversion_value) },
+      { key: "roas", header: "ROAS", align: "right", ...sortable("campaigns", "roas"), render: (row) => number.format(row.roas) },
+      { key: "ctr", header: "CTR", align: "right", ...sortable("campaigns", "ctr"), render: (row) => pct(row.ctr) },
+      { key: "action", header: "Action", ...sortable("campaigns", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("campaigns", "reason"), render: (row) => row.reason }
     ],
-    []
+    [sorts]
   );
 
   const channelColumns: Column<ChannelAuditRow>[] = useMemo(
     () => [
-      { key: "channel", header: "Channel", render: (row) => <strong>{row.channel}</strong> },
-      { key: "source", header: "Source / medium", render: (row) => row.source_medium },
-      { key: "sessions", header: "Sessions", align: "right", render: (row) => number.format(row.sessions) },
-      { key: "purchases", header: "Purchases", align: "right", render: (row) => number.format(row.purchases) },
-      { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
-      { key: "cr", header: "CR", align: "right", render: (row) => pct(row.conversion_rate) },
-      { key: "rps", header: "Rev/session", align: "right", render: (row) => currency.format(row.revenue_per_session) },
-      { key: "action", header: "Action", render: (row) => <StatusBadge value={row.audit_action} /> },
-      { key: "reason", header: "Reason", render: (row) => row.reason }
+      { key: "channel", header: "Channel", ...sortable("channels", "channel"), render: (row) => <strong>{row.channel}</strong> },
+      { key: "source", header: "Source / medium", ...sortable("channels", "source"), render: (row) => row.source_medium },
+      { key: "sessions", header: "Sessions", align: "right", ...sortable("channels", "sessions"), render: (row) => number.format(row.sessions) },
+      { key: "purchases", header: "Purchases", align: "right", ...sortable("channels", "purchases"), render: (row) => number.format(row.purchases) },
+      { key: "revenue", header: "Revenue", align: "right", ...sortable("channels", "revenue"), render: (row) => currency.format(row.revenue) },
+      { key: "cr", header: "CR", align: "right", ...sortable("channels", "cr"), render: (row) => pct(row.conversion_rate) },
+      { key: "rps", header: "Rev/session", align: "right", ...sortable("channels", "rps"), render: (row) => currency.format(row.revenue_per_session) },
+      { key: "action", header: "Action", ...sortable("channels", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("channels", "reason"), render: (row) => row.reason }
     ],
-    []
+    [sorts]
   );
 
   const productColumns: Column<ProductAuditRow>[] = useMemo(
     () => [
-      { key: "product", header: "Product", render: (row) => <strong>{row.name}</strong> },
-      { key: "sku", header: "SKU", render: (row) => metricId(row) },
-      { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders) },
-      { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
-      { key: "qpo", header: "Qty/order", align: "right", render: (row) => number.format(row.average_quantity_per_order) },
-      { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
-      { key: "merchant", header: "Feed clicks", align: "right", render: (row) => number.format(row.merchant_clicks) },
-      { key: "action", header: "Action", render: (row) => <StatusBadge value={row.audit_action} /> },
-      { key: "reason", header: "Reason", render: (row) => row.reason }
+      { key: "product", header: "Product", ...sortable("products", "product"), render: (row) => <strong>{row.name}</strong> },
+      { key: "sku", header: "SKU", ...sortable("products", "sku"), render: (row) => metricId(row) },
+      { key: "orders", header: "Orders", align: "right", ...sortable("products", "orders"), render: (row) => number.format(row.orders) },
+      { key: "qty", header: "Qty", align: "right", ...sortable("products", "qty"), render: (row) => number.format(row.quantity) },
+      { key: "qpo", header: "Qty/order", align: "right", ...sortable("products", "qpo"), render: (row) => number.format(row.average_quantity_per_order) },
+      { key: "revenue", header: "Revenue", align: "right", ...sortable("products", "revenue"), render: (row) => currency.format(row.revenue) },
+      { key: "merchant", header: "Feed clicks", align: "right", ...sortable("products", "merchant"), render: (row) => number.format(row.merchant_clicks) },
+      { key: "action", header: "Action", ...sortable("products", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("products", "reason"), render: (row) => row.reason }
     ],
-    []
+    [sorts]
   );
 
   const feedColumns: Column<FeedAuditRow>[] = useMemo(
     () => [
-      { key: "title", header: "Feed item", render: (row) => <strong>{row.title || row.item_id}</strong> },
-      { key: "item", header: "Item ID", render: (row) => row.item_id },
-      { key: "clicks", header: "Clicks", align: "right", render: (row) => number.format(row.clicks) },
-      { key: "impressions", header: "Impressions", align: "right", render: (row) => number.format(row.impressions) },
-      { key: "ctr", header: "CTR", align: "right", render: (row) => pct(row.ctr) },
-      { key: "availability", header: "Availability", render: (row) => row.availability || "-" },
-      { key: "status", header: "Status", render: (row) => row.merchant_status || "-" },
-      { key: "sales", header: "Sales match", render: (row) => (row.has_opencart_sales ? "Yes" : "No") },
-      { key: "action", header: "Action", render: (row) => <StatusBadge value={row.audit_action} /> },
-      { key: "reason", header: "Reason", render: (row) => row.reason }
+      { key: "title", header: "Feed item", ...sortable("feed", "title"), render: (row) => <strong>{row.title || row.item_id}</strong> },
+      { key: "item", header: "Item ID", ...sortable("feed", "item"), render: (row) => row.item_id },
+      { key: "clicks", header: "Clicks", align: "right", ...sortable("feed", "clicks"), render: (row) => number.format(row.clicks) },
+      { key: "impressions", header: "Impressions", align: "right", ...sortable("feed", "impressions"), render: (row) => number.format(row.impressions) },
+      { key: "ctr", header: "CTR", align: "right", ...sortable("feed", "ctr"), render: (row) => pct(row.ctr) },
+      { key: "availability", header: "Availability", ...sortable("feed", "availability"), render: (row) => row.availability || "-" },
+      { key: "status", header: "Status", ...sortable("feed", "status"), render: (row) => row.merchant_status || "-" },
+      { key: "sales", header: "Sales match", ...sortable("feed", "sales"), render: (row) => (row.has_opencart_sales ? "Yes" : "No") },
+      { key: "action", header: "Action", ...sortable("feed", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("feed", "reason"), render: (row) => row.reason }
     ],
-    []
+    [sorts]
   );
 
-  const operationColumns: Column<OperationRow>[] = useMemo(
-    () => [
-      { key: "label", header: "Name", render: (row) => row.label ?? row.status ?? "-" },
-      { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders) },
-      { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
-      { key: "aov", header: "AOV", align: "right", render: (row) => (row.aov === undefined ? "-" : currency.format(row.aov)) },
+  function operationColumns(tableId: string): Column<OperationRow>[] {
+    return [
+      { key: "label", header: "Name", ...sortable(tableId, "label"), render: (row) => row.label ?? row.status ?? "-" },
+      { key: "orders", header: "Orders", align: "right", ...sortable(tableId, "orders"), render: (row) => number.format(row.orders) },
+      { key: "revenue", header: "Revenue", align: "right", ...sortable(tableId, "revenue"), render: (row) => currency.format(row.revenue) },
+      { key: "aov", header: "AOV", align: "right", ...sortable(tableId, "aov"), render: (row) => (row.aov === undefined ? "-" : currency.format(row.aov)) },
       {
         key: "sale",
         header: "Counts",
+        ...sortable(tableId, "sale"),
         render: (row) =>
           row.counts_as_sale === undefined ? "-" : <StatusBadge value={row.counts_as_sale ? "success" : "skipped"} />
       }
+    ];
+  }
+
+  const changeColumns: Column<ChangeRow>[] = useMemo(
+    () => [
+      { key: "field", header: "Field", ...sortable("op-changes", "field"), render: (row) => row.field },
+      { key: "changes", header: "Changes", align: "right", ...sortable("op-changes", "changes"), render: (row) => number.format(row.changes) },
+      { key: "last", header: "Last detected", ...sortable("op-changes", "last"), render: (row) => formatDateTime(row.last_detected_at) }
     ],
-    []
+    [sorts]
   );
+
+  function exportAudit() {
+    const overviewRows = [
+      {
+        score: `${number.format(audit.overview.readiness_score)}/100`,
+        high_priority: audit.overview.high_priority,
+        medium_priority: audit.overview.medium_priority,
+        opportunities: audit.overview.positive_signals,
+        actual_revenue: currency.format(audit.overview.actual_revenue),
+        actual_orders: audit.overview.actual_orders,
+        ad_spend: currency.format(audit.overview.ad_spend),
+        actual_roas: number.format(audit.overview.actual_roas)
+      }
+    ];
+    const sections = [
+      [
+        csvLine(["INDE Marketing Audit"]),
+        csvLine(["Date from", dateFrom]),
+        csvLine(["Date to", dateTo]),
+        csvLine(["Exported at", formatDateTime(new Date().toISOString())])
+      ].join("\r\n"),
+      buildCsvSection("Overview", overviewRows, [
+        { header: "Audit score", value: (row) => row.score },
+        { header: "High priority", value: (row) => row.high_priority },
+        { header: "Medium priority", value: (row) => row.medium_priority },
+        { header: "Opportunities", value: (row) => row.opportunities },
+        { header: "Actual revenue", value: (row) => row.actual_revenue },
+        { header: "Actual orders", value: (row) => row.actual_orders },
+        { header: "Ad spend", value: (row) => row.ad_spend },
+        { header: "Actual ROAS", value: (row) => row.actual_roas }
+      ]),
+      buildCsvSection("What to check first", sortedPriorityActions, [
+        { header: "Area", value: (row) => row.area },
+        { header: "Severity", value: (row) => row.severity },
+        { header: "Priority", value: (row) => row.title },
+        { header: "Metric", value: (row) => row.metric },
+        { header: "Value", value: (row) => row.value },
+        { header: "Action", value: (row) => row.action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("Tracking health", sortedTrackingRows, [
+        { header: "Source", value: (row) => row.source },
+        { header: "Role", value: (row) => row.role },
+        { header: "Orders", value: (row) => row.reported_orders },
+        { header: "Revenue", value: (row) => currency.format(row.reported_revenue) },
+        { header: "OpenCart orders", value: (row) => row.opencart_orders },
+        { header: "OpenCart revenue", value: (row) => currency.format(row.opencart_revenue) },
+        { header: "Order coverage", value: (row) => pct(row.order_coverage_percent) },
+        { header: "Revenue coverage", value: (row) => pct(row.revenue_coverage_percent) },
+        { header: "Status", value: (row) => row.status },
+        { header: "Recommendation", value: (row) => row.recommendation }
+      ]),
+      buildCsvSection("Campaign audit", sortedCampaigns, [
+        { header: "Source", value: (row) => row.source_label ?? row.source ?? "-" },
+        { header: "Campaign", value: (row) => row.campaign_name },
+        { header: "Cost", value: (row) => currency.format(row.cost) },
+        { header: "Conversions", value: (row) => row.conversions },
+        { header: "Value", value: (row) => currency.format(row.conversion_value) },
+        { header: "ROAS", value: (row) => number.format(row.roas) },
+        { header: "CTR", value: (row) => pct(row.ctr) },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("GA4 channel audit", sortedChannels, [
+        { header: "Channel", value: (row) => row.channel },
+        { header: "Source / medium", value: (row) => row.source_medium },
+        { header: "Sessions", value: (row) => row.sessions },
+        { header: "Purchases", value: (row) => row.purchases },
+        { header: "Revenue", value: (row) => currency.format(row.revenue) },
+        { header: "CR", value: (row) => pct(row.conversion_rate) },
+        { header: "Revenue/session", value: (row) => currency.format(row.revenue_per_session) },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("Product opportunities", sortedProducts, [
+        { header: "Product", value: (row) => row.name },
+        { header: "SKU", value: (row) => metricId(row) },
+        { header: "Orders", value: (row) => row.orders },
+        { header: "Qty", value: (row) => row.quantity },
+        { header: "Qty/order", value: (row) => number.format(row.average_quantity_per_order) },
+        { header: "Revenue", value: (row) => currency.format(row.revenue) },
+        { header: "Feed clicks", value: (row) => row.merchant_clicks },
+        { header: "Feed impressions", value: (row) => row.merchant_impressions },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("Merchant feed audit", sortedFeed, [
+        { header: "Feed item", value: (row) => row.title || row.item_id },
+        { header: "Item ID", value: (row) => row.item_id },
+        { header: "Clicks", value: (row) => row.clicks },
+        { header: "Impressions", value: (row) => row.impressions },
+        { header: "CTR", value: (row) => pct(row.ctr) },
+        { header: "Availability", value: (row) => row.availability || "-" },
+        { header: "Status", value: (row) => row.merchant_status || "-" },
+        { header: "Sales match", value: (row) => row.has_opencart_sales },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("OpenCart order statuses", sortedStatuses, operationExportColumns()),
+      buildCsvSection("OpenCart payment methods", sortedPayments, operationExportColumns()),
+      buildCsvSection("OpenCart shipping methods", sortedShipping, operationExportColumns()),
+      buildCsvSection("OpenCart regions", sortedRegions, operationExportColumns()),
+      buildCsvSection("OpenCart customer groups", sortedCustomerGroups, operationExportColumns()),
+      buildCsvSection("OpenCart detected order changes", sortedChanges, [
+        { header: "Field", value: (row) => row.field },
+        { header: "Changes", value: (row) => row.changes },
+        { header: "Last detected", value: (row) => formatDateTime(row.last_detected_at) }
+      ])
+    ];
+    downloadCsv(`inde-marketing-audit-${dateFrom}-to-${dateTo}.csv`, sections.join("\r\n\r\n"));
+  }
+
+  function operationExportColumns(): ExportColumn<OperationRow>[] {
+    return [
+      { header: "Name", value: (row) => row.label ?? row.status ?? "-" },
+      { header: "Orders", value: (row) => row.orders },
+      { header: "Revenue", value: (row) => currency.format(row.revenue) },
+      { header: "AOV", value: (row) => (row.aov === undefined ? "-" : currency.format(row.aov)) },
+      { header: "Counts as sale", value: (row) => row.counts_as_sale }
+    ];
+  }
 
   return (
     <div className="page-stack">
@@ -374,6 +770,10 @@ export function AuditPage() {
           </div>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <button className="secondary-action compact" onClick={exportAudit} disabled={loading}>
+            <Download size={17} />
+            Export CSV
+          </button>
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh
@@ -396,7 +796,7 @@ export function AuditPage() {
           <h2>What to check first</h2>
           <span>Highest impact issues and opportunities</span>
         </div>
-        <DataTable rows={audit.priority_actions} columns={actionColumns} empty="No priority findings for this period." />
+        <DataTable rows={sortedPriorityActions} columns={actionColumns} empty="No priority findings for this period." />
       </section>
 
       <section className="panel">
@@ -404,7 +804,7 @@ export function AuditPage() {
           <h2>Tracking health</h2>
           <span>Attribution sources compared to OpenCart truth</span>
         </div>
-        <DataTable rows={audit.tracking.rows} columns={trackingColumns} empty="No tracking data yet." />
+        <DataTable rows={sortedTrackingRows} columns={trackingColumns} empty="No tracking data yet." />
       </section>
 
       <div className="two-column">
@@ -413,14 +813,14 @@ export function AuditPage() {
             <h2>Campaign audit</h2>
             <span>Meta and Google Ads</span>
           </div>
-          <DataTable rows={audit.campaigns} columns={campaignColumns} empty="No campaign data yet." />
+          <DataTable rows={sortedCampaigns} columns={campaignColumns} empty="No campaign data yet." />
         </section>
         <section className="panel">
           <div className="panel-title">
             <h2>GA4 channel audit</h2>
             <span>Traffic quality and revenue signals</span>
           </div>
-          <DataTable rows={audit.channels} columns={channelColumns} empty="No GA4 channel data yet." />
+          <DataTable rows={sortedChannels} columns={channelColumns} empty="No GA4 channel data yet." />
         </section>
       </div>
 
@@ -429,7 +829,7 @@ export function AuditPage() {
           <h2>Product opportunities</h2>
           <span>Distinct orders are treated as stronger demand than bulk quantity</span>
         </div>
-        <DataTable rows={audit.products} columns={productColumns} empty="No product audit data yet." />
+        <DataTable rows={sortedProducts} columns={productColumns} empty="No product audit data yet." />
       </section>
 
       <section className="panel">
@@ -437,7 +837,7 @@ export function AuditPage() {
           <h2>Merchant feed audit</h2>
           <span>Products with visibility, clicks, sales match and feed risk</span>
         </div>
-        <DataTable rows={audit.feed} columns={feedColumns} empty="No Merchant Center data yet." />
+        <DataTable rows={sortedFeed} columns={feedColumns} empty="No Merchant Center data yet." />
       </section>
 
       <section className="panel">
@@ -448,34 +848,30 @@ export function AuditPage() {
         <div className="operation-grid">
           <div>
             <h3>Order statuses</h3>
-            <DataTable rows={audit.operations.statuses} columns={operationColumns} empty="No statuses found." />
+            <DataTable rows={sortedStatuses} columns={operationColumns("op-statuses")} empty="No statuses found." />
           </div>
           <div>
             <h3>Payment methods</h3>
-            <DataTable rows={audit.operations.payments} columns={operationColumns} empty="No payment data found." />
+            <DataTable rows={sortedPayments} columns={operationColumns("op-payments")} empty="No payment data found." />
           </div>
           <div>
             <h3>Shipping methods</h3>
-            <DataTable rows={audit.operations.shipping} columns={operationColumns} empty="No shipping data found." />
+            <DataTable rows={sortedShipping} columns={operationColumns("op-shipping")} empty="No shipping data found." />
           </div>
           <div>
             <h3>Regions</h3>
-            <DataTable rows={audit.operations.regions} columns={operationColumns} empty="No region data found." />
+            <DataTable rows={sortedRegions} columns={operationColumns("op-regions")} empty="No region data found." />
           </div>
           <div>
             <h3>Customer groups</h3>
-            <DataTable rows={audit.operations.customer_groups} columns={operationColumns} empty="No customer group data found." />
+            <DataTable rows={sortedCustomerGroups} columns={operationColumns("op-customer-groups")} empty="No customer group data found." />
           </div>
           <div>
             <h3>Detected order changes</h3>
             <DataTable
-              rows={audit.operations.changes}
+              rows={sortedChanges}
               empty="No order changes detected in this period."
-              columns={[
-                { key: "field", header: "Field", render: (row) => row.field },
-                { key: "changes", header: "Changes", align: "right", render: (row) => number.format(row.changes) },
-                { key: "last", header: "Last detected", render: (row) => formatDateTime(row.last_detected_at) }
-              ]}
+              columns={changeColumns}
             />
           </div>
         </div>
