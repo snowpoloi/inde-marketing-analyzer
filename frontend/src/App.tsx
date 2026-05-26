@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, clearToken } from "./api/client";
 import { Layout } from "./components/Layout";
+import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SyncLogsPage } from "./pages/SyncLogsPage";
 
-type View = "dashboard" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "products" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "");
-  if (hash === "products" || hash === "settings" || hash === "sync") {
+  if (hash === "audit" || hash === "products" || hash === "settings" || hash === "sync") {
     return hash;
   }
   return "dashboard";
@@ -50,6 +51,7 @@ export function App() {
       }}
     >
       {view === "dashboard" ? <DashboardPage /> : null}
+      {view === "audit" ? <AuditPage /> : null}
       {view === "products" ? <ProductsPage /> : null}
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}

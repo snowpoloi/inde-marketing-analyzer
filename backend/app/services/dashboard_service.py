@@ -11,6 +11,7 @@ from app.models import (
     IntegrationSetting,
     MerchantProductMetric,
     OpenCartOrder,
+    OpenCartOrderChange,
     OpenCartOrderProduct,
     ProductCatalog,
 )
@@ -414,3 +415,601 @@ def campaign_recommendations(db: Session, date_from: date, date_to: date) -> lis
             }
         )
     return recommendations
+
+
+def _source_label(source: str) -> str:
+    return {"meta_ads": "Meta Ads", "google_ads": "Google Ads"}.get(source, source)
+
+
+def _severity_rank(severity: str) -> int:
+    return {"critical": 0, "high": 1, "medium": 2, "low": 3, "positive": 4, "info": 5}.get(severity, 9)
+
+
+def _audit_action(
+    area: str,
+    title: str,
+    severity: str,
+    action: str,
+    reason: str,
+    metric: str,
+    value: str | int | float,
+) -> dict[str, Any]:
+    return {
+        "area": area,
+        "title": title,
+        "severity": severity,
+        "action": action,
+        "reason": reason,
+        "metric": metric,
+        "value": value,
+    }
+
+
+def _merchant_raw_value(metric: MerchantProductMetric, key: str) -> Any:
+    raw = metric.raw or {}
+    if key in raw:
+        return raw.get(key)
+    product_health = raw.get("product_health") or {}
+    product_view = product_health.get("productView") if isinstance(product_health, dict) else {}
+    if not isinstance(product_view, dict):
+        return None
+    aliases = {
+        "merchant_status": "aggregatedReportingContextStatus",
+        "click_potential": "clickPotential",
+        "product_status": "aggregatedReportingContextStatus",
+    }
+    return product_view.get(aliases.get(key, key))
+
+
+def _merchant_metrics(db: Session, date_from: date, date_to: date) -> dict[str, dict[str, Any]]:
+    metrics: dict[str, dict[str, Any]] = {}
+    rows = db.scalars(
+        select(MerchantProductMetric).where(_period_filter(MerchantProductMetric.metric_date, date_from, date_to))
+    ).all()
+    for row in rows:
+        item_id = str(row.item_id or "").strip()
+        if not item_id:
+            continue
+        current = metrics.setdefault(
+            item_id,
+            {
+                "item_id": item_id,
+                "title": row.title,
+                "brand": row.brand,
+                "category": row.category,
+                "availability": row.availability,
+                "merchant_status": _merchant_raw_value(row, "merchant_status"),
+                "click_potential": _merchant_raw_value(row, "click_potential"),
+                "price": dec_to_float(row.price),
+                "clicks": 0,
+                "impressions": 0,
+            },
+        )
+        current["clicks"] += int(row.clicks or 0)
+        current["impressions"] += int(row.impressions or 0)
+        current["title"] = current["title"] or row.title
+        current["brand"] = current["brand"] or row.brand
+        current["category"] = current["category"] or row.category
+        current["availability"] = current["availability"] or row.availability
+        current["merchant_status"] = current["merchant_status"] or _merchant_raw_value(row, "merchant_status")
+        current["click_potential"] = current["click_potential"] or _merchant_raw_value(row, "click_potential")
+        if not current["price"]:
+            current["price"] = dec_to_float(row.price)
+    for metric in metrics.values():
+        metric["ctr"] = _ratio(metric["clicks"], metric["impressions"]) * 100
+    return metrics
+
+
+def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    meta = db.execute(
+        select(
+            func.coalesce(func.sum(CampaignDailyMetric.purchases), 0),
+            func.coalesce(func.sum(CampaignDailyMetric.purchase_value), 0),
+        ).where(
+            CampaignDailyMetric.source == "meta_ads",
+            _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
+        )
+    ).one()
+    google = db.execute(
+        select(
+            func.coalesce(func.sum(CampaignDailyMetric.conversions), 0),
+            func.coalesce(func.sum(CampaignDailyMetric.conversion_value), 0),
+        ).where(
+            CampaignDailyMetric.source == "google_ads",
+            _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
+        )
+    ).one()
+    ga4 = db.execute(
+        select(
+            func.coalesce(func.sum(GA4DailyMetric.purchases), 0),
+            func.coalesce(func.sum(GA4DailyMetric.purchase_revenue), 0),
+        ).where(_period_filter(GA4DailyMetric.metric_date, date_from, date_to))
+    ).one()
+
+    opencart_orders = float(summary.get("opencart_orders") or 0)
+    opencart_revenue = float(summary.get("opencart_revenue") or 0)
+    sources = [
+        ("OpenCart", opencart_orders, opencart_revenue, "Source of truth"),
+        ("GA4", float(ga4[0] or 0), float(ga4[1] or 0), "Site analytics"),
+        ("Meta Ads", float(meta[0] or 0), float(meta[1] or 0), "Paid attribution"),
+        ("Google Ads", float(google[0] or 0), float(google[1] or 0), "Paid attribution"),
+    ]
+
+    rows = []
+    actions = []
+    for name, orders, revenue, role in sources:
+        order_delta = orders - opencart_orders
+        revenue_delta = revenue - opencart_revenue
+        order_coverage = _ratio(orders, opencart_orders) * 100 if name != "OpenCart" else 100
+        revenue_coverage = _ratio(revenue, opencart_revenue) * 100 if name != "OpenCart" else 100
+        status = "positive"
+        recommendation = "Use as the sales and revenue baseline."
+        if name != "OpenCart":
+            status = "monitor"
+            recommendation = "Keep comparing this attribution source against OpenCart."
+            if opencart_orders and orders == 0:
+                status = "high"
+                recommendation = "No purchase signal for this period; check conversion setup and permissions."
+            elif opencart_orders and order_coverage < 50:
+                status = "high"
+                recommendation = "Large attribution gap; review consent, purchase events and deduplication."
+            elif opencart_orders and order_coverage < 80:
+                status = "medium"
+                recommendation = "Meaningful attribution gap; review tracking quality before scaling on this source alone."
+            elif orders > 0:
+                status = "positive"
+                recommendation = "Purchase signal is flowing; use it as directional attribution."
+        rows.append(
+            {
+                "source": name,
+                "role": role,
+                "reported_orders": orders,
+                "reported_revenue": revenue,
+                "opencart_orders": opencart_orders,
+                "opencart_revenue": opencart_revenue,
+                "orders_or_conversions": orders,
+                "revenue": revenue,
+                "order_delta": order_delta,
+                "revenue_delta": revenue_delta,
+                "order_coverage_percent": order_coverage,
+                "revenue_coverage_percent": revenue_coverage,
+                "status": status,
+                "recommendation": recommendation,
+            }
+        )
+
+    ga4_coverage = _ratio(ga4[0] or 0, opencart_orders) * 100
+    if opencart_orders >= 10 and ga4_coverage < 75:
+        actions.append(
+            _audit_action(
+                "Tracking",
+                "GA4 under-reports purchases",
+                "high",
+                "investigate tracking",
+                "GA4 purchases are materially below OpenCart orders. Check checkout purchase event, consent mode, and thank-you page firing.",
+                "GA4 coverage",
+                f"{ga4_coverage:.1f}%",
+            )
+        )
+
+    paid_attributed_value = float(meta[1] or 0) + float(google[1] or 0)
+    if opencart_revenue and paid_attributed_value > opencart_revenue * 1.25:
+        actions.append(
+            _audit_action(
+                "Tracking",
+                "Paid platforms may over-attribute revenue",
+                "medium",
+                "investigate tracking",
+                "Meta and Google attributed revenue together exceed actual OpenCart revenue. Review duplicate conversions and attribution windows.",
+                "Paid / actual revenue",
+                f"{_ratio(paid_attributed_value, opencart_revenue):.2f}x",
+            )
+        )
+
+    if opencart_orders and float(meta[0] or 0) == 0 and float(google[0] or 0) == 0:
+        actions.append(
+            _audit_action(
+                "Tracking",
+                "Paid conversion signals are missing",
+                "high",
+                "investigate tracking",
+                "OpenCart has sales, but Meta and Google report no purchases/conversions in this period.",
+                "Paid conversions",
+                0,
+            )
+        )
+
+    return {"rows": rows}, actions
+
+
+def _campaign_audit(db: Session, date_from: date, date_to: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows = source_performance(db, "meta_ads", date_from, date_to) + source_performance(db, "google_ads", date_from, date_to)
+    audited = []
+    actions = []
+    for row in rows:
+        source = _source_label(row["source"])
+        cost = float(row["cost"] or 0)
+        clicks = int(row["clicks"] or 0)
+        impressions = int(row["impressions"] or 0)
+        conversions = float(row["conversions"] or row.get("purchases") or 0)
+        roas = float(row["roas"] or 0)
+        ctr = float(row["ctr"] or 0)
+
+        action = "monitor"
+        severity = "low"
+        reason = "Keep collecting data before making a budget decision."
+        if cost >= 50 and clicks >= 100 and conversions == 0:
+            action = "pause"
+            severity = "high"
+            reason = "Meaningful spend and clicks, but zero conversion signal."
+        elif conversions >= 3 and roas >= 3:
+            action = "scale"
+            severity = "positive"
+            reason = "Conversion volume and ROAS are strong enough to consider controlled scaling."
+        elif cost >= 30 and 0 < roas < 1.5:
+            action = "reduce"
+            severity = "medium"
+            reason = "Campaign spends but returns below the first profitability threshold."
+        elif impressions >= 1000 and ctr < 0.5:
+            action = "investigate product/feed"
+            severity = "medium"
+            reason = "Low CTR suggests creative, audience, query, or feed/product mismatch."
+        elif cost > 0 and clicks == 0:
+            action = "investigate tracking"
+            severity = "medium"
+            reason = "Spend exists without clicks; check imported metrics and campaign objective."
+
+        audited_row = {
+            **row,
+            "source_label": source,
+            "audit_action": action,
+            "severity": severity,
+            "reason": reason,
+        }
+        audited.append(audited_row)
+        if severity in {"high", "medium", "positive"}:
+            actions.append(
+                _audit_action(
+                    "Campaigns",
+                    f"{source}: {row['campaign_name']}",
+                    severity,
+                    action,
+                    reason,
+                    "ROAS",
+                    round(roas, 2),
+                )
+            )
+    audited.sort(key=lambda item: (_severity_rank(item["severity"]), -float(item.get("cost") or 0)))
+    return audited, actions
+
+
+def _ga4_channel_audit(db: Session, date_from: date, date_to: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    channel_expr = func.coalesce(GA4DailyMetric.channel_group, "Unknown")
+    source_expr = func.coalesce(GA4DailyMetric.source_medium, "Unknown")
+    rows = db.execute(
+        select(
+            channel_expr.label("channel"),
+            source_expr.label("source_medium"),
+            func.coalesce(func.sum(GA4DailyMetric.sessions), 0).label("sessions"),
+            func.coalesce(func.sum(GA4DailyMetric.users), 0).label("users"),
+            func.coalesce(func.sum(GA4DailyMetric.purchases), 0).label("purchases"),
+            func.coalesce(func.sum(GA4DailyMetric.purchase_revenue), 0).label("revenue"),
+        )
+        .where(_period_filter(GA4DailyMetric.metric_date, date_from, date_to))
+        .group_by(channel_expr, source_expr)
+        .order_by(func.sum(GA4DailyMetric.purchase_revenue).desc())
+        .limit(50)
+    ).all()
+    audited = []
+    actions = []
+    for row in rows:
+        sessions = int(row.sessions or 0)
+        purchases = float(row.purchases or 0)
+        revenue = float(row.revenue or 0)
+        conversion_rate = _ratio(purchases, sessions) * 100
+        revenue_per_session = _ratio(revenue, sessions)
+        action = "monitor"
+        severity = "low"
+        reason = "Channel is within normal observation range."
+        if sessions >= 200 and purchases == 0:
+            action = "investigate tracking"
+            severity = "medium"
+            reason = "Traffic volume exists without purchase events; check landing pages, audience quality, or event tracking."
+        elif purchases >= 10 and revenue_per_session >= 2:
+            action = "scale"
+            severity = "positive"
+            reason = "Channel produces meaningful revenue per session."
+        elif sessions >= 300 and conversion_rate < 0.3:
+            action = "reduce"
+            severity = "medium"
+            reason = "Conversion rate is weak for the traffic volume."
+        audited.append(
+            {
+                "channel": row.channel,
+                "source_medium": row.source_medium,
+                "sessions": sessions,
+                "users": int(row.users or 0),
+                "purchases": purchases,
+                "revenue": dec_to_float(row.revenue),
+                "conversion_rate": conversion_rate,
+                "revenue_per_session": revenue_per_session,
+                "audit_action": action,
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+        if severity in {"medium", "positive"}:
+            actions.append(
+                _audit_action(
+                    "GA4",
+                    f"{row.channel} / {row.source_medium}",
+                    severity,
+                    action,
+                    reason,
+                    "Conv. rate",
+                    f"{conversion_rate:.2f}%",
+                )
+            )
+    return audited, actions
+
+
+def _product_audit(db: Session, date_from: date, date_to: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    products = product_performance(db, date_from, date_to)
+    merchant = _merchant_metrics(db, date_from, date_to)
+    sales_by_key: set[str] = set()
+    product_audit_rows = []
+    actions = []
+
+    for product in products:
+        keys = {str(product.get("sku") or ""), str(product.get("model") or ""), str(product.get("product_id") or "")}
+        keys = {key for key in keys if key}
+        sales_by_key.update(keys)
+        metric = next((merchant[key] for key in keys if key in merchant), None)
+        orders = int(product.get("orders") or 0)
+        quantity = int(product.get("quantity") or 0)
+        revenue = float(product.get("revenue") or 0)
+        impressions = int((metric or {}).get("impressions") or 0)
+        clicks = int((metric or {}).get("clicks") or 0)
+        average_quantity_per_order = float(product.get("average_quantity_per_order") or 0)
+
+        action = "monitor"
+        severity = "low"
+        reason = "Keep as reference product; no strong action from current signals."
+        if metric and metric.get("availability") and str(metric["availability"]).lower() not in {"in stock", "in_stock"}:
+            action = "investigate product/feed"
+            severity = "high"
+            reason = "OpenCart has sales but Merchant availability is not in stock."
+        elif orders >= 5 and impressions < 100:
+            action = "investigate product/feed"
+            severity = "high"
+            reason = "Product sells across multiple orders but has weak Merchant visibility."
+        elif orders >= 4 and revenue >= 500 and clicks < 10:
+            action = "scale"
+            severity = "positive"
+            reason = "OpenCart demand is strong and paid/feed traffic is still low."
+        elif orders <= 1 and quantity >= 5:
+            action = "monitor"
+            severity = "medium"
+            reason = "Quantity came mostly from one order; wait for more distinct buyers before treating as winner."
+        elif clicks >= 60 and orders == 0:
+            action = "investigate product/feed"
+            severity = "medium"
+            reason = "Feed traffic exists without OpenCart sales."
+
+        row = {
+            **product,
+            "merchant_clicks": clicks,
+            "merchant_impressions": impressions,
+            "merchant_ctr": float((metric or {}).get("ctr") or 0),
+            "audit_action": action,
+            "severity": severity,
+            "reason": reason,
+        }
+        product_audit_rows.append(row)
+        if severity in {"high", "medium", "positive"}:
+            actions.append(
+                _audit_action(
+                    "Products",
+                    str(product.get("name") or product.get("sku") or "Product"),
+                    severity,
+                    action,
+                    reason,
+                    "Orders / qty",
+                    f"{orders} / {quantity} ({average_quantity_per_order:.2f} qty/order)",
+                )
+            )
+
+    feed_rows = []
+    for item in merchant.values():
+        item_id = str(item.get("item_id") or "")
+        clicks = int(item.get("clicks") or 0)
+        impressions = int(item.get("impressions") or 0)
+        ctr = float(item.get("ctr") or 0)
+        has_sales = item_id in sales_by_key
+        status = str(item.get("merchant_status") or "").upper()
+        action = "monitor"
+        severity = "low"
+        reason = "Feed item is available for monitoring."
+        if "DISAPPROVED" in status or "LIMITED" in status:
+            action = "investigate product/feed"
+            severity = "high"
+            reason = "Merchant reports a product status that can limit delivery."
+        elif clicks >= 50 and not has_sales:
+            action = "investigate product/feed"
+            severity = "medium"
+            reason = "Product gets Merchant traffic but no matching OpenCart sales in this period."
+        elif impressions >= 1000 and ctr < 0.5:
+            action = "investigate product/feed"
+            severity = "medium"
+            reason = "High impressions with weak click-through rate."
+        elif has_sales and impressions < 100:
+            action = "scale"
+            severity = "positive"
+            reason = "Product sells but has limited Merchant visibility."
+        feed_rows.append(
+            {
+                **item,
+                "has_opencart_sales": has_sales,
+                "audit_action": action,
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+        if severity in {"high", "medium"}:
+            actions.append(
+                _audit_action(
+                    "Merchant feed",
+                    str(item.get("title") or item_id),
+                    severity,
+                    action,
+                    reason,
+                    "Clicks / impressions",
+                    f"{clicks} / {impressions}",
+                )
+            )
+
+    product_audit_rows.sort(key=lambda item: (_severity_rank(item["severity"]), -float(item.get("revenue") or 0)))
+    feed_rows.sort(key=lambda item: (_severity_rank(item["severity"]), -int(item.get("clicks") or 0)))
+    return product_audit_rows[:80], feed_rows[:80], actions
+
+
+def _operations_audit(db: Session, date_from: date, date_to: date) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    sale_statuses = _configured_sale_statuses(db)
+    status_rows = db.execute(
+        select(
+            func.coalesce(OpenCartOrder.order_status, "Unknown").label("status"),
+            func.count(OpenCartOrder.id).label("orders"),
+            func.coalesce(func.sum(OpenCartOrder.total), 0).label("revenue"),
+        )
+        .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+        .group_by(func.coalesce(OpenCartOrder.order_status, "Unknown"))
+        .order_by(func.count(OpenCartOrder.id).desc())
+    ).all()
+    statuses = []
+    actions = []
+    for row in status_rows:
+        normalized = str(row.status or "").strip().lower()
+        counts_as_sale = True if sale_statuses is None else normalized in sale_statuses
+        statuses.append(
+            {
+                "status": row.status,
+                "orders": int(row.orders or 0),
+                "revenue": dec_to_float(row.revenue),
+                "counts_as_sale": counts_as_sale,
+            }
+        )
+        if not counts_as_sale and int(row.orders or 0) >= 10:
+            actions.append(
+                _audit_action(
+                    "Operations",
+                    f"High volume non-sale status: {row.status}",
+                    "medium",
+                    "investigate operations",
+                    "Many orders are in a status excluded from sales totals. Confirm whether the status rules match the business process.",
+                    "Orders",
+                    int(row.orders or 0),
+                )
+            )
+
+    def grouped_order_rows(label_column, fallback: str, limit: int = 20) -> list[dict[str, Any]]:
+        label_expr = func.coalesce(label_column, fallback)
+        rows = db.execute(
+            select(
+                label_expr.label("label"),
+                func.count(OpenCartOrder.id).label("orders"),
+                func.coalesce(func.sum(OpenCartOrder.total), 0).label("revenue"),
+                func.coalesce(func.avg(OpenCartOrder.total), 0).label("aov"),
+            )
+            .where(_opencart_sales_filter(db, date_from, date_to))
+            .group_by(label_expr)
+            .order_by(func.sum(OpenCartOrder.total).desc())
+            .limit(limit)
+        ).all()
+        return [
+            {
+                "label": row.label,
+                "orders": int(row.orders or 0),
+                "revenue": dec_to_float(row.revenue),
+                "aov": dec_to_float(row.aov),
+            }
+            for row in rows
+        ]
+
+    changes = db.execute(
+        select(
+            OpenCartOrderChange.field_name,
+            func.count(OpenCartOrderChange.id).label("changes"),
+            func.max(OpenCartOrderChange.detected_at).label("last_detected_at"),
+        )
+        .where(func.date(OpenCartOrderChange.detected_at).between(date_from, date_to))
+        .group_by(OpenCartOrderChange.field_name)
+        .order_by(func.count(OpenCartOrderChange.id).desc())
+        .limit(20)
+    ).all()
+
+    return {
+        "statuses": statuses,
+        "payments": grouped_order_rows(OpenCartOrder.payment_method, "Unknown"),
+        "shipping": grouped_order_rows(OpenCartOrder.shipping_method, "Unknown"),
+        "customer_groups": grouped_order_rows(OpenCartOrder.customer_group, "Unknown"),
+        "regions": grouped_order_rows(OpenCartOrder.shipping_zone, "Unknown"),
+        "changes": [
+            {
+                "field": row.field_name,
+                "changes": int(row.changes or 0),
+                "last_detected_at": row.last_detected_at.isoformat() if row.last_detected_at else None,
+            }
+            for row in changes
+        ],
+    }, actions
+
+
+def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
+    summary = executive_summary(db, date_from, date_to)
+    tracking, tracking_actions = _tracking_audit(db, date_from, date_to, summary)
+    campaigns, campaign_actions = _campaign_audit(db, date_from, date_to)
+    channels, channel_actions = _ga4_channel_audit(db, date_from, date_to)
+    products, feed, product_actions = _product_audit(db, date_from, date_to)
+    operations, operation_actions = _operations_audit(db, date_from, date_to)
+
+    priority_actions = tracking_actions + campaign_actions + channel_actions + product_actions + operation_actions
+    if not priority_actions and summary.get("opencart_orders", 0):
+        priority_actions.append(
+            _audit_action(
+                "Overall",
+                "No critical blockers found",
+                "positive",
+                "monitor",
+                "The connected data does not show a severe issue for this period. Keep daily sync running and review winners weekly.",
+                "OpenCart orders",
+                int(summary.get("opencart_orders") or 0),
+            )
+        )
+    priority_actions.sort(key=lambda item: (_severity_rank(item["severity"]), item["area"], item["title"]))
+
+    high_count = sum(1 for item in priority_actions if item["severity"] in {"critical", "high"})
+    medium_count = sum(1 for item in priority_actions if item["severity"] == "medium")
+    positive_count = sum(1 for item in priority_actions if item["severity"] == "positive")
+    readiness_score = max(0, 100 - high_count * 18 - medium_count * 7 + min(positive_count * 3, 12))
+
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "overview": {
+            "readiness_score": readiness_score,
+            "high_priority": high_count,
+            "medium_priority": medium_count,
+            "positive_signals": positive_count,
+            "actual_revenue": summary.get("opencart_revenue", 0),
+            "actual_orders": summary.get("opencart_orders", 0),
+            "ad_spend": summary.get("ad_spend", 0),
+            "actual_roas": summary.get("actual_roas", 0),
+        },
+        "priority_actions": priority_actions[:30],
+        "tracking": tracking,
+        "campaigns": campaigns,
+        "channels": channels,
+        "products": products,
+        "feed": feed,
+        "operations": operations,
+    }

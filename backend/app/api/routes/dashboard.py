@@ -12,6 +12,7 @@ from app.services.dashboard_service import (
     brand_category_performance,
     campaign_recommendations,
     executive_summary,
+    marketing_audit,
     opencart_sales,
     product_profitability_hints,
     product_performance,
@@ -79,3 +80,9 @@ def product_profitability(date_from: date | None = None, date_to: date | None = 
 def products(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)
     return DashboardResponse(data={"rows": product_performance(db, start, end)})
+
+
+@router.get("/audit", response_model=DashboardResponse)
+def audit(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _window(date_from, date_to)
+    return DashboardResponse(data=marketing_audit(db, start, end))

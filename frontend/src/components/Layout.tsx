@@ -1,7 +1,7 @@
-import { BarChart3, FileClock, LogOut, PackageSearch, Settings, Store } from "lucide-react";
+import { BarChart3, FileClock, LogOut, PackageSearch, SearchCheck, Settings, Store } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "products" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -28,6 +28,10 @@ export function Layout({
           <button className={active === "dashboard" ? "active" : ""} onClick={() => onNavigate("dashboard")}>
             <BarChart3 size={18} />
             Dashboard
+          </button>
+          <button className={active === "audit" ? "active" : ""} onClick={() => onNavigate("audit")}>
+            <SearchCheck size={18} />
+            Audit
           </button>
           <button className={active === "products" ? "active" : ""} onClick={() => onNavigate("products")}>
             <PackageSearch size={18} />

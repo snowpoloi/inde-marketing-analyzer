@@ -394,7 +394,8 @@ tr:last-child td {
 
 .badge-failed,
 .badge-pause,
-.badge-high {
+.badge-high,
+.badge-critical {
   background: #ffe1de;
   color: #a13228;
 }
@@ -402,14 +403,55 @@ tr:last-child td {
 .badge-reduce,
 .badge-medium,
 .badge-investigate-tracking,
-.badge-investigate-product-feed {
+.badge-investigate-product-feed,
+.badge-investigate-operations,
+.badge-review-landing-page {
   background: #fff0c7;
   color: #7d5300;
 }
 
-.badge-running {
+.badge-running,
+.badge-info,
+.badge-low {
   background: #dfeaff;
   color: #2450a6;
+}
+
+.audit-priority-panel table {
+  min-width: 900px;
+}
+
+.audit-title-cell {
+  display: grid;
+  gap: 5px;
+  max-width: 460px;
+}
+
+.audit-title-cell span {
+  color: #66706a;
+  font-size: 12px;
+}
+
+.operation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.operation-grid > div {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.operation-grid h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.operation-grid table {
+  min-width: 560px;
 }
 
 .notice {
@@ -728,6 +770,7 @@ tr:last-child td {
 
 @media (max-width: 1120px) {
   .stats-grid,
+  .operation-grid,
   .settings-grid,
   .two-column {
     grid-template-columns: 1fr;
@@ -747,7 +790,7 @@ tr:last-child td {
   }
 
   .sidebar nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .sidebar button {

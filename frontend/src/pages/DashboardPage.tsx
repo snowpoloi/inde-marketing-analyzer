@@ -60,6 +60,23 @@ type RecommendationRow = {
   metrics: PerformanceRow;
 };
 
+type BrandRow = {
+  brand: string;
+  quantity: number;
+  revenue: number;
+};
+
+type CategoryRow = {
+  category: string;
+  quantity: number;
+  revenue: number;
+};
+
+type BrandCategoryData = {
+  brands: BrandRow[];
+  categories: CategoryRow[];
+};
+
 export function DashboardPage() {
   const today = isoDate();
   const [dateTo, setDateTo] = useState(today);
@@ -71,7 +88,7 @@ export function DashboardPage() {
   const [google, setGoogle] = useState<PerformanceRow[]>([]);
   const [attribution, setAttribution] = useState<any[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationRow[]>([]);
-  const [brandCategory, setBrandCategory] = useState<any>({ brands: [], categories: [] });
+  const [brandCategory, setBrandCategory] = useState<BrandCategoryData>({ brands: [], categories: [] });
   const [products, setProducts] = useState<any[]>([]);
   const [salesDaily, setSalesDaily] = useState<any[]>([]);
 
@@ -94,7 +111,10 @@ export function DashboardPage() {
       setGoogle(googleRes.data.rows ?? []);
       setAttribution(attributionRes.data.rows ?? []);
       setRecommendations(recRes.data.rows ?? []);
-      setBrandCategory(brandRes.data);
+      setBrandCategory({
+        brands: brandRes.data.brands ?? [],
+        categories: brandRes.data.categories ?? []
+      });
       setProducts(productRes.data.rows ?? []);
       setSalesDaily(salesRes.data.daily ?? []);
     } catch (err) {
