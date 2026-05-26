@@ -6,6 +6,7 @@ from sqlalchemy import and_, false, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AADEDocument,
     CampaignDailyMetric,
     GA4DailyMetric,
     IntegrationSetting,
@@ -1047,6 +1048,174 @@ def _operations_audit(db: Session, date_from: date, date_to: date) -> tuple[dict
     }, actions
 
 
+def _aade_audit(
+    db: Session,
+    date_from: date,
+    date_to: date,
+    summary: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    documents = db.scalars(
+        select(AADEDocument).where(_period_filter(AADEDocument.issue_date, date_from, date_to))
+    ).all()
+
+    rows_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    income_documents = 0
+    expense_documents = 0
+    cancelled_documents = 0
+    income_gross = Decimal("0")
+    expense_gross = Decimal("0")
+    income_vat = Decimal("0")
+    expense_vat = Decimal("0")
+
+    for document in documents:
+        direction = document.document_direction or "unknown"
+        invoice_type = document.invoice_type or "Unknown"
+        key = (direction, invoice_type)
+        row = rows_by_key.setdefault(
+            key,
+            {
+                "direction": direction,
+                "invoice_type": invoice_type,
+                "documents": 0,
+                "cancelled_documents": 0,
+                "net_value": Decimal("0"),
+                "vat_amount": Decimal("0"),
+                "gross_value": Decimal("0"),
+            },
+        )
+        row["documents"] += 1
+        if document.is_cancelled:
+            row["cancelled_documents"] += 1
+            cancelled_documents += 1
+        else:
+            row["net_value"] += document.net_value or Decimal("0")
+            row["vat_amount"] += document.vat_amount or Decimal("0")
+            row["gross_value"] += document.gross_value or Decimal("0")
+
+        if direction == "income":
+            income_documents += 1
+            if not document.is_cancelled:
+                income_gross += document.gross_value or Decimal("0")
+                income_vat += document.vat_amount or Decimal("0")
+        elif direction == "expense":
+            expense_documents += 1
+            if not document.is_cancelled:
+                expense_gross += document.gross_value or Decimal("0")
+                expense_vat += document.vat_amount or Decimal("0")
+
+    opencart_orders = int(summary.get("opencart_orders") or 0)
+    opencart_revenue = Decimal(str(summary.get("opencart_revenue") or 0))
+    revenue_gap = income_gross - opencart_revenue
+    revenue_gap_percent = _ratio(revenue_gap, opencart_revenue) * 100 if opencart_revenue else 0
+
+    actions: list[dict[str, Any]] = []
+    if opencart_revenue and not income_documents:
+        actions.append(
+            _audit_action(
+                "AADE",
+                "AADE income documents missing",
+                "high",
+                "investigate fiscal",
+                "OpenCart has sales in this period, but no AADE income documents were imported.",
+                "OpenCart revenue",
+                dec_to_float(opencart_revenue),
+            )
+        )
+    elif opencart_revenue and abs(revenue_gap_percent) > 10:
+        actions.append(
+            _audit_action(
+                "AADE",
+                "AADE and OpenCart revenue mismatch",
+                "high",
+                "investigate fiscal",
+                "AADE income gross differs from OpenCart sales by more than 10%. Check date range, statuses and document matching.",
+                "Revenue gap",
+                dec_to_float(revenue_gap),
+            )
+        )
+    elif opencart_revenue and abs(revenue_gap_percent) > 3:
+        actions.append(
+            _audit_action(
+                "AADE",
+                "AADE and OpenCart revenue variance",
+                "medium",
+                "investigate fiscal",
+                "AADE income gross differs from OpenCart sales by more than 3%. This may be timing, cancelled orders or status rules.",
+                "Revenue gap",
+                dec_to_float(revenue_gap),
+            )
+        )
+    elif opencart_revenue and income_documents:
+        actions.append(
+            _audit_action(
+                "AADE",
+                "AADE income aligns with OpenCart",
+                "positive",
+                "monitor",
+                "AADE income documents are close to OpenCart sales for this period.",
+                "Revenue gap",
+                dec_to_float(revenue_gap),
+            )
+        )
+
+    if cancelled_documents >= 3:
+        actions.append(
+            _audit_action(
+                "AADE",
+                "AADE cancellations require review",
+                "medium",
+                "investigate fiscal",
+                "Several AADE documents are marked cancelled in this period. Compare them with OpenCart cancelled/returned statuses.",
+                "Cancelled documents",
+                cancelled_documents,
+            )
+        )
+
+    rows = []
+    for row in rows_by_key.values():
+        cancelled = int(row["cancelled_documents"])
+        gross_value = row["gross_value"]
+        action = "monitor"
+        severity = "low"
+        reason = "Fiscal documents are stored for read-only monitoring."
+        if row["direction"] == "income" and not gross_value and int(row["documents"]) > cancelled:
+            action = "investigate fiscal"
+            severity = "medium"
+            reason = "Income documents exist but imported gross value is zero. Check myDATA payload mapping."
+        elif cancelled:
+            action = "investigate fiscal"
+            severity = "medium"
+            reason = "This document group includes cancellations."
+        rows.append(
+            {
+                **row,
+                "net_value": dec_to_float(row["net_value"]),
+                "vat_amount": dec_to_float(row["vat_amount"]),
+                "gross_value": dec_to_float(gross_value),
+                "audit_action": action,
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+
+    rows.sort(key=lambda item: (_severity_rank(item["severity"]), item["direction"], item["invoice_type"]))
+    audit_summary = {
+        "income_documents": income_documents,
+        "expense_documents": expense_documents,
+        "cancelled_documents": cancelled_documents,
+        "income_gross": dec_to_float(income_gross),
+        "expense_gross": dec_to_float(expense_gross),
+        "income_vat": dec_to_float(income_vat),
+        "expense_vat": dec_to_float(expense_vat),
+        "opencart_orders": opencart_orders,
+        "opencart_revenue": dec_to_float(opencart_revenue),
+        "revenue_gap": dec_to_float(revenue_gap),
+        "revenue_gap_percent": revenue_gap_percent,
+    }
+
+    return {"summary": audit_summary, "documents": rows[:80], "mismatches": actions}, actions
+
+
 def _empty_summary(date_from: date, date_to: date) -> dict[str, Any]:
     return {
         "date_from": date_from.isoformat(),
@@ -1078,12 +1247,36 @@ def _empty_operations_audit() -> dict[str, Any]:
     }
 
 
+def _empty_aade_audit() -> dict[str, Any]:
+    return {
+        "summary": {
+            "income_documents": 0,
+            "expense_documents": 0,
+            "cancelled_documents": 0,
+            "income_gross": 0,
+            "expense_gross": 0,
+            "income_vat": 0,
+            "expense_vat": 0,
+            "opencart_orders": 0,
+            "opencart_revenue": 0,
+            "revenue_gap": 0,
+            "revenue_gap_percent": 0,
+        },
+        "documents": [],
+        "mismatches": [],
+    }
+
+
 def _audit_section_failure(area: str, exc: Exception) -> dict[str, Any]:
+    action = {
+        "AADE": "investigate fiscal",
+        "Operations": "investigate operations",
+    }.get(area, "investigate tracking")
     return _audit_action(
         area,
         f"{area} audit could not be calculated",
         "high",
-        "investigate tracking" if area != "Operations" else "investigate operations",
+        action,
         f"This audit section failed on the server ({type(exc).__name__}). The rest of the audit remains available; check backend logs for the exact query.",
         "Section",
         area,
@@ -1160,6 +1353,16 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
     if failure:
         priority_actions.append(failure)
 
+    aade_result, failure = _safe_audit_section(
+        db,
+        "AADE",
+        (_empty_aade_audit(), []),
+        lambda: _aade_audit(db, date_from, date_to, summary),
+    )
+    aade, aade_actions = aade_result
+    if failure:
+        priority_actions.append(failure)
+
     operations_result, failure = _safe_audit_section(
         db,
         "Operations",
@@ -1171,7 +1374,13 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
         priority_actions.append(failure)
 
     priority_actions.extend(
-        tracking_actions + campaign_actions + channel_actions + search_console_actions + product_actions + operation_actions
+        tracking_actions
+        + campaign_actions
+        + channel_actions
+        + search_console_actions
+        + product_actions
+        + aade_actions
+        + operation_actions
     )
     if not priority_actions and summary.get("opencart_orders", 0):
         priority_actions.append(
@@ -1212,5 +1421,6 @@ def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, An
         "search_console": search_console,
         "products": products,
         "feed": feed,
+        "aade": aade,
         "operations": operations,
     }
