@@ -875,14 +875,15 @@ def _product_audit(db: Session, date_from: date, date_to: date) -> tuple[list[di
 
 def _operations_audit(db: Session, date_from: date, date_to: date) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     sale_statuses = _configured_sale_statuses(db)
+    status_expr = func.coalesce(OpenCartOrder.order_status, "Unknown")
     status_rows = db.execute(
         select(
-            func.coalesce(OpenCartOrder.order_status, "Unknown").label("status"),
+            status_expr.label("status"),
             func.count(OpenCartOrder.id).label("orders"),
             func.coalesce(func.sum(OpenCartOrder.total), 0).label("revenue"),
         )
         .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
-        .group_by(func.coalesce(OpenCartOrder.order_status, "Unknown"))
+        .group_by(status_expr)
         .order_by(func.count(OpenCartOrder.id).desc())
     ).all()
     statuses = []
