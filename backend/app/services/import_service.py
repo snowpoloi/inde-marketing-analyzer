@@ -10,6 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AADEDocument,
+    AADESummaryMetric,
     CampaignDailyMetric,
     GA4DailyMetric,
     MerchantProductMetric,
@@ -480,6 +482,88 @@ def import_search_console_rows(db: Session, rows: list[dict[str, Any]], fallback
         )
     db.commit()
     return len(rows)
+
+
+def import_aade_payload(db: Session, payload: dict[str, Any], fallback_date: date) -> int:
+    documents = payload.get("documents") if isinstance(payload, dict) else []
+    summary_rows = payload.get("summary_rows") if isinstance(payload, dict) else []
+    if not isinstance(documents, list):
+        documents = []
+    if not isinstance(summary_rows, list):
+        summary_rows = []
+
+    touched_summary_dates = {
+        as_date(row.get("metric_date") or row.get("date"), fallback_date)
+        for row in summary_rows
+        if isinstance(row, dict)
+    } or {fallback_date}
+    touched_summary_sources = {
+        str(row.get("source_endpoint") or "summary")
+        for row in summary_rows
+        if isinstance(row, dict)
+    }
+    summary_delete = delete(AADESummaryMetric).where(AADESummaryMetric.metric_date.in_(touched_summary_dates))
+    if touched_summary_sources:
+        summary_delete = summary_delete.where(AADESummaryMetric.source_endpoint.in_(touched_summary_sources))
+    db.execute(summary_delete)
+
+    count = 0
+    for row in documents:
+        if not isinstance(row, dict):
+            continue
+        issue_date = as_date(row.get("issue_date"), fallback_date)
+        source_endpoint = str(row.get("source_endpoint") or "unknown")
+        identity_key = str(
+            row.get("identity_key")
+            or row.get("mark")
+            or row.get("uid")
+            or f"{source_endpoint}:{issue_date.isoformat()}:{row.get('series') or ''}:{row.get('aa') or ''}:{row.get('gross_value') or 0}"
+        )
+        values = {
+            "source_endpoint": source_endpoint,
+            "identity_key": identity_key,
+            "mark": _text_or_none(row.get("mark")),
+            "uid": _text_or_none(row.get("uid")),
+            "issuer_vat": _text_or_none(row.get("issuer_vat")),
+            "counterpart_vat": _text_or_none(row.get("counterpart_vat")),
+            "issue_date": issue_date,
+            "document_direction": str(row.get("document_direction") or "unknown"),
+            "invoice_type": _text_or_none(row.get("invoice_type")),
+            "series": _text_or_none(row.get("series")),
+            "aa": _text_or_none(row.get("aa")),
+            "currency": _text_or_none(row.get("currency")) or "EUR",
+            "net_value": as_decimal(row.get("net_value")),
+            "vat_amount": as_decimal(row.get("vat_amount")),
+            "gross_value": as_decimal(row.get("gross_value")),
+            "is_cancelled": bool(row.get("is_cancelled")),
+            "cancelled_by_mark": _text_or_none(row.get("cancelled_by_mark")),
+            "raw": row.get("raw") if isinstance(row.get("raw"), dict) else row,
+        }
+        existing = db.scalar(select(AADEDocument).where(AADEDocument.identity_key == identity_key))
+        if existing:
+            for key, value in values.items():
+                setattr(existing, key, value)
+            db.add(existing)
+        else:
+            db.add(AADEDocument(**values))
+        count += 1
+
+    for row in summary_rows:
+        if not isinstance(row, dict):
+            continue
+        db.add(
+            AADESummaryMetric(
+                metric_date=as_date(row.get("metric_date") or row.get("date"), fallback_date),
+                source_endpoint=str(row.get("source_endpoint") or "summary"),
+                metric_name=str(row.get("metric_name") or "unknown"),
+                amount=as_decimal(row.get("amount")),
+                quantity=as_int(row.get("quantity")),
+                raw=row.get("raw") if isinstance(row.get("raw"), dict) else row,
+            )
+        )
+
+    db.commit()
+    return count + len(summary_rows)
 
 
 def _normalize_opencart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

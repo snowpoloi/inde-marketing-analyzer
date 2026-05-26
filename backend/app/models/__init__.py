@@ -1,4 +1,6 @@
 from app.models.entities import (
+    AADEDocument,
+    AADESummaryMetric,
     Base,
     CampaignDailyMetric,
     CampaignRecommendation,
@@ -16,6 +18,8 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AADEDocument",
+    "AADESummaryMetric",
     "Base",
     "CampaignDailyMetric",
     "CampaignRecommendation",

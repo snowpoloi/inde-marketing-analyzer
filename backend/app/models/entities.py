@@ -139,6 +139,46 @@ class SearchConsoleDailyMetric(TimestampMixin, Base):
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class AADEDocument(TimestampMixin, Base):
+    __tablename__ = "aade_documents"
+    __table_args__ = (UniqueConstraint("identity_key", name="uq_aade_documents_identity_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_endpoint: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    identity_key: Mapped[str] = mapped_column(String(700), nullable=False, index=True)
+    mark: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    uid: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    issuer_vat: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    counterpart_vat: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    issue_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    document_direction: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    invoice_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    series: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    aa: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    net_value: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    vat_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    gross_value: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    is_cancelled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    cancelled_by_mark: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class AADESummaryMetric(TimestampMixin, Base):
+    __tablename__ = "aade_summary_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "source_endpoint", "metric_name", name="uq_aade_summary_metrics_day_source_name"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    source_endpoint: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    metric_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class OpenCartOrder(TimestampMixin, Base):
     __tablename__ = "opencart_orders"
     __table_args__ = (UniqueConstraint("order_id", name="uq_opencart_orders_order_id"),)

@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.connectors.aade import AADEConnector
 from app.connectors.ga4 import GA4Connector
 from app.connectors.google_ads import GoogleAdsConnector
 from app.connectors.merchant_center import MerchantCenterConnector
@@ -16,6 +17,7 @@ from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
 from app.services.import_service import (
+    import_aade_payload,
     import_ga4_rows,
     import_google_ads_rows,
     import_merchant_rows,
@@ -104,6 +106,31 @@ def search_console_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
+    documents = payload.get("documents") if isinstance(payload, dict) else []
+    summary_rows = payload.get("summary_rows") if isinstance(payload, dict) else []
+    if not isinstance(documents, list):
+        documents = []
+    if not isinstance(summary_rows, list):
+        summary_rows = []
+    income = sum(
+        (as_decimal(row.get("gross_value")) for row in documents if row.get("document_direction") == "income"),
+        Decimal("0"),
+    )
+    expenses = sum(
+        (as_decimal(row.get("gross_value")) for row in documents if row.get("document_direction") == "expense"),
+        Decimal("0"),
+    )
+    cancelled = sum(1 for row in documents if row.get("is_cancelled"))
+    return {
+        "aade_documents": len(documents),
+        "aade_summary_rows": len(summary_rows),
+        "aade_gross_income": _json_number(income),
+        "aade_gross_expenses": _json_number(expenses),
+        "aade_cancelled_documents": cancelled,
+    }
+
+
 def run_provider_sync(
     db: Session,
     provider: str,
@@ -166,6 +193,10 @@ def run_provider_sync(
             rows = SearchConsoleConnector(config).fetch_search_analytics(date_from, date_to)
             count = import_search_console_rows(db, rows, date_from)
             meta = search_console_sync_meta(rows)
+        elif provider == "aade":
+            payload = AADEConnector(config).fetch_documents(date_from, date_to)
+            count = import_aade_payload(db, payload, date_from)
+            meta = aade_sync_meta(payload)
         elif provider == "shoply":
             rows = ShoplyConnector(config).fetch_sales(date_from, date_to)
             count = import_shoply_sales(db, rows)
