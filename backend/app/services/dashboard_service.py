@@ -964,15 +964,120 @@ def _operations_audit(db: Session, date_from: date, date_to: date) -> tuple[dict
     }, actions
 
 
-def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
-    summary = executive_summary(db, date_from, date_to)
-    tracking, tracking_actions = _tracking_audit(db, date_from, date_to, summary)
-    campaigns, campaign_actions = _campaign_audit(db, date_from, date_to)
-    channels, channel_actions = _ga4_channel_audit(db, date_from, date_to)
-    products, feed, product_actions = _product_audit(db, date_from, date_to)
-    operations, operation_actions = _operations_audit(db, date_from, date_to)
+def _empty_summary(date_from: date, date_to: date) -> dict[str, Any]:
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "ad_spend": 0,
+        "ad_clicks": 0,
+        "ad_impressions": 0,
+        "attributed_conversions": 0,
+        "attributed_revenue": 0,
+        "opencart_orders": 0,
+        "opencart_revenue": 0,
+        "shipping_revenue": 0,
+        "ga4_purchases": 0,
+        "ga4_revenue": 0,
+        "actual_roas": 0,
+        "attributed_roas": 0,
+        "aov": 0,
+    }
 
-    priority_actions = tracking_actions + campaign_actions + channel_actions + product_actions + operation_actions
+
+def _empty_operations_audit() -> dict[str, Any]:
+    return {
+        "statuses": [],
+        "payments": [],
+        "shipping": [],
+        "customer_groups": [],
+        "regions": [],
+        "changes": [],
+    }
+
+
+def _audit_section_failure(area: str, exc: Exception) -> dict[str, Any]:
+    return _audit_action(
+        area,
+        f"{area} audit could not be calculated",
+        "high",
+        "investigate tracking" if area != "Operations" else "investigate operations",
+        f"This audit section failed on the server ({type(exc).__name__}). The rest of the audit remains available; check backend logs for the exact query.",
+        "Section",
+        area,
+    )
+
+
+def _safe_audit_section(db: Session, area: str, fallback: Any, callback):
+    try:
+        return callback(), None
+    except Exception as exc:
+        db.rollback()
+        return fallback, _audit_section_failure(area, exc)
+
+
+def marketing_audit(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
+    priority_actions = []
+
+    summary, failure = _safe_audit_section(
+        db,
+        "Summary",
+        _empty_summary(date_from, date_to),
+        lambda: executive_summary(db, date_from, date_to),
+    )
+    if failure:
+        priority_actions.append(failure)
+
+    tracking_result, failure = _safe_audit_section(
+        db,
+        "Tracking",
+        ({"rows": []}, []),
+        lambda: _tracking_audit(db, date_from, date_to, summary),
+    )
+    tracking, tracking_actions = tracking_result
+    if failure:
+        priority_actions.append(failure)
+
+    campaign_result, failure = _safe_audit_section(
+        db,
+        "Campaigns",
+        ([], []),
+        lambda: _campaign_audit(db, date_from, date_to),
+    )
+    campaigns, campaign_actions = campaign_result
+    if failure:
+        priority_actions.append(failure)
+
+    channel_result, failure = _safe_audit_section(
+        db,
+        "GA4",
+        ([], []),
+        lambda: _ga4_channel_audit(db, date_from, date_to),
+    )
+    channels, channel_actions = channel_result
+    if failure:
+        priority_actions.append(failure)
+
+    product_result, failure = _safe_audit_section(
+        db,
+        "Products",
+        ([], [], []),
+        lambda: _product_audit(db, date_from, date_to),
+    )
+    products, feed, product_actions = product_result
+    if failure:
+        priority_actions.append(failure)
+
+    operations_result, failure = _safe_audit_section(
+        db,
+        "Operations",
+        (_empty_operations_audit(), []),
+        lambda: _operations_audit(db, date_from, date_to),
+    )
+    operations, operation_actions = operations_result
+    if failure:
+        priority_actions.append(failure)
+
+    priority_actions.extend(tracking_actions + campaign_actions + channel_actions + product_actions + operation_actions)
     if not priority_actions and summary.get("opencart_orders", 0):
         priority_actions.append(
             _audit_action(
