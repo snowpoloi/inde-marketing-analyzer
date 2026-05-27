@@ -3,7 +3,26 @@ import { Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { IntegrationSetting } from "../api/client";
 
+const aadeReadOnlyEndpoints = [
+  { value: "RequestTransmittedDocs", label: "Transmitted docs" },
+  { value: "RequestDocs", label: "Received docs" },
+  { value: "RequestMyIncome", label: "My income" },
+  { value: "RequestMyExpenses", label: "My expenses" },
+  { value: "RequestVatInfo", label: "VAT info" }
+];
+
 const placeholders: Record<string, Record<string, unknown>> = {
+  aade: {
+    base_url: "https://mydatapi.aade.gr/myDATA",
+    aade_user_id: "...",
+    subscription_key: "...",
+    vat_number: "123456789",
+    timeout_seconds: 60,
+    endpoints: ["RequestTransmittedDocs", "RequestDocs"],
+    extra_params: {
+      "*": {}
+    }
+  },
   meta_ads: {
     ad_account_id: "act_123456789",
     access_token: "read-only-token",
@@ -88,6 +107,19 @@ function orderStatusRules(config: Record<string, unknown>): OrderStatusRule[] {
   });
 }
 
+function aadeEndpoints(config: Record<string, unknown>): string[] {
+  const endpoints = config.endpoints;
+  const allowedEndpoints = new Set(aadeReadOnlyEndpoints.map((endpoint) => endpoint.value));
+  if (Array.isArray(endpoints)) {
+    const selected = endpoints.map(String).filter((endpoint) => allowedEndpoints.has(endpoint));
+    return selected.length > 0 ? selected : ["RequestTransmittedDocs", "RequestDocs"];
+  }
+  if (typeof endpoints === "string" && allowedEndpoints.has(endpoints.trim())) {
+    return [endpoints.trim()];
+  }
+  return ["RequestTransmittedDocs", "RequestDocs"];
+}
+
 function ga4CredentialsText(config: Record<string, unknown>): string {
   const value = config.credentials_json ?? config.service_account_json;
   if (!value) {
@@ -149,6 +181,23 @@ export function SettingsPage() {
     updateProviderConfig("ga4", patch);
   }
 
+  function updateAadeConfig(patch: Record<string, unknown>) {
+    updateProviderConfig("aade", patch);
+  }
+
+  function updateAadeEndpoint(endpoint: string, enabled: boolean) {
+    const config = parseDraft(drafts.aade);
+    const selected = new Set(aadeEndpoints(config));
+    if (enabled) {
+      selected.add(endpoint);
+    } else if (selected.size > 1) {
+      selected.delete(endpoint);
+    }
+    updateAadeConfig({
+      endpoints: aadeReadOnlyEndpoints.map((item) => item.value).filter((value) => selected.has(value))
+    });
+  }
+
   function updateGa4Credentials(text: string) {
     if (!text.trim()) {
       updateGa4Config({ credentials_json: {} });
@@ -184,6 +233,82 @@ export function SettingsPage() {
   function removeStatusRule(index: number) {
     const config = parseDraft(drafts.opencart);
     updateOpenCartConfig({ order_status_rules: orderStatusRules(config).filter((_, itemIndex) => itemIndex !== index) });
+  }
+
+  function renderAadeControls() {
+    const config = parseDraft(drafts.aade);
+    const endpoints = new Set(aadeEndpoints(config));
+    return (
+      <div className="integration-controls">
+        <div className="form-grid">
+          <label>
+            <span>Base URL</span>
+            <input
+              value={String(config.base_url ?? "https://mydatapi.aade.gr/myDATA")}
+              onChange={(event) => updateAadeConfig({ base_url: event.target.value })}
+              placeholder="https://mydatapi.aade.gr/myDATA"
+            />
+          </label>
+          <label>
+            <span>AADE user ID</span>
+            <input
+              value={String(config.aade_user_id ?? "")}
+              onChange={(event) => updateAadeConfig({ aade_user_id: event.target.value })}
+              placeholder="myDATA user ID"
+            />
+          </label>
+          <label>
+            <span>Subscription key</span>
+            <input
+              type="password"
+              value={String(config.subscription_key ?? "")}
+              onChange={(event) => updateAadeConfig({ subscription_key: event.target.value })}
+              placeholder="Ocp-Apim-Subscription-Key"
+            />
+          </label>
+          <label>
+            <span>VAT number</span>
+            <input
+              value={String(config.vat_number ?? "")}
+              onChange={(event) => updateAadeConfig({ vat_number: event.target.value })}
+              placeholder="123456789"
+            />
+          </label>
+          <label>
+            <span>Timeout seconds</span>
+            <input
+              type="number"
+              min="10"
+              value={String(config.timeout_seconds ?? 60)}
+              onChange={(event) => updateAadeConfig({ timeout_seconds: Number(event.target.value) || 60 })}
+            />
+          </label>
+        </div>
+
+        <div className="status-rules">
+          <div className="panel-title tight">
+            <h2>Read endpoints</h2>
+            <span>GET-only myDATA endpoints.</span>
+          </div>
+          <div className="provider-pills">
+            {aadeReadOnlyEndpoints.map((endpoint) => {
+              const checked = endpoints.has(endpoint.value);
+              return (
+                <label key={endpoint.value}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={checked && endpoints.size === 1}
+                    onChange={(event) => updateAadeEndpoint(endpoint.value, event.target.checked)}
+                  />
+                  {endpoint.label}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   function renderOpenCartControls() {
@@ -337,6 +462,7 @@ export function SettingsPage() {
               placeholder={JSON.stringify(placeholders[item.provider] ?? {}, null, 2)}
               spellCheck={false}
             />
+            {item.provider === "aade" ? renderAadeControls() : null}
             {item.provider === "opencart" ? renderOpenCartControls() : null}
             {item.provider === "ga4" ? renderGa4Controls() : null}
             <button className="primary-action compact" onClick={() => save(item)}>
