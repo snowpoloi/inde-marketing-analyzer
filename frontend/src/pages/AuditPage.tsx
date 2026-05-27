@@ -138,6 +138,39 @@ type FeedAuditRow = {
   reason: string;
 };
 
+type AadeSummary = {
+  income_documents: number;
+  expense_documents: number;
+  cancelled_documents: number;
+  income_gross: number;
+  expense_gross: number;
+  income_vat: number;
+  expense_vat: number;
+  opencart_orders: number;
+  opencart_revenue: number;
+  revenue_gap: number;
+  revenue_gap_percent: number;
+};
+
+type AadeDocumentRow = {
+  direction: string;
+  invoice_type: string;
+  documents: number;
+  cancelled_documents: number;
+  net_value: number;
+  vat_amount: number;
+  gross_value: number;
+  audit_action: string;
+  severity: string;
+  reason: string;
+};
+
+type AadeSummaryMetric = {
+  metric: string;
+  value: string;
+  detail: string;
+};
+
 type OperationRow = {
   label?: string;
   status?: string;
@@ -183,6 +216,11 @@ type AuditData = {
   search_console: SearchConsoleAuditRow[];
   products: ProductAuditRow[];
   feed: FeedAuditRow[];
+  aade: {
+    summary: AadeSummary;
+    documents: AadeDocumentRow[];
+    mismatches: AuditAction[];
+  };
   operations: {
     statuses: OperationRow[];
     payments: OperationRow[];
@@ -211,6 +249,23 @@ const emptyAudit: AuditData = {
   search_console: [],
   products: [],
   feed: [],
+  aade: {
+    summary: {
+      income_documents: 0,
+      expense_documents: 0,
+      cancelled_documents: 0,
+      income_gross: 0,
+      expense_gross: 0,
+      income_vat: 0,
+      expense_vat: 0,
+      opencart_orders: 0,
+      opencart_revenue: 0,
+      revenue_gap: 0,
+      revenue_gap_percent: 0
+    },
+    documents: [],
+    mismatches: []
+  },
   operations: {
     statuses: [],
     payments: [],
@@ -247,6 +302,8 @@ const initialAuditSorts: SortMap = {
   "search-console": { key: "clicks", direction: "desc" },
   products: { key: "revenue", direction: "desc" },
   feed: { key: "clicks", direction: "desc" },
+  "aade-findings": { key: "severity", direction: "desc" },
+  "aade-documents": { key: "gross", direction: "desc" },
   "op-statuses": { key: "orders", direction: "desc" },
   "op-payments": { key: "orders", direction: "desc" },
   "op-shipping": { key: "orders", direction: "desc" },
@@ -273,6 +330,7 @@ const actionRank: Record<string, number> = {
   "investigate product/feed": 5,
   "investigate seo": 5,
   "investigate operations": 5,
+  "investigate fiscal": 5,
   investigate: 5,
   "optimize seo": 4,
   pause: 4,
@@ -427,6 +485,18 @@ const feedSorters: SortAccessors<FeedAuditRow> = {
   reason: (row) => row.reason
 };
 
+const aadeDocumentSorters: SortAccessors<AadeDocumentRow> = {
+  direction: (row) => row.direction,
+  invoice: (row) => row.invoice_type,
+  documents: (row) => row.documents,
+  cancelled: (row) => row.cancelled_documents,
+  net: (row) => row.net_value,
+  vat: (row) => row.vat_amount,
+  gross: (row) => row.gross_value,
+  action: (row) => ranked(row.audit_action, actionRank),
+  reason: (row) => row.reason
+};
+
 const operationSorters: SortAccessors<OperationRow> = {
   label: (row) => row.label ?? row.status ?? "",
   orders: (row) => row.orders,
@@ -517,6 +587,14 @@ export function AuditPage() {
   );
   const sortedProducts = useMemo(() => sortRows(audit.products, sorts.products, productSorters), [audit.products, sorts]);
   const sortedFeed = useMemo(() => sortRows(audit.feed, sorts.feed, feedSorters), [audit.feed, sorts]);
+  const sortedAadeFindings = useMemo(
+    () => sortRows(audit.aade.mismatches, sorts["aade-findings"], actionSorters),
+    [audit.aade.mismatches, sorts]
+  );
+  const sortedAadeDocuments = useMemo(
+    () => sortRows(audit.aade.documents, sorts["aade-documents"], aadeDocumentSorters),
+    [audit.aade.documents, sorts]
+  );
   const sortedStatuses = useMemo(
     () => sortRows(audit.operations.statuses, sorts["op-statuses"], operationSorters),
     [audit.operations.statuses, sorts]
@@ -669,6 +747,87 @@ export function AuditPage() {
     [sorts]
   );
 
+  const aadeSummaryRows = useMemo<AadeSummaryMetric[]>(
+    () => [
+      {
+        metric: "Income documents",
+        value: number.format(audit.aade.summary.income_documents),
+        detail: `${currency.format(audit.aade.summary.income_gross)} gross, ${currency.format(audit.aade.summary.income_vat)} VAT`
+      },
+      {
+        metric: "Expense documents",
+        value: number.format(audit.aade.summary.expense_documents),
+        detail: `${currency.format(audit.aade.summary.expense_gross)} gross, ${currency.format(audit.aade.summary.expense_vat)} VAT`
+      },
+      {
+        metric: "Cancelled documents",
+        value: number.format(audit.aade.summary.cancelled_documents),
+        detail: "Marked cancelled in myDATA"
+      },
+      {
+        metric: "OpenCart revenue",
+        value: currency.format(audit.aade.summary.opencart_revenue),
+        detail: `${number.format(audit.aade.summary.opencart_orders)} orders`
+      },
+      {
+        metric: "Revenue gap",
+        value: currency.format(audit.aade.summary.revenue_gap),
+        detail: pct(audit.aade.summary.revenue_gap_percent)
+      }
+    ],
+    [audit.aade.summary]
+  );
+
+  const aadeSummaryColumns: Column<AadeSummaryMetric>[] = useMemo(
+    () => [
+      { key: "metric", header: "Metric", render: (row) => <strong>{row.metric}</strong> },
+      { key: "value", header: "Value", align: "right", render: (row) => row.value },
+      { key: "detail", header: "Detail", render: (row) => row.detail }
+    ],
+    []
+  );
+
+  const aadeFindingColumns: Column<AuditAction>[] = useMemo(
+    () => [
+      { key: "severity", header: "Severity", ...sortable("aade-findings", "severity"), render: (row) => <StatusBadge value={row.severity} /> },
+      {
+        key: "title",
+        header: "Finding",
+        ...sortable("aade-findings", "title"),
+        render: (row) => (
+          <div className="audit-title-cell">
+            <strong>{row.title}</strong>
+            <span>{row.metric}: {row.value}</span>
+          </div>
+        )
+      },
+      { key: "action", header: "Action", ...sortable("aade-findings", "action"), render: (row) => <StatusBadge value={row.action} /> },
+      { key: "reason", header: "Reason", ...sortable("aade-findings", "reason"), render: (row) => row.reason }
+    ],
+    [sorts]
+  );
+
+  const aadeDocumentColumns: Column<AadeDocumentRow>[] = useMemo(
+    () => [
+      { key: "direction", header: "Direction", ...sortable("aade-documents", "direction"), render: (row) => <strong>{row.direction}</strong> },
+      { key: "invoice", header: "Invoice type", ...sortable("aade-documents", "invoice"), render: (row) => row.invoice_type },
+      { key: "documents", header: "Docs", align: "right", ...sortable("aade-documents", "documents"), render: (row) => number.format(row.documents) },
+      {
+        key: "cancelled",
+        header: "Cancelled",
+        align: "right",
+        ...sortable("aade-documents", "cancelled"),
+        render: (row) => number.format(row.cancelled_documents)
+      },
+      { key: "net", header: "Net", align: "right", ...sortable("aade-documents", "net"), render: (row) => currency.format(row.net_value) },
+      { key: "vat", header: "VAT", align: "right", ...sortable("aade-documents", "vat"), render: (row) => currency.format(row.vat_amount) },
+      { key: "gross", header: "Gross", align: "right", ...sortable("aade-documents", "gross"), render: (row) => currency.format(row.gross_value) },
+      { key: "action", header: "Action", ...sortable("aade-documents", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
+      { key: "reason", header: "Reason", ...sortable("aade-documents", "reason"), render: (row) => row.reason }
+    ],
+    [sorts]
+  );
+
   function operationColumns(tableId: string): Column<OperationRow>[] {
     return [
       { key: "label", header: "Name", ...sortable(tableId, "label"), render: (row) => row.label ?? row.status ?? "-" },
@@ -801,6 +960,30 @@ export function AuditPage() {
         { header: "Action", value: (row) => row.audit_action },
         { header: "Reason", value: (row) => row.reason }
       ]),
+      buildCsvSection("AADE fiscal summary", aadeSummaryRows, [
+        { header: "Metric", value: (row) => row.metric },
+        { header: "Value", value: (row) => row.value },
+        { header: "Detail", value: (row) => row.detail }
+      ]),
+      buildCsvSection("AADE fiscal findings", sortedAadeFindings, [
+        { header: "Severity", value: (row) => row.severity },
+        { header: "Finding", value: (row) => row.title },
+        { header: "Metric", value: (row) => row.metric },
+        { header: "Value", value: (row) => row.value },
+        { header: "Action", value: (row) => row.action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
+      buildCsvSection("AADE document groups", sortedAadeDocuments, [
+        { header: "Direction", value: (row) => row.direction },
+        { header: "Invoice type", value: (row) => row.invoice_type },
+        { header: "Documents", value: (row) => row.documents },
+        { header: "Cancelled", value: (row) => row.cancelled_documents },
+        { header: "Net", value: (row) => currency.format(row.net_value) },
+        { header: "VAT", value: (row) => currency.format(row.vat_amount) },
+        { header: "Gross", value: (row) => currency.format(row.gross_value) },
+        { header: "Action", value: (row) => row.audit_action },
+        { header: "Reason", value: (row) => row.reason }
+      ]),
       buildCsvSection("OpenCart order statuses", sortedStatuses, operationExportColumns()),
       buildCsvSection("OpenCart payment methods", sortedPayments, operationExportColumns()),
       buildCsvSection("OpenCart shipping methods", sortedShipping, operationExportColumns()),
@@ -923,6 +1106,31 @@ export function AuditPage() {
           <span>Products with visibility, clicks, sales match and feed risk</span>
         </div>
         <DataTable rows={sortedFeed} columns={feedColumns} empty="No Merchant Center data yet." />
+      </section>
+
+      <div className="two-column">
+        <section className="panel">
+          <div className="panel-title">
+            <h2>AADE fiscal summary</h2>
+            <span>myDATA totals compared to OpenCart revenue</span>
+          </div>
+          <DataTable rows={aadeSummaryRows} columns={aadeSummaryColumns} empty="No AADE summary yet." />
+        </section>
+        <section className="panel">
+          <div className="panel-title">
+            <h2>AADE fiscal findings</h2>
+            <span>Revenue variance and cancellation checks</span>
+          </div>
+          <DataTable rows={sortedAadeFindings} columns={aadeFindingColumns} empty="No AADE findings for this period." />
+        </section>
+      </div>
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>AADE document groups</h2>
+          <span>Income and expense documents by invoice type</span>
+        </div>
+        <DataTable rows={sortedAadeDocuments} columns={aadeDocumentColumns} empty="No AADE documents yet." />
       </section>
 
       <section className="panel">
