@@ -136,7 +136,7 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
     book_documents = sum(as_int(row.get("document_count")) or 1 for row in book_rows)
     vat_rows = [row for row in documents if _aade_record_type(row) == "vat_info"]
     vat_amount = sum((as_decimal(row.get("vat_amount")) for row in vat_rows), Decimal("0"))
-    endpoint_results: dict[str, dict[str, int]] = {}
+    endpoint_results: dict[str, dict[str, Any]] = {}
     if isinstance(responses, list):
         for response in responses:
             if not isinstance(response, dict):
@@ -151,6 +151,9 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
                     "book_documents": 0,
                     "vat_rows": 0,
                     "cancellations": 0,
+                    "param_names": [],
+                    "root_keys": [],
+                    "record_samples": [],
                 },
             )
             row["calls"] += 1
@@ -159,6 +162,14 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
             row["book_documents"] += as_int(response.get("book_document_count"))
             row["vat_rows"] += as_int(response.get("vat_row_count"))
             row["cancellations"] += as_int(response.get("cancellation_count"))
+            if not row["param_names"] and isinstance(response.get("request_param_names"), list):
+                row["param_names"] = response["request_param_names"]
+            shape = response.get("payload_shape")
+            if isinstance(shape, dict):
+                if not row["root_keys"] and isinstance(shape.get("root_keys"), list):
+                    row["root_keys"] = shape["root_keys"]
+                if not row["record_samples"] and isinstance(shape.get("record_samples"), list):
+                    row["record_samples"] = shape["record_samples"]
     return {
         "aade_documents": document_count,
         "aade_full_documents": full_documents,

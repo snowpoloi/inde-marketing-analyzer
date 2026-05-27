@@ -16,6 +16,25 @@ function isoDate(daysOffset = 0) {
   return value.toISOString().slice(0, 10);
 }
 
+function shortList(value: unknown, limit = 5) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map(String)
+    .filter(Boolean)
+    .slice(0, limit)
+    .join(",");
+}
+
+function sampleKeys(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return "";
+  }
+  const sample = value[0] as Record<string, unknown>;
+  return shortList(sample.keys, 8);
+}
+
 function syncDetails(row: SyncRun) {
   const meta = row.meta || {};
   const details: string[] = [];
@@ -101,7 +120,12 @@ function syncDetails(row: SyncRun) {
         const full = Number(result.full_documents) || 0;
         const book = Number(result.book_documents) || 0;
         const vat = Number(result.vat_rows) || 0;
-        return `${name}: ${number.format(calls)} calls, ${number.format(full)} full, ${number.format(book)} book, ${number.format(vat)} VAT`;
+        const roots = shortList(result.root_keys);
+        const keys = sampleKeys(result.record_samples);
+        const shape = [roots ? `roots ${roots}` : "", keys ? `keys ${keys}` : ""].filter(Boolean).join(", ");
+        return `${name}: ${number.format(calls)} calls, ${number.format(full)} full, ${number.format(book)} book, ${number.format(vat)} VAT${
+          shape ? ` (${shape})` : ""
+        }`;
       })
       .join("; ");
     if (endpointDetails) {

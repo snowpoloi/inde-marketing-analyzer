@@ -114,6 +114,8 @@ class AADEConnector:
                             "endpoint": endpoint_name,
                             "page": page,
                             "params": self._redacted_params(params),
+                            "request_param_names": sorted(params.keys()),
+                            "payload_shape": self._payload_shape(payload),
                             "document_count": sum(int(item.get("document_count") or 1) for item in response_rows),
                             "full_document_count": len(response_documents),
                             "book_row_count": len(response_book_rows),
@@ -313,7 +315,7 @@ class AADEConnector:
             if not isinstance(value, dict):
                 return
             keys = {str(key).lower() for key in value.keys()}
-            if "issuedate" in keys and "invtype" in keys and (
+            if "issuedate" in keys and (
                 "netvalue" in keys or "vatamount" in keys or "grossvalue" in keys or "count" in keys
             ):
                 rows.append(value)
@@ -323,6 +325,61 @@ class AADEConnector:
 
         visit(payload)
         return rows
+
+    def _payload_shape(self, payload: Any) -> dict[str, Any]:
+        return {
+            "root_keys": self._shape_keys(payload),
+            "record_samples": self._record_samples(payload),
+        }
+
+    def _shape_keys(self, value: Any) -> list[str]:
+        if isinstance(value, dict):
+            return [str(key) for key in list(value.keys())[:10]]
+        if isinstance(value, list) and value:
+            return self._shape_keys(value[0])
+        return []
+
+    def _record_samples(self, value: Any, path: str = "") -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        self._collect_record_samples(value, path, samples)
+        return samples[:3]
+
+    def _collect_record_samples(self, value: Any, path: str, samples: list[dict[str, Any]]) -> None:
+        if len(samples) >= 3:
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value[:3]):
+                next_path = f"{path}[{index}]" if path else f"[{index}]"
+                self._collect_record_samples(item, next_path, samples)
+            return
+        if not isinstance(value, dict):
+            return
+
+        keys = [str(key) for key in value.keys()]
+        key_set = {key.lower() for key in keys}
+        if key_set & {
+            "invoiceheader",
+            "invoicesummary",
+            "invoicedetails",
+            "issuedate",
+            "invtype",
+            "netvalue",
+            "vatamount",
+            "grossvalue",
+            "count",
+            "mark",
+            "invoicemark",
+            "cancellationmark",
+            "vat301",
+        }:
+            samples.append({"path": path or "$", "keys": keys[:20]})
+            return
+
+        for key, item in value.items():
+            next_path = f"{path}.{key}" if path else str(key)
+            self._collect_record_samples(item, next_path, samples)
+            if len(samples) >= 3:
+                return
 
     def _collect_cancellations(self, payload: Any) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
