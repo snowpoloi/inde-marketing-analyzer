@@ -106,7 +106,14 @@ def search_console_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
+def _aade_record_type(row: dict[str, Any]) -> str:
+    raw = row.get("raw")
+    if not isinstance(raw, dict):
+        return ""
+    return str(raw.get("record_type") or "")
+
+
+def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
     documents = payload.get("documents") if isinstance(payload, dict) else []
     summary_rows = payload.get("summary_rows") if isinstance(payload, dict) else []
     responses = payload.get("responses") if isinstance(payload, dict) else []
@@ -124,10 +131,47 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
     )
     document_count = sum(as_int(row.get("document_count")) or 1 for row in documents)
     cancelled = sum(as_int(row.get("document_count")) or 1 for row in documents if row.get("is_cancelled"))
+    full_documents = sum(1 for row in documents if not _aade_record_type(row))
+    book_rows = [row for row in documents if _aade_record_type(row) == "book_info"]
+    book_documents = sum(as_int(row.get("document_count")) or 1 for row in book_rows)
+    vat_rows = [row for row in documents if _aade_record_type(row) == "vat_info"]
+    vat_amount = sum((as_decimal(row.get("vat_amount")) for row in vat_rows), Decimal("0"))
+    endpoint_results: dict[str, dict[str, int]] = {}
+    if isinstance(responses, list):
+        for response in responses:
+            if not isinstance(response, dict):
+                continue
+            endpoint = str(response.get("endpoint") or "unknown")
+            row = endpoint_results.setdefault(
+                endpoint,
+                {
+                    "calls": 0,
+                    "full_documents": 0,
+                    "book_rows": 0,
+                    "book_documents": 0,
+                    "vat_rows": 0,
+                    "cancellations": 0,
+                },
+            )
+            row["calls"] += 1
+            row["full_documents"] += as_int(response.get("full_document_count"))
+            row["book_rows"] += as_int(response.get("book_row_count"))
+            row["book_documents"] += as_int(response.get("book_document_count"))
+            row["vat_rows"] += as_int(response.get("vat_row_count"))
+            row["cancellations"] += as_int(response.get("cancellation_count"))
     return {
         "aade_documents": document_count,
+        "aade_full_documents": full_documents,
+        "aade_book_rows": len(book_rows),
+        "aade_book_documents": book_documents,
+        "aade_vat_rows": len(vat_rows),
+        "aade_vat_amount": _json_number(vat_amount),
         "aade_summary_rows": len(summary_rows),
+        "aade_calls": len(responses) if isinstance(responses, list) else 0,
         "aade_pages": len(responses) if isinstance(responses, list) else 0,
+        "aade_endpoint_results": [
+            {"endpoint": endpoint, **values} for endpoint, values in sorted(endpoint_results.items())
+        ],
         "aade_gross_income": _json_number(income),
         "aade_gross_expenses": _json_number(expenses),
         "aade_cancelled_documents": cancelled,

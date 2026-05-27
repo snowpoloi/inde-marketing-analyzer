@@ -21,6 +21,8 @@ AADE_READ_ONLY_ENDPOINTS = {
 }
 
 AADE_DOCUMENT_ENDPOINTS = {"RequestDocs", "RequestTransmittedDocs"}
+AADE_BOOK_ENDPOINTS = {"RequestMyIncome", "RequestMyExpenses"}
+AADE_VAT_ENDPOINTS = {"RequestVatInfo"}
 
 AADE_BLOCKED_ENDPOINT_FRAGMENTS = (
     "Cancel",
@@ -75,17 +77,37 @@ class AADEConnector:
                         raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
 
                     payload = self._parse_response(response)
-                    response_book_rows = [
-                        self._normalise_book_info(endpoint_name, item)
-                        for item in self._collect_book_info(payload)
-                    ]
+                    response_book_rows = (
+                        [
+                            self._normalise_book_info(endpoint_name, item)
+                            for item in self._collect_book_info(payload)
+                        ]
+                        if endpoint_name in AADE_BOOK_ENDPOINTS
+                        else []
+                    )
                     response_documents = [
                         self._normalise_document(endpoint_name, item)
                         for item in self._collect_documents(payload)
                     ]
-                    response_rows = response_documents + response_book_rows
+                    response_cancellations = (
+                        [
+                            self._normalise_cancellation(endpoint_name, item)
+                            for item in self._collect_cancellations(payload)
+                        ]
+                        if endpoint_name in AADE_DOCUMENT_ENDPOINTS
+                        else []
+                    )
+                    response_vat_rows = (
+                        [
+                            self._normalise_vat_info(endpoint_name, item)
+                            for item in self._collect_vat_info(payload)
+                        ]
+                        if endpoint_name in AADE_VAT_ENDPOINTS
+                        else []
+                    )
+                    response_rows = response_documents + response_book_rows + response_cancellations + response_vat_rows
                     endpoint_documents.extend(response_rows)
-                    endpoint_max_mark = max(endpoint_max_mark, self._max_mark(response_documents))
+                    endpoint_max_mark = max(endpoint_max_mark, self._max_response_mark(payload, response_rows))
                     next_partition_key, next_row_key = self._next_partition(payload)
                     responses.append(
                         {
@@ -93,6 +115,13 @@ class AADEConnector:
                             "page": page,
                             "params": self._redacted_params(params),
                             "document_count": sum(int(item.get("document_count") or 1) for item in response_rows),
+                            "full_document_count": len(response_documents),
+                            "book_row_count": len(response_book_rows),
+                            "book_document_count": sum(
+                                int(item.get("document_count") or 1) for item in response_book_rows
+                            ),
+                            "cancellation_count": len(response_cancellations),
+                            "vat_row_count": len(response_vat_rows),
                             "has_next_page": bool(next_partition_key and next_row_key),
                         }
                     )
@@ -173,7 +202,9 @@ class AADEConnector:
         if endpoint in AADE_DOCUMENT_ENDPOINTS:
             params["mark"] = self._endpoint_mark(endpoint)
         vat_number = self.config.get("vat_number")
-        if vat_number:
+        if endpoint in AADE_VAT_ENDPOINTS:
+            params["GroupedPerDay"] = str(self._bool(self.config.get("vat_grouped_per_day"))).lower()
+        if vat_number and self._include_entity_vat_number(endpoint):
             params["entityVatNumber"] = str(vat_number).replace("EL", "").replace("el", "").strip()
 
         if next_partition_key and next_row_key:
@@ -191,6 +222,11 @@ class AADEConnector:
         if endpoint in AADE_DOCUMENT_ENDPOINTS:
             params["mark"] = self._int(params.get("mark"))
         return params
+
+    def _include_entity_vat_number(self, endpoint: str) -> bool:
+        if endpoint in AADE_DOCUMENT_ENDPOINTS:
+            return self._bool(self.config.get("representative_mode") or self.config.get("send_entity_vat_number"))
+        return True
 
     def _endpoint_mark(self, endpoint: str) -> int:
         cursor = self.config.get("cursor") or self.config.get("cursors") or {}
@@ -254,7 +290,7 @@ class AADEConnector:
             if (
                 "invoiceheader" in keys
                 or "invoicesummary" in keys
-                or "invoiceDetails" in value
+                or "invoicedetails" in keys
                 or "invoice_details" in keys
                 or ("mark" in keys and ("uid" in keys or "invoicetype" in keys))
             ):
@@ -280,6 +316,46 @@ class AADEConnector:
             if "issuedate" in keys and "invtype" in keys and (
                 "netvalue" in keys or "vatamount" in keys or "grossvalue" in keys or "count" in keys
             ):
+                rows.append(value)
+                return
+            for item in value.values():
+                visit(item)
+
+        visit(payload)
+        return rows
+
+    def _collect_cancellations(self, payload: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    visit(item)
+                return
+            if not isinstance(value, dict):
+                return
+            keys = {str(key).lower() for key in value.keys()}
+            if "invoicemark" in keys and "cancellationmark" in keys and "cancellationdate" in keys:
+                rows.append(value)
+                return
+            for item in value.values():
+                visit(item)
+
+        visit(payload)
+        return rows
+
+    def _collect_vat_info(self, payload: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    visit(item)
+                return
+            if not isinstance(value, dict):
+                return
+            keys = {str(key).lower() for key in value.keys()}
+            if "issuedate" in keys and any(key.startswith("vat") for key in keys):
                 rows.append(value)
                 return
             for item in value.values():
@@ -314,8 +390,33 @@ class AADEConnector:
         return None
 
     def _max_mark(self, documents: list[dict[str, Any]]) -> int:
-        marks = [self._int(document.get("mark")) for document in documents]
+        marks = [
+            self._int(document.get("mark") or document.get("max_mark") or document.get("cancelled_by_mark"))
+            for document in documents
+        ]
         return max(marks, default=0)
+
+    def _max_response_mark(self, payload: Any, rows: list[dict[str, Any]]) -> int:
+        marks = [self._max_mark(rows)]
+        for key in ("mark", "invoiceMark", "cancellationMark", "classificationMark", "paymentMethodMark", "maxMark"):
+            marks.extend(self._find_all_ints(payload, key))
+        return max(marks, default=0)
+
+    def _find_all_ints(self, value: Any, key: str) -> list[int]:
+        if isinstance(value, list):
+            found: list[int] = []
+            for item in value:
+                found.extend(self._find_all_ints(item, key))
+            return found
+        if not isinstance(value, dict):
+            return []
+        found = []
+        key_lower = key.lower()
+        for row_key, row_value in value.items():
+            if str(row_key).lower() == key_lower:
+                found.append(self._int(row_value))
+            found.extend(self._find_all_ints(row_value, key))
+        return [item for item in found if item]
 
     def _normalise_document(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
         direction = self._direction(endpoint)
@@ -384,6 +485,35 @@ class AADEConnector:
             "raw": {**row, "document_count": 1},
         }
 
+    def _normalise_cancellation(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
+        direction = self._direction(endpoint)
+        issue_date = self._date(self._pick(row, "cancellationDate", "issueDate", "date"))
+        invoice_mark = self._text(self._pick(row, "invoiceMark", "mark"))
+        cancellation_mark = self._text(self._pick(row, "cancellationMark", "cancelledByMark"))
+        identity_key = f"{endpoint}:cancelled:{invoice_mark or ''}:{cancellation_mark or ''}:{issue_date.isoformat()}"
+
+        return {
+            "source_endpoint": endpoint,
+            "identity_key": identity_key,
+            "mark": invoice_mark,
+            "uid": None,
+            "issuer_vat": None,
+            "counterpart_vat": None,
+            "issue_date": issue_date,
+            "document_direction": direction,
+            "invoice_type": None,
+            "series": None,
+            "aa": None,
+            "currency": "EUR",
+            "net_value": Decimal("0"),
+            "vat_amount": Decimal("0"),
+            "gross_value": Decimal("0"),
+            "document_count": 1,
+            "is_cancelled": True,
+            "cancelled_by_mark": cancellation_mark,
+            "raw": {**row, "document_count": 1, "record_type": "cancellation"},
+        }
+
     def _normalise_book_info(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
         direction = self._direction(endpoint)
         issue_date = self._date(self._pick(row, "issueDate", "date"))
@@ -397,6 +527,8 @@ class AADEConnector:
             gross_value = net_value + vat_amount
 
         document_count = self._int(self._pick(row, "count", "quantity")) or 1
+        min_mark = self._text(self._pick(row, "minMark", "min_mark"))
+        max_mark = self._text(self._pick(row, "maxMark", "max_mark"))
         self_pricing = self._text(self._pick(row, "selfPricing", "self_pricing"))
         invoice_detail_type = self._text(self._pick(row, "invoiceDetailType", "invoice_detail_type"))
         is_cancelled = self._bool(self._pick(row, "cancelled", "isCancelled"))
@@ -410,16 +542,18 @@ class AADEConnector:
             issuer_vat = own_vat
             counterpart_vat = counter_vat
 
-        raw = {**row, "document_count": document_count}
+        raw = {**row, "document_count": document_count, "record_type": "book_info"}
         identity_key = (
             f"{endpoint}:{issue_date.isoformat()}:{direction}:{counter_vat or ''}:{invoice_type or ''}:"
-            f"{self_pricing or ''}:{invoice_detail_type or ''}:{net_value}:{vat_amount}:{gross_value}:{document_count}"
+            f"{self_pricing or ''}:{invoice_detail_type or ''}:{net_value}:{vat_amount}:{gross_value}:"
+            f"{document_count}:{min_mark or ''}:{max_mark or ''}"
         )
 
         return {
             "source_endpoint": endpoint,
             "identity_key": identity_key,
-            "mark": None,
+            "mark": max_mark or min_mark,
+            "max_mark": max_mark,
             "uid": None,
             "issuer_vat": issuer_vat,
             "counterpart_vat": counterpart_vat,
@@ -438,6 +572,38 @@ class AADEConnector:
             "raw": raw,
         }
 
+    def _normalise_vat_info(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
+        issue_date = self._date(self._pick(row, "IssueDate", "issueDate", "date"))
+        mark = self._text(self._pick(row, "Mark", "mark"))
+        vat_amount = sum(
+            (self._decimal(value) for key, value in row.items() if str(key).lower().startswith("vat")),
+            Decimal("0"),
+        )
+        is_cancelled = self._bool(self._pick(row, "IsCancelled", "isCancelled", "cancelled"))
+        identity_key = f"{endpoint}:vat:{mark or ''}:{issue_date.isoformat()}:{vat_amount}"
+
+        return {
+            "source_endpoint": endpoint,
+            "identity_key": identity_key,
+            "mark": mark,
+            "uid": None,
+            "issuer_vat": None,
+            "counterpart_vat": None,
+            "issue_date": issue_date,
+            "document_direction": "vat",
+            "invoice_type": None,
+            "series": None,
+            "aa": None,
+            "currency": "EUR",
+            "net_value": Decimal("0"),
+            "vat_amount": vat_amount,
+            "gross_value": Decimal("0"),
+            "document_count": 1,
+            "is_cancelled": is_cancelled,
+            "cancelled_by_mark": None,
+            "raw": {**row, "document_count": 1, "record_type": "vat_info"},
+        }
+
     def _summary_rows(self, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups: dict[tuple[date, str, str], dict[str, Any]] = defaultdict(
             lambda: {"amount": Decimal("0"), "quantity": 0}
@@ -447,9 +613,9 @@ class AADEConnector:
             endpoint = document["source_endpoint"]
             direction = document["document_direction"]
             document_count = self._int(document.get("document_count")) or 1
-            metric_name = f"gross_{direction}"
+            metric_name = "vat_total" if direction == "vat" else f"gross_{direction}"
             key = (metric_date, endpoint, metric_name)
-            groups[key]["amount"] += document["gross_value"]
+            groups[key]["amount"] += document["vat_amount"] if direction == "vat" else document["gross_value"]
             groups[key]["quantity"] += document_count
             if document["is_cancelled"]:
                 cancelled_key = (metric_date, endpoint, "cancelled_documents")

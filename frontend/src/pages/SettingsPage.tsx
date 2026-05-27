@@ -21,6 +21,8 @@ const placeholders: Record<string, Record<string, unknown>> = {
     max_pages: 2,
     page_delay_seconds: 2,
     retry_after_max_seconds: 20,
+    representative_mode: false,
+    vat_grouped_per_day: false,
     endpoints: ["RequestTransmittedDocs", "RequestDocs", "RequestMyIncome", "RequestMyExpenses"],
     extra_params: {
       "*": {}

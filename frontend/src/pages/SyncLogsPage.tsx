@@ -68,11 +68,45 @@ function syncDetails(row: SyncRun) {
   if (meta.aade_documents !== undefined) {
     details.push(`AADE documents: ${number.format(Number(meta.aade_documents) || 0)}`);
   }
+  if (meta.aade_full_documents !== undefined) {
+    details.push(`AADE full docs: ${number.format(Number(meta.aade_full_documents) || 0)}`);
+  }
+  if (meta.aade_book_documents !== undefined) {
+    details.push(`AADE book docs: ${number.format(Number(meta.aade_book_documents) || 0)}`);
+  }
+  if (meta.aade_book_rows !== undefined) {
+    details.push(`AADE book rows: ${number.format(Number(meta.aade_book_rows) || 0)}`);
+  }
+  if (meta.aade_vat_rows !== undefined) {
+    details.push(`AADE VAT rows: ${number.format(Number(meta.aade_vat_rows) || 0)}`);
+  }
+  if (meta.aade_vat_amount !== undefined) {
+    details.push(`AADE VAT amount: ${currency.format(Number(meta.aade_vat_amount) || 0)}`);
+  }
   if (meta.aade_summary_rows !== undefined) {
     details.push(`AADE summary rows: ${number.format(Number(meta.aade_summary_rows) || 0)}`);
   }
+  if (meta.aade_calls !== undefined) {
+    details.push(`AADE calls: ${number.format(Number(meta.aade_calls) || 0)}`);
+  }
   if (meta.aade_pages !== undefined) {
     details.push(`AADE pages: ${number.format(Number(meta.aade_pages) || 0)}`);
+  }
+  if (Array.isArray(meta.aade_endpoint_results)) {
+    const endpointDetails = meta.aade_endpoint_results
+      .map((item) => {
+        const result = item as Record<string, unknown>;
+        const name = String(result.endpoint || "unknown");
+        const calls = Number(result.calls) || 0;
+        const full = Number(result.full_documents) || 0;
+        const book = Number(result.book_documents) || 0;
+        const vat = Number(result.vat_rows) || 0;
+        return `${name}: ${number.format(calls)} calls, ${number.format(full)} full, ${number.format(book)} book, ${number.format(vat)} VAT`;
+      })
+      .join("; ");
+    if (endpointDetails) {
+      details.push(`AADE endpoints: ${endpointDetails}`);
+    }
   }
   if (meta.aade_gross_income !== undefined) {
     details.push(`AADE income: ${currency.format(Number(meta.aade_gross_income) || 0)}`);
