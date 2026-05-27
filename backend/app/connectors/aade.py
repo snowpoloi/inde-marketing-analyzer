@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urljoin
+import json
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -248,13 +249,39 @@ class AADEConnector:
 
     def _parse_response(self, response: httpx.Response) -> Any:
         content_type = response.headers.get("content-type", "")
-        text = response.text.strip()
-        if "json" in content_type or text.startswith("{") or text.startswith("["):
-            return response.json()
+        text = response.text.strip().lstrip("\ufeff")
+        if "json" in content_type or text.startswith("{") or text.startswith("[") or text.startswith('"'):
+            try:
+                return self._decode_payload(json.loads(text))
+            except (TypeError, ValueError):
+                pass
         if not text:
             return {}
+        return self._parse_xml_text(text)
+
+    def _parse_xml_text(self, text: str) -> dict[str, Any]:
         root = ET.fromstring(text)
         return {self._clean_tag(root.tag): self._xml_to_data(root)}
+
+    def _decode_payload(self, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip().lstrip("\ufeff")
+            if text.startswith("<"):
+                try:
+                    return self._parse_xml_text(text)
+                except ET.ParseError:
+                    return value
+            if text.startswith("{") or text.startswith("["):
+                try:
+                    return self._decode_payload(json.loads(text))
+                except (TypeError, ValueError):
+                    return value
+            return value
+        if isinstance(value, list):
+            return [self._decode_payload(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._decode_payload(item) for key, item in value.items()}
+        return value
 
     def _xml_to_data(self, element: ET.Element) -> Any:
         children: dict[str, Any] = {}
@@ -333,9 +360,20 @@ class AADEConnector:
         return {
             "root_keys": self._shape_keys(payload),
             "record_samples": self._record_samples(payload),
+            "raw_tags": self._raw_tags(text),
             "body_chars": len(text),
             "content_type": response.headers.get("content-type", "")[:80] if response is not None else "",
         }
+
+    def _raw_tags(self, text: str) -> list[str]:
+        tags: list[str] = []
+        for match in re.finditer(r"<\s*/?\s*([A-Za-z_][\w:.-]*)\b", text[:20000]):
+            tag = self._clean_tag(match.group(1).split(":", 1)[-1])
+            if tag and tag not in tags and not tag.startswith("?"):
+                tags.append(tag)
+            if len(tags) >= 12:
+                break
+        return tags
 
     def _shape_keys(self, value: Any) -> list[str]:
         if isinstance(value, dict):

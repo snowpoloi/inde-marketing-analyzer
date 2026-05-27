@@ -153,6 +153,7 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
                     "cancellations": 0,
                     "param_names": [],
                     "root_keys": [],
+                    "raw_tags": [],
                     "record_samples": [],
                     "body_chars": 0,
                     "content_type": "",
@@ -170,6 +171,8 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(shape, dict):
                 if not row["root_keys"] and isinstance(shape.get("root_keys"), list):
                     row["root_keys"] = shape["root_keys"]
+                if not row["raw_tags"] and isinstance(shape.get("raw_tags"), list):
+                    row["raw_tags"] = shape["raw_tags"]
                 if not row["record_samples"] and isinstance(shape.get("record_samples"), list):
                     row["record_samples"] = shape["record_samples"]
                 row["body_chars"] += as_int(shape.get("body_chars"))

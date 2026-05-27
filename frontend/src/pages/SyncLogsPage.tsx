@@ -121,10 +121,12 @@ function syncDetails(row: SyncRun) {
         const book = Number(result.book_documents) || 0;
         const vat = Number(result.vat_rows) || 0;
         const roots = shortList(result.root_keys);
+        const tags = shortList(result.raw_tags);
         const keys = sampleKeys(result.record_samples);
         const bodyChars = Number(result.body_chars) || 0;
         const shape = [
           roots ? `roots ${roots}` : "",
+          tags ? `tags ${tags}` : "",
           keys ? `keys ${keys}` : "",
           bodyChars ? `body ${number.format(bodyChars)} chars` : "empty body"
         ]
