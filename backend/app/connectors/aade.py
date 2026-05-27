@@ -40,7 +40,7 @@ class AADEConnector:
         self.timeout = int(self.config.get("timeout_seconds") or 60)
 
     def fetch_documents(self, date_from: date, date_to: date) -> dict[str, Any]:
-        endpoints = self.config.get("endpoints") or ["RequestTransmittedDocs", "RequestDocs"]
+        endpoints = self.config.get("endpoints") or ["RequestMyIncome", "RequestMyExpenses"]
         if isinstance(endpoints, str):
             endpoints = [endpoints]
 
@@ -101,8 +101,8 @@ class AADEConnector:
 
     def _params(self, date_from: date, date_to: date, endpoint: str) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "dateFrom": date_from.isoformat(),
-            "dateTo": date_to.isoformat(),
+            "dateFrom": date_from.strftime("%d/%m/%Y"),
+            "dateTo": date_to.strftime("%d/%m/%Y"),
         }
         vat_number = self.config.get("vat_number")
         if vat_number:
