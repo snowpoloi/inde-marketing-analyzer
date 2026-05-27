@@ -6,7 +6,7 @@ import type { SyncRun } from "../api/client";
 import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 
-const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "search_console", "opencart", "shoply"];
+const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "search_console", "aade", "opencart", "shoply"];
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 
@@ -64,6 +64,21 @@ function syncDetails(row: SyncRun) {
   }
   if (meta.search_console_impressions !== undefined) {
     details.push(`Search Console impressions: ${number.format(Number(meta.search_console_impressions) || 0)}`);
+  }
+  if (meta.aade_documents !== undefined) {
+    details.push(`AADE documents: ${number.format(Number(meta.aade_documents) || 0)}`);
+  }
+  if (meta.aade_summary_rows !== undefined) {
+    details.push(`AADE summary rows: ${number.format(Number(meta.aade_summary_rows) || 0)}`);
+  }
+  if (meta.aade_gross_income !== undefined) {
+    details.push(`AADE income: ${currency.format(Number(meta.aade_gross_income) || 0)}`);
+  }
+  if (meta.aade_gross_expenses !== undefined) {
+    details.push(`AADE expenses: ${currency.format(Number(meta.aade_gross_expenses) || 0)}`);
+  }
+  if (meta.aade_cancelled_documents !== undefined) {
+    details.push(`AADE cancelled: ${number.format(Number(meta.aade_cancelled_documents) || 0)}`);
   }
   return details.length ? details.join(" | ") : "-";
 }
