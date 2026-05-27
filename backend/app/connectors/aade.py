@@ -5,6 +5,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urljoin
+import re
+import time
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -40,7 +42,10 @@ class AADEConnector:
         self.config = config or {}
         self.base_url = str(self.config.get("base_url") or "https://mydatapi.aade.gr/myDATA").rstrip("/") + "/"
         self.timeout = int(self.config.get("timeout_seconds") or 60)
-        self.max_pages = max(1, int(self.config.get("max_pages") or 10))
+        self.max_pages = min(25, max(1, self._int(self.config.get("max_pages")) or 2))
+        self.max_retries = min(3, max(0, self._int(self.config.get("max_retries")) or 1))
+        self.page_delay_seconds = min(10.0, max(0.0, self._float(self.config.get("page_delay_seconds"), 2.0)))
+        self.retry_after_max_seconds = min(60, max(0, self._int(self.config.get("retry_after_max_seconds")) or 20))
 
     def fetch_documents(self, date_from: date, date_to: date) -> dict[str, Any]:
         endpoints = self.config.get("endpoints") or ["RequestMyIncome", "RequestMyExpenses"]
@@ -52,6 +57,7 @@ class AADEConnector:
         cursor: dict[str, dict[str, str]] = {}
 
         with httpx.Client(timeout=self.timeout) as client:
+            request_count = 0
             for endpoint in endpoints:
                 endpoint_name = self._validate_endpoint(str(endpoint))
                 endpoint_documents: list[dict[str, Any]] = []
@@ -61,11 +67,10 @@ class AADEConnector:
 
                 for page in range(1, self.max_pages + 1):
                     params = self._params(date_from, date_to, endpoint_name, next_partition_key, next_row_key)
-                    response = client.get(
-                        urljoin(self.base_url, endpoint_name),
-                        headers=self._headers(),
-                        params=params,
-                    )
+                    if request_count and self.page_delay_seconds:
+                        time.sleep(self.page_delay_seconds)
+                    response = self._get(client, endpoint_name, params)
+                    request_count += 1
                     if response.status_code >= 400:
                         raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
 
@@ -124,6 +129,34 @@ class AADEConnector:
             "Ocp-Apim-Subscription-Key": str(subscription_key),
             "Accept": "application/json, application/xml, text/xml",
         }
+
+    def _get(self, client: httpx.Client, endpoint: str, params: dict[str, Any]) -> httpx.Response:
+        url = urljoin(self.base_url, endpoint)
+        for attempt in range(self.max_retries + 1):
+            response = client.get(url, headers=self._headers(), params=params)
+            if response.status_code != 429:
+                return response
+
+            retry_after = self._retry_after_seconds(response)
+            if retry_after > self.retry_after_max_seconds:
+                raise RuntimeError(
+                    f"AADE rate limit reached. Try again in {retry_after} seconds before running sync again."
+                )
+            if attempt >= self.max_retries:
+                raise RuntimeError(
+                    f"AADE rate limit reached after {attempt + 1} attempts. Try again in {retry_after} seconds."
+                )
+            time.sleep(max(float(retry_after), self.page_delay_seconds))
+        return response
+
+    def _retry_after_seconds(self, response: httpx.Response) -> int:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            return max(1, self._int(retry_after))
+        match = re.search(r"try again in\s+(\d+)\s+seconds", response.text, flags=re.IGNORECASE)
+        if match:
+            return max(1, self._int(match.group(1)))
+        return max(1, min(self.retry_after_max_seconds, 2))
 
     def _params(
         self,
@@ -498,6 +531,14 @@ class AADEConnector:
             return int(Decimal(str(value).replace(",", ".")))
         except (InvalidOperation, ValueError):
             return 0
+
+    def _float(self, value: Any, default: float) -> float:
+        if value in (None, ""):
+            return default
+        try:
+            return float(Decimal(str(value).replace(",", ".")))
+        except (InvalidOperation, ValueError):
+            return default
 
     def _text(self, value: Any) -> str | None:
         if value in (None, ""):

@@ -18,6 +18,9 @@ const placeholders: Record<string, Record<string, unknown>> = {
     subscription_key: "...",
     vat_number: "123456789",
     timeout_seconds: 60,
+    max_pages: 2,
+    page_delay_seconds: 2,
+    retry_after_max_seconds: 20,
     endpoints: ["RequestTransmittedDocs", "RequestDocs", "RequestMyIncome", "RequestMyExpenses"],
     extra_params: {
       "*": {}
@@ -281,6 +284,36 @@ export function SettingsPage() {
               min="10"
               value={String(config.timeout_seconds ?? 60)}
               onChange={(event) => updateAadeConfig({ timeout_seconds: Number(event.target.value) || 60 })}
+            />
+          </label>
+          <label>
+            <span>Max pages</span>
+            <input
+              type="number"
+              min="1"
+              max="25"
+              value={String(config.max_pages ?? 2)}
+              onChange={(event) => updateAadeConfig({ max_pages: Number(event.target.value) || 2 })}
+            />
+          </label>
+          <label>
+            <span>Delay seconds</span>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={String(config.page_delay_seconds ?? 2)}
+              onChange={(event) => updateAadeConfig({ page_delay_seconds: Number(event.target.value) || 0 })}
+            />
+          </label>
+          <label>
+            <span>Retry wait limit</span>
+            <input
+              type="number"
+              min="0"
+              max="60"
+              value={String(config.retry_after_max_seconds ?? 20)}
+              onChange={(event) => updateAadeConfig({ retry_after_max_seconds: Number(event.target.value) || 20 })}
             />
           </label>
         </div>
