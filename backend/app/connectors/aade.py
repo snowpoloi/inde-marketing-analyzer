@@ -69,7 +69,7 @@ class AADEConnector:
                     params = self._params(date_from, date_to, endpoint_name, next_partition_key, next_row_key)
                     if request_count and self.page_delay_seconds:
                         time.sleep(self.page_delay_seconds)
-                    response = self._get(client, endpoint_name, params)
+                    response = self._request_get(client, endpoint_name, params)
                     request_count += 1
                     if response.status_code >= 400:
                         raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
@@ -130,7 +130,7 @@ class AADEConnector:
             "Accept": "application/json, application/xml, text/xml",
         }
 
-    def _get(self, client: httpx.Client, endpoint: str, params: dict[str, Any]) -> httpx.Response:
+    def _request_get(self, client: httpx.Client, endpoint: str, params: dict[str, Any]) -> httpx.Response:
         url = urljoin(self.base_url, endpoint)
         for attempt in range(self.max_retries + 1):
             response = client.get(url, headers=self._headers(), params=params)
