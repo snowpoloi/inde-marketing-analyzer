@@ -511,6 +511,7 @@ def import_aade_payload(db: Session, payload: dict[str, Any], fallback_date: dat
     for row in documents:
         if not isinstance(row, dict):
             continue
+        document_count = as_int(row.get("document_count")) or 1
         issue_date = as_date(row.get("issue_date"), fallback_date)
         source_endpoint = str(row.get("source_endpoint") or "unknown")
         identity_key = str(
@@ -546,7 +547,7 @@ def import_aade_payload(db: Session, payload: dict[str, Any], fallback_date: dat
             db.add(existing)
         else:
             db.add(AADEDocument(**values))
-        count += 1
+        count += document_count
 
     for row in summary_rows:
         if not isinstance(row, dict):

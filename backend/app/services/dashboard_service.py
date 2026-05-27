@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import and_, false, func, select
@@ -29,6 +29,17 @@ def _ratio(numerator: Decimal | float | int, denominator: Decimal | float | int)
     if denominator_float == 0:
         return 0.0
     return float(numerator or 0) / denominator_float
+
+
+def _aade_document_count(document: AADEDocument) -> int:
+    raw = document.raw if isinstance(document.raw, dict) else {}
+    value = raw.get("document_count") or raw.get("count")
+    if value in (None, ""):
+        return 1
+    try:
+        return max(1, int(Decimal(str(value).replace(",", "."))))
+    except (InvalidOperation, ValueError):
+        return 1
 
 
 def _configured_sale_statuses(db: Session) -> list[str] | None:
@@ -1070,6 +1081,7 @@ def _aade_audit(
     for document in documents:
         direction = document.document_direction or "unknown"
         invoice_type = document.invoice_type or "Unknown"
+        document_count = _aade_document_count(document)
         key = (direction, invoice_type)
         row = rows_by_key.setdefault(
             key,
@@ -1083,22 +1095,22 @@ def _aade_audit(
                 "gross_value": Decimal("0"),
             },
         )
-        row["documents"] += 1
+        row["documents"] += document_count
         if document.is_cancelled:
-            row["cancelled_documents"] += 1
-            cancelled_documents += 1
+            row["cancelled_documents"] += document_count
+            cancelled_documents += document_count
         else:
             row["net_value"] += document.net_value or Decimal("0")
             row["vat_amount"] += document.vat_amount or Decimal("0")
             row["gross_value"] += document.gross_value or Decimal("0")
 
         if direction == "income":
-            income_documents += 1
+            income_documents += document_count
             if not document.is_cancelled:
                 income_gross += document.gross_value or Decimal("0")
                 income_vat += document.vat_amount or Decimal("0")
         elif direction == "expense":
-            expense_documents += 1
+            expense_documents += document_count
             if not document.is_cancelled:
                 expense_gross += document.gross_value or Decimal("0")
                 expense_vat += document.vat_amount or Decimal("0")

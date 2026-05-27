@@ -60,16 +60,20 @@ class AADEConnector:
                     raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
 
                 payload = self._parse_response(response)
+                response_book_rows = [
+                    self._normalise_book_info(endpoint_name, item)
+                    for item in self._collect_book_info(payload)
+                ]
                 response_documents = [
                     self._normalise_document(endpoint_name, item)
                     for item in self._collect_documents(payload)
                 ]
-                documents.extend(response_documents)
+                documents.extend(response_documents + response_book_rows)
                 responses.append(
                     {
                         "endpoint": endpoint_name,
                         "params": params,
-                        "document_count": len(response_documents),
+                        "document_count": sum(int(item.get("document_count") or 1) for item in response_documents + response_book_rows),
                     }
                 )
 
@@ -178,6 +182,28 @@ class AADEConnector:
         visit(payload)
         return documents
 
+    def _collect_book_info(self, payload: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    visit(item)
+                return
+            if not isinstance(value, dict):
+                return
+            keys = {str(key).lower() for key in value.keys()}
+            if "issuedate" in keys and "invtype" in keys and (
+                "netvalue" in keys or "vatamount" in keys or "grossvalue" in keys or "count" in keys
+            ):
+                rows.append(value)
+                return
+            for item in value.values():
+                visit(item)
+
+        visit(payload)
+        return rows
+
     def _normalise_document(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
         direction = self._direction(endpoint)
         header = self._get(row, "invoiceHeader") or self._get(row, "header") or {}
@@ -244,6 +270,60 @@ class AADEConnector:
             "raw": row,
         }
 
+    def _normalise_book_info(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
+        direction = self._direction(endpoint)
+        issue_date = self._date(self._pick(row, "issueDate", "date"))
+        invoice_type = self._text(self._pick(row, "invType", "invoiceType", "type"))
+        counter_vat = self._vat(self._pick(row, "counterVatNumber", "counterpartVat", "vatNumber"))
+        own_vat = self._vat(self.config.get("vat_number"))
+        net_value = self._decimal(self._pick(row, "netValue", "totalNetValue", "net"))
+        vat_amount = self._decimal(self._pick(row, "vatAmount", "totalVatAmount", "vat"))
+        gross_value = self._decimal(self._pick(row, "grossValue", "totalGrossValue", "gross"))
+        if gross_value == 0 and (net_value or vat_amount):
+            gross_value = net_value + vat_amount
+
+        document_count = self._int(self._pick(row, "count", "quantity")) or 1
+        self_pricing = self._text(self._pick(row, "selfPricing", "self_pricing"))
+        invoice_detail_type = self._text(self._pick(row, "invoiceDetailType", "invoice_detail_type"))
+        is_cancelled = self._bool(self._pick(row, "cancelled", "isCancelled"))
+        if direction == "income":
+            issuer_vat = own_vat
+            counterpart_vat = counter_vat
+        elif direction == "expense":
+            issuer_vat = counter_vat
+            counterpart_vat = own_vat
+        else:
+            issuer_vat = own_vat
+            counterpart_vat = counter_vat
+
+        raw = {**row, "document_count": document_count}
+        identity_key = (
+            f"{endpoint}:{issue_date.isoformat()}:{direction}:{counter_vat or ''}:{invoice_type or ''}:"
+            f"{self_pricing or ''}:{invoice_detail_type or ''}:{net_value}:{vat_amount}:{gross_value}:{document_count}"
+        )
+
+        return {
+            "source_endpoint": endpoint,
+            "identity_key": identity_key,
+            "mark": None,
+            "uid": None,
+            "issuer_vat": issuer_vat,
+            "counterpart_vat": counterpart_vat,
+            "issue_date": issue_date,
+            "document_direction": direction,
+            "invoice_type": invoice_type,
+            "series": None,
+            "aa": None,
+            "currency": "EUR",
+            "net_value": net_value,
+            "vat_amount": vat_amount,
+            "gross_value": gross_value,
+            "document_count": document_count,
+            "is_cancelled": is_cancelled,
+            "cancelled_by_mark": None,
+            "raw": raw,
+        }
+
     def _summary_rows(self, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups: dict[tuple[date, str, str], dict[str, Any]] = defaultdict(
             lambda: {"amount": Decimal("0"), "quantity": 0}
@@ -252,13 +332,14 @@ class AADEConnector:
             metric_date = document["issue_date"]
             endpoint = document["source_endpoint"]
             direction = document["document_direction"]
+            document_count = self._int(document.get("document_count")) or 1
             metric_name = f"gross_{direction}"
             key = (metric_date, endpoint, metric_name)
             groups[key]["amount"] += document["gross_value"]
-            groups[key]["quantity"] += 1
+            groups[key]["quantity"] += document_count
             if document["is_cancelled"]:
                 cancelled_key = (metric_date, endpoint, "cancelled_documents")
-                groups[cancelled_key]["quantity"] += 1
+                groups[cancelled_key]["quantity"] += document_count
 
         return [
             {
@@ -328,6 +409,14 @@ class AADEConnector:
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "y"}
         return bool(value)
+
+    def _int(self, value: Any) -> int:
+        if value in (None, ""):
+            return 0
+        try:
+            return int(Decimal(str(value).replace(",", ".")))
+        except (InvalidOperation, ValueError):
+            return 0
 
     def _text(self, value: Any) -> str | None:
         if value in (None, ""):

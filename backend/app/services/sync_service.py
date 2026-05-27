@@ -121,9 +121,10 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
         (as_decimal(row.get("gross_value")) for row in documents if row.get("document_direction") == "expense"),
         Decimal("0"),
     )
-    cancelled = sum(1 for row in documents if row.get("is_cancelled"))
+    document_count = sum(as_int(row.get("document_count")) or 1 for row in documents)
+    cancelled = sum(as_int(row.get("document_count")) or 1 for row in documents if row.get("is_cancelled"))
     return {
-        "aade_documents": len(documents),
+        "aade_documents": document_count,
         "aade_summary_rows": len(summary_rows),
         "aade_gross_income": _json_number(income),
         "aade_gross_expenses": _json_number(expenses),
