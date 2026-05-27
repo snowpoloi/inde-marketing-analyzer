@@ -115,7 +115,7 @@ class AADEConnector:
                             "page": page,
                             "params": self._redacted_params(params),
                             "request_param_names": sorted(params.keys()),
-                            "payload_shape": self._payload_shape(payload),
+                            "payload_shape": self._payload_shape(payload, response),
                             "document_count": sum(int(item.get("document_count") or 1) for item in response_rows),
                             "full_document_count": len(response_documents),
                             "book_row_count": len(response_book_rows),
@@ -231,6 +231,8 @@ class AADEConnector:
         return True
 
     def _endpoint_mark(self, endpoint: str) -> int:
+        if endpoint in AADE_DOCUMENT_ENDPOINTS and self._bool(self.config.get("ignore_document_cursor")):
+            return self._int(self.config.get("mark"))
         cursor = self.config.get("cursor") or self.config.get("cursors") or {}
         if isinstance(cursor, dict):
             endpoint_cursor = cursor.get(endpoint) or {}
@@ -326,10 +328,13 @@ class AADEConnector:
         visit(payload)
         return rows
 
-    def _payload_shape(self, payload: Any) -> dict[str, Any]:
+    def _payload_shape(self, payload: Any, response: httpx.Response | None = None) -> dict[str, Any]:
+        text = response.text.strip() if response is not None else ""
         return {
             "root_keys": self._shape_keys(payload),
             "record_samples": self._record_samples(payload),
+            "body_chars": len(text),
+            "content_type": response.headers.get("content-type", "")[:80] if response is not None else "",
         }
 
     def _shape_keys(self, value: Any) -> list[str]:

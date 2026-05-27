@@ -108,7 +108,7 @@ function syncDetails(row: SyncRun) {
   if (meta.aade_calls !== undefined) {
     details.push(`AADE calls: ${number.format(Number(meta.aade_calls) || 0)}`);
   }
-  if (meta.aade_pages !== undefined) {
+  if (meta.aade_pages !== undefined && meta.aade_calls === undefined) {
     details.push(`AADE pages: ${number.format(Number(meta.aade_pages) || 0)}`);
   }
   if (Array.isArray(meta.aade_endpoint_results)) {
@@ -122,7 +122,14 @@ function syncDetails(row: SyncRun) {
         const vat = Number(result.vat_rows) || 0;
         const roots = shortList(result.root_keys);
         const keys = sampleKeys(result.record_samples);
-        const shape = [roots ? `roots ${roots}` : "", keys ? `keys ${keys}` : ""].filter(Boolean).join(", ");
+        const bodyChars = Number(result.body_chars) || 0;
+        const shape = [
+          roots ? `roots ${roots}` : "",
+          keys ? `keys ${keys}` : "",
+          bodyChars ? `body ${number.format(bodyChars)} chars` : "empty body"
+        ]
+          .filter(Boolean)
+          .join(", ");
         return `${name}: ${number.format(calls)} calls, ${number.format(full)} full, ${number.format(book)} book, ${number.format(vat)} VAT${
           shape ? ` (${shape})` : ""
         }`;

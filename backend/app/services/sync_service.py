@@ -154,6 +154,8 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
                     "param_names": [],
                     "root_keys": [],
                     "record_samples": [],
+                    "body_chars": 0,
+                    "content_type": "",
                 },
             )
             row["calls"] += 1
@@ -170,6 +172,9 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
                     row["root_keys"] = shape["root_keys"]
                 if not row["record_samples"] and isinstance(shape.get("record_samples"), list):
                     row["record_samples"] = shape["record_samples"]
+                row["body_chars"] += as_int(shape.get("body_chars"))
+                if not row["content_type"] and shape.get("content_type"):
+                    row["content_type"] = str(shape.get("content_type"))
     return {
         "aade_documents": document_count,
         "aade_full_documents": full_documents,
@@ -252,12 +257,27 @@ def run_provider_sync(
             count = import_search_console_rows(db, rows, date_from)
             meta = search_console_sync_meta(rows)
         elif provider == "aade":
-            payload = AADEConnector(config).fetch_documents(date_from, date_to)
+            connector_config = dict(config)
+            if sync_type == "manual":
+                connector_config["ignore_document_cursor"] = True
+            payload = AADEConnector(connector_config).fetch_documents(date_from, date_to)
             count = import_aade_payload(db, payload, date_from)
             cursor = payload.get("cursor") if isinstance(payload, dict) else {}
             if isinstance(cursor, dict) and cursor:
                 existing_cursor = config.get("cursor") if isinstance(config.get("cursor"), dict) else {}
-                integration.config = {**config, "cursor": {**existing_cursor, **cursor}}
+                merged_cursor = dict(existing_cursor)
+                for endpoint, endpoint_cursor in cursor.items():
+                    if not isinstance(endpoint_cursor, dict):
+                        continue
+                    existing_mark = as_int(
+                        existing_cursor.get(endpoint, {}).get("mark")
+                        if isinstance(existing_cursor.get(endpoint), dict)
+                        else None
+                    )
+                    new_mark = as_int(endpoint_cursor.get("mark"))
+                    if new_mark > existing_mark:
+                        merged_cursor[endpoint] = endpoint_cursor
+                integration.config = {**config, "cursor": merged_cursor}
                 db.add(integration)
             meta = aade_sync_meta(payload)
         elif provider == "shoply":
