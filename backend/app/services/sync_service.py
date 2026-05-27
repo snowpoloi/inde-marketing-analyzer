@@ -109,6 +109,7 @@ def search_console_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
 def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
     documents = payload.get("documents") if isinstance(payload, dict) else []
     summary_rows = payload.get("summary_rows") if isinstance(payload, dict) else []
+    responses = payload.get("responses") if isinstance(payload, dict) else []
     if not isinstance(documents, list):
         documents = []
     if not isinstance(summary_rows, list):
@@ -126,6 +127,7 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, int | float]:
     return {
         "aade_documents": document_count,
         "aade_summary_rows": len(summary_rows),
+        "aade_pages": len(responses) if isinstance(responses, list) else 0,
         "aade_gross_income": _json_number(income),
         "aade_gross_expenses": _json_number(expenses),
         "aade_cancelled_documents": cancelled,
@@ -197,6 +199,11 @@ def run_provider_sync(
         elif provider == "aade":
             payload = AADEConnector(config).fetch_documents(date_from, date_to)
             count = import_aade_payload(db, payload, date_from)
+            cursor = payload.get("cursor") if isinstance(payload, dict) else {}
+            if isinstance(cursor, dict) and cursor:
+                existing_cursor = config.get("cursor") if isinstance(config.get("cursor"), dict) else {}
+                integration.config = {**config, "cursor": {**existing_cursor, **cursor}}
+                db.add(integration)
             meta = aade_sync_meta(payload)
         elif provider == "shoply":
             rows = ShoplyConnector(config).fetch_sales(date_from, date_to)

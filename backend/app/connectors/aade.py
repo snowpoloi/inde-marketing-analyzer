@@ -18,6 +18,8 @@ AADE_READ_ONLY_ENDPOINTS = {
     "RequestVatInfo",
 }
 
+AADE_DOCUMENT_ENDPOINTS = {"RequestDocs", "RequestTransmittedDocs"}
+
 AADE_BLOCKED_ENDPOINT_FRAGMENTS = (
     "Cancel",
     "Classif",
@@ -38,6 +40,7 @@ class AADEConnector:
         self.config = config or {}
         self.base_url = str(self.config.get("base_url") or "https://mydatapi.aade.gr/myDATA").rstrip("/") + "/"
         self.timeout = int(self.config.get("timeout_seconds") or 60)
+        self.max_pages = max(1, int(self.config.get("max_pages") or 10))
 
     def fetch_documents(self, date_from: date, date_to: date) -> dict[str, Any]:
         endpoints = self.config.get("endpoints") or ["RequestMyIncome", "RequestMyExpenses"]
@@ -46,41 +49,60 @@ class AADEConnector:
 
         documents: list[dict[str, Any]] = []
         responses: list[dict[str, Any]] = []
+        cursor: dict[str, dict[str, str]] = {}
 
         with httpx.Client(timeout=self.timeout) as client:
             for endpoint in endpoints:
                 endpoint_name = self._validate_endpoint(str(endpoint))
-                params = self._params(date_from, date_to, endpoint_name)
-                response = client.get(
-                    urljoin(self.base_url, endpoint_name),
-                    headers=self._headers(),
-                    params=params,
-                )
-                if response.status_code >= 400:
-                    raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
+                endpoint_documents: list[dict[str, Any]] = []
+                endpoint_max_mark = self._endpoint_mark(endpoint_name)
+                next_partition_key: str | None = None
+                next_row_key: str | None = None
 
-                payload = self._parse_response(response)
-                response_book_rows = [
-                    self._normalise_book_info(endpoint_name, item)
-                    for item in self._collect_book_info(payload)
-                ]
-                response_documents = [
-                    self._normalise_document(endpoint_name, item)
-                    for item in self._collect_documents(payload)
-                ]
-                documents.extend(response_documents + response_book_rows)
-                responses.append(
-                    {
-                        "endpoint": endpoint_name,
-                        "params": params,
-                        "document_count": sum(int(item.get("document_count") or 1) for item in response_documents + response_book_rows),
-                    }
-                )
+                for page in range(1, self.max_pages + 1):
+                    params = self._params(date_from, date_to, endpoint_name, next_partition_key, next_row_key)
+                    response = client.get(
+                        urljoin(self.base_url, endpoint_name),
+                        headers=self._headers(),
+                        params=params,
+                    )
+                    if response.status_code >= 400:
+                        raise RuntimeError(f"AADE API returned {response.status_code}: {response.text[:800]}")
+
+                    payload = self._parse_response(response)
+                    response_book_rows = [
+                        self._normalise_book_info(endpoint_name, item)
+                        for item in self._collect_book_info(payload)
+                    ]
+                    response_documents = [
+                        self._normalise_document(endpoint_name, item)
+                        for item in self._collect_documents(payload)
+                    ]
+                    response_rows = response_documents + response_book_rows
+                    endpoint_documents.extend(response_rows)
+                    endpoint_max_mark = max(endpoint_max_mark, self._max_mark(response_documents))
+                    next_partition_key, next_row_key = self._next_partition(payload)
+                    responses.append(
+                        {
+                            "endpoint": endpoint_name,
+                            "page": page,
+                            "params": self._redacted_params(params),
+                            "document_count": sum(int(item.get("document_count") or 1) for item in response_rows),
+                            "has_next_page": bool(next_partition_key and next_row_key),
+                        }
+                    )
+                    if not next_partition_key or not next_row_key:
+                        break
+
+                documents.extend(endpoint_documents)
+                if endpoint_name in AADE_DOCUMENT_ENDPOINTS:
+                    cursor[endpoint_name] = {"mark": str(endpoint_max_mark)}
 
         return {
             "documents": documents,
             "summary_rows": self._summary_rows(documents),
             "responses": responses,
+            "cursor": cursor,
         }
 
     def _validate_endpoint(self, endpoint: str) -> str:
@@ -103,14 +125,27 @@ class AADEConnector:
             "Accept": "application/json, application/xml, text/xml",
         }
 
-    def _params(self, date_from: date, date_to: date, endpoint: str) -> dict[str, Any]:
+    def _params(
+        self,
+        date_from: date,
+        date_to: date,
+        endpoint: str,
+        next_partition_key: str | None = None,
+        next_row_key: str | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "dateFrom": date_from.strftime("%d/%m/%Y"),
             "dateTo": date_to.strftime("%d/%m/%Y"),
         }
+        if endpoint in AADE_DOCUMENT_ENDPOINTS:
+            params["mark"] = self._endpoint_mark(endpoint)
         vat_number = self.config.get("vat_number")
         if vat_number:
-            params["vatNumber"] = str(vat_number).replace("EL", "").replace("el", "").strip()
+            params["entityVatNumber"] = str(vat_number).replace("EL", "").replace("el", "").strip()
+
+        if next_partition_key and next_row_key:
+            params["nextPartitionKey"] = next_partition_key
+            params["nextRowKey"] = next_row_key
 
         extra_params = self.config.get("extra_params") or {}
         if isinstance(extra_params, dict):
@@ -120,7 +155,23 @@ class AADEConnector:
                 params.update(common_params)
             if isinstance(endpoint_params, dict):
                 params.update(endpoint_params)
+        if endpoint in AADE_DOCUMENT_ENDPOINTS:
+            params["mark"] = self._int(params.get("mark"))
         return params
+
+    def _endpoint_mark(self, endpoint: str) -> int:
+        cursor = self.config.get("cursor") or self.config.get("cursors") or {}
+        if isinstance(cursor, dict):
+            endpoint_cursor = cursor.get(endpoint) or {}
+            if isinstance(endpoint_cursor, dict):
+                return self._int(endpoint_cursor.get("mark"))
+        marks = self.config.get("marks") or {}
+        if isinstance(marks, dict):
+            return self._int(marks.get(endpoint))
+        return self._int(self.config.get("mark"))
+
+    def _redacted_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in params.items() if key not in {"Ocp-Apim-Subscription-Key"}}
 
     def _parse_response(self, response: httpx.Response) -> Any:
         content_type = response.headers.get("content-type", "")
@@ -204,6 +255,35 @@ class AADEConnector:
         visit(payload)
         return rows
 
+    def _next_partition(self, payload: Any) -> tuple[str | None, str | None]:
+        partition = self._find_first(payload, "nextPartitionKey")
+        row = self._find_first(payload, "nextRowKey")
+        partition_text = self._text(partition)
+        row_text = self._text(row)
+        return partition_text, row_text
+
+    def _find_first(self, value: Any, key: str) -> Any:
+        if isinstance(value, list):
+            for item in value:
+                found = self._find_first(item, key)
+                if found not in (None, ""):
+                    return found
+            return None
+        if not isinstance(value, dict):
+            return None
+        key_lower = key.lower()
+        for row_key, row_value in value.items():
+            if str(row_key).lower() == key_lower:
+                return row_value
+            found = self._find_first(row_value, key)
+            if found not in (None, ""):
+                return found
+        return None
+
+    def _max_mark(self, documents: list[dict[str, Any]]) -> int:
+        marks = [self._int(document.get("mark")) for document in documents]
+        return max(marks, default=0)
+
     def _normalise_document(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:
         direction = self._direction(endpoint)
         header = self._get(row, "invoiceHeader") or self._get(row, "header") or {}
@@ -265,9 +345,10 @@ class AADEConnector:
             "net_value": net_value,
             "vat_amount": vat_amount,
             "gross_value": gross_value,
+            "document_count": 1,
             "is_cancelled": is_cancelled,
             "cancelled_by_mark": cancelled_by_mark,
-            "raw": row,
+            "raw": {**row, "document_count": 1},
         }
 
     def _normalise_book_info(self, endpoint: str, row: dict[str, Any]) -> dict[str, Any]:

@@ -18,7 +18,7 @@ const placeholders: Record<string, Record<string, unknown>> = {
     subscription_key: "...",
     vat_number: "123456789",
     timeout_seconds: 60,
-    endpoints: ["RequestMyIncome", "RequestMyExpenses"],
+    endpoints: ["RequestTransmittedDocs", "RequestDocs", "RequestMyIncome", "RequestMyExpenses"],
     extra_params: {
       "*": {}
     }
@@ -112,12 +112,12 @@ function aadeEndpoints(config: Record<string, unknown>): string[] {
   const allowedEndpoints = new Set(aadeReadOnlyEndpoints.map((endpoint) => endpoint.value));
   if (Array.isArray(endpoints)) {
     const selected = endpoints.map(String).filter((endpoint) => allowedEndpoints.has(endpoint));
-    return selected.length > 0 ? selected : ["RequestMyIncome", "RequestMyExpenses"];
+    return selected.length > 0 ? selected : ["RequestTransmittedDocs", "RequestDocs", "RequestMyIncome", "RequestMyExpenses"];
   }
   if (typeof endpoints === "string" && allowedEndpoints.has(endpoints.trim())) {
     return [endpoints.trim()];
   }
-  return ["RequestMyIncome", "RequestMyExpenses"];
+  return ["RequestTransmittedDocs", "RequestDocs", "RequestMyIncome", "RequestMyExpenses"];
 }
 
 function ga4CredentialsText(config: Record<string, unknown>): string {

@@ -71,6 +71,9 @@ function syncDetails(row: SyncRun) {
   if (meta.aade_summary_rows !== undefined) {
     details.push(`AADE summary rows: ${number.format(Number(meta.aade_summary_rows) || 0)}`);
   }
+  if (meta.aade_pages !== undefined) {
+    details.push(`AADE pages: ${number.format(Number(meta.aade_pages) || 0)}`);
+  }
   if (meta.aade_gross_income !== undefined) {
     details.push(`AADE income: ${currency.format(Number(meta.aade_gross_income) || 0)}`);
   }
