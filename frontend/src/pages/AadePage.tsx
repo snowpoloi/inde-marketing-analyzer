@@ -5,6 +5,7 @@ import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { aadeInvoiceTypeLabel } from "../utils/aadeInvoiceTypes";
 import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -202,7 +203,19 @@ export function AadePage() {
   const documentColumns: Column<AadeDocumentRow>[] = useMemo(
     () => [
       { key: "direction", header: "Direction", render: (row) => <strong>{row.direction}</strong> },
-      { key: "invoice", header: "Invoice type", render: (row) => row.invoice_type || "-" },
+      {
+        key: "invoice",
+        header: "Invoice type",
+        render: (row) => {
+          const label = aadeInvoiceTypeLabel(row.invoice_type);
+          return (
+            <div className="audit-title-cell">
+              <strong>{row.invoice_type || "-"}</strong>
+              {label ? <span>{label}</span> : null}
+            </div>
+          );
+        }
+      },
       { key: "documents", header: "Docs", align: "right", render: (row) => number.format(row.documents) },
       { key: "cancelled", header: "Cancelled", align: "right", render: (row) => number.format(row.cancelled_documents) },
       { key: "net", header: "Net", align: "right", render: (row) => currency.format(row.net_value) },

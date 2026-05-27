@@ -14,6 +14,7 @@ import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { aadeInvoiceTypeLabel, formatAadeInvoiceType } from "../utils/aadeInvoiceTypes";
 import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -487,7 +488,7 @@ const feedSorters: SortAccessors<FeedAuditRow> = {
 
 const aadeDocumentSorters: SortAccessors<AadeDocumentRow> = {
   direction: (row) => row.direction,
-  invoice: (row) => row.invoice_type,
+  invoice: (row) => formatAadeInvoiceType(row.invoice_type),
   documents: (row) => row.documents,
   cancelled: (row) => row.cancelled_documents,
   net: (row) => row.net_value,
@@ -810,7 +811,20 @@ export function AuditPage() {
   const aadeDocumentColumns: Column<AadeDocumentRow>[] = useMemo(
     () => [
       { key: "direction", header: "Direction", ...sortable("aade-documents", "direction"), render: (row) => <strong>{row.direction}</strong> },
-      { key: "invoice", header: "Invoice type", ...sortable("aade-documents", "invoice"), render: (row) => row.invoice_type },
+      {
+        key: "invoice",
+        header: "Invoice type",
+        ...sortable("aade-documents", "invoice"),
+        render: (row) => {
+          const label = aadeInvoiceTypeLabel(row.invoice_type);
+          return (
+            <div className="audit-title-cell">
+              <strong>{row.invoice_type || "-"}</strong>
+              {label ? <span>{label}</span> : null}
+            </div>
+          );
+        }
+      },
       { key: "documents", header: "Docs", align: "right", ...sortable("aade-documents", "documents"), render: (row) => number.format(row.documents) },
       {
         key: "cancelled",
@@ -975,7 +989,7 @@ export function AuditPage() {
       ]),
       buildCsvSection("AADE document groups", sortedAadeDocuments, [
         { header: "Direction", value: (row) => row.direction },
-        { header: "Invoice type", value: (row) => row.invoice_type },
+        { header: "Invoice type", value: (row) => formatAadeInvoiceType(row.invoice_type) },
         { header: "Documents", value: (row) => row.documents },
         { header: "Cancelled", value: (row) => row.cancelled_documents },
         { header: "Net", value: (row) => currency.format(row.net_value) },
