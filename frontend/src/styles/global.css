@@ -19,6 +19,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -140,6 +141,7 @@ h2 {
 }
 
 input,
+select,
 textarea {
   border: 1px solid #d5d7d2;
   background: #ffffff;
@@ -147,7 +149,8 @@ textarea {
   border-radius: 8px;
 }
 
-input {
+input,
+select {
   height: 40px;
   padding: 0 10px;
 }
@@ -819,6 +822,7 @@ tr:last-child td {
   .date-controls input,
   .date-controls button,
   .sync-controls input,
+  .sync-controls select,
   .sync-controls button {
     width: 100%;
   }

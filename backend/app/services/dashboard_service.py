@@ -1228,6 +1228,84 @@ def _aade_audit(
     return {"summary": audit_summary, "documents": rows[:80], "mismatches": actions}, actions
 
 
+def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
+    documents = db.scalars(
+        select(AADEDocument)
+        .where(_period_filter(AADEDocument.issue_date, date_from, date_to))
+        .order_by(
+            AADEDocument.issue_date.desc(),
+            AADEDocument.document_direction,
+            AADEDocument.invoice_type,
+            AADEDocument.series,
+            AADEDocument.aa,
+            AADEDocument.mark,
+        )
+    ).all()
+
+    rows = []
+    categories: dict[tuple[str, str], dict[str, Any]] = {}
+    for document in documents:
+        raw = document.raw if isinstance(document.raw, dict) else {}
+        document_count = _aade_document_count(document)
+        direction = document.document_direction or "unknown"
+        invoice_type = document.invoice_type or "Unknown"
+        record_type = str(raw.get("record_type") or "full_document")
+        category_key = (direction, invoice_type)
+        category = categories.setdefault(
+            category_key,
+            {
+                "direction": direction,
+                "invoice_type": invoice_type,
+                "documents": 0,
+                "net_value": Decimal("0"),
+                "vat_amount": Decimal("0"),
+                "gross_value": Decimal("0"),
+            },
+        )
+        category["documents"] += document_count
+        if not document.is_cancelled:
+            category["net_value"] += document.net_value or Decimal("0")
+            category["vat_amount"] += document.vat_amount or Decimal("0")
+            category["gross_value"] += document.gross_value or Decimal("0")
+
+        rows.append(
+            {
+                "source_endpoint": document.source_endpoint,
+                "record_type": record_type,
+                "direction": direction,
+                "invoice_type": invoice_type,
+                "document_count": document_count,
+                "mark": document.mark,
+                "uid": document.uid,
+                "issue_date": document.issue_date.isoformat(),
+                "issuer_vat": document.issuer_vat,
+                "counterpart_vat": document.counterpart_vat,
+                "series": document.series,
+                "aa": document.aa,
+                "currency": document.currency or "EUR",
+                "net_value": dec_to_float(document.net_value),
+                "vat_amount": dec_to_float(document.vat_amount),
+                "gross_value": dec_to_float(document.gross_value),
+                "is_cancelled": document.is_cancelled,
+                "cancelled_by_mark": document.cancelled_by_mark,
+                "identity_key": document.identity_key,
+            }
+        )
+
+    return {
+        "rows": rows,
+        "categories": [
+            {
+                **row,
+                "net_value": dec_to_float(row["net_value"]),
+                "vat_amount": dec_to_float(row["vat_amount"]),
+                "gross_value": dec_to_float(row["gross_value"]),
+            }
+            for row in categories.values()
+        ],
+    }
+
+
 def _empty_summary(date_from: date, date_to: date) -> dict[str, Any]:
     return {
         "date_from": date_from.isoformat(),

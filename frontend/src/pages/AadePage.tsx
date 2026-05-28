@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, FileText, Landmark, RefreshCw, ReceiptText, Scale, TrendingUp } from "lucide-react";
+import { AlertTriangle, Download, FileText, Landmark, RefreshCw, ReceiptText, Scale, TrendingUp } from "lucide-react";
 import { api } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
-import { aadeInvoiceTypeLabel } from "../utils/aadeInvoiceTypes";
+import { aadeInvoiceTypeLabel, formatAadeInvoiceType } from "../utils/aadeInvoiceTypes";
 import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -74,6 +74,28 @@ type AadeDocumentRow = {
   reason: string;
 };
 
+type AadeLedgerRow = {
+  source_endpoint: string;
+  record_type: string;
+  direction: string;
+  invoice_type: string;
+  document_count: number;
+  mark: string | null;
+  uid: string | null;
+  issue_date: string;
+  issuer_vat: string | null;
+  counterpart_vat: string | null;
+  series: string | null;
+  aa: string | null;
+  currency: string;
+  net_value: number;
+  vat_amount: number;
+  gross_value: number;
+  is_cancelled: boolean;
+  cancelled_by_mark: string | null;
+  identity_key: string;
+};
+
 type AadeAudit = {
   summary: AadeSummary;
   documents: AadeDocumentRow[];
@@ -104,8 +126,75 @@ const emptyAade: AadeAudit = {
   mismatches: []
 };
 
+const recordTypeLabels: Record<string, string> = {
+  full_document: "Full document",
+  book_info: "Book row",
+  vat_info: "VAT row",
+  cancellation: "Cancellation"
+};
+
 function pct(value: number) {
   return `${number.format(value)}%`;
+}
+
+function csvCell(value: unknown) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: AadeLedgerRow[]) {
+  const headers = [
+    "Date",
+    "Direction",
+    "Invoice type",
+    "Record type",
+    "Issuer AFM",
+    "Counterpart AFM",
+    "Series",
+    "Number",
+    "MARK",
+    "UID",
+    "Docs",
+    "Net",
+    "VAT",
+    "Gross",
+    "Cancelled",
+    "Cancelled by MARK",
+    "Source"
+  ];
+  const lines = [
+    headers.map(csvCell).join(";"),
+    ...rows.map((row) =>
+      [
+        row.issue_date,
+        row.direction,
+        formatAadeInvoiceType(row.invoice_type),
+        recordTypeLabels[row.record_type] ?? row.record_type,
+        row.issuer_vat,
+        row.counterpart_vat,
+        row.series,
+        row.aa,
+        row.mark,
+        row.uid,
+        row.document_count,
+        row.net_value,
+        row.vat_amount,
+        row.gross_value,
+        row.is_cancelled ? "Yes" : "No",
+        row.cancelled_by_mark,
+        row.source_endpoint
+      ].map(csvCell).join(";")
+    )
+  ];
+  const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function AadePage() {
@@ -113,6 +202,11 @@ export function AadePage() {
   const [dateTo, setDateTo] = useState(isoDate());
   const [activePreset, setActivePreset] = useState("");
   const [aade, setAade] = useState<AadeAudit>(emptyAade);
+  const [ledgerRows, setLedgerRows] = useState<AadeLedgerRow[]>([]);
+  const [directionFilter, setDirectionFilter] = useState("all");
+  const [invoiceTypeFilter, setInvoiceTypeFilter] = useState("all");
+  const [recordTypeFilter, setRecordTypeFilter] = useState("full_document");
+  const [ledgerSearch, setLedgerSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -120,8 +214,12 @@ export function AadePage() {
     setLoading(true);
     setError("");
     try {
-      const result = await api.dashboard("audit", nextFrom, nextTo);
-      setAade({ ...emptyAade, ...(result.data?.aade ?? {}) });
+      const [auditResult, ledgerResult] = await Promise.all([
+        api.dashboard("audit", nextFrom, nextTo),
+        api.dashboard("aade-documents", nextFrom, nextTo)
+      ]);
+      setAade({ ...emptyAade, ...(auditResult.data?.aade ?? {}) });
+      setLedgerRows(Array.isArray(ledgerResult.data?.rows) ? ledgerResult.data.rows : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load AADE data");
     } finally {
@@ -140,6 +238,45 @@ export function AadePage() {
   useEffect(() => {
     load().catch(() => undefined);
   }, []);
+
+  const invoiceTypeOptions = useMemo(
+    () =>
+      [...new Set(ledgerRows.map((row) => row.invoice_type).filter(Boolean))].sort((left, right) =>
+        formatAadeInvoiceType(left).localeCompare(formatAadeInvoiceType(right), "el", { numeric: true })
+      ),
+    [ledgerRows]
+  );
+
+  const visibleLedgerRows = useMemo(() => {
+    const needle = ledgerSearch.trim().toLowerCase();
+    return ledgerRows.filter((row) => {
+      if (directionFilter !== "all" && row.direction !== directionFilter) {
+        return false;
+      }
+      if (invoiceTypeFilter !== "all" && row.invoice_type !== invoiceTypeFilter) {
+        return false;
+      }
+      if (recordTypeFilter !== "all" && row.record_type !== recordTypeFilter) {
+        return false;
+      }
+      if (!needle) {
+        return true;
+      }
+      return [
+        row.mark,
+        row.uid,
+        row.issuer_vat,
+        row.counterpart_vat,
+        row.series,
+        row.aa,
+        row.invoice_type,
+        formatAadeInvoiceType(row.invoice_type)
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [directionFilter, invoiceTypeFilter, ledgerRows, ledgerSearch, recordTypeFilter]);
 
   const summaryRows = useMemo<AadeMetric[]>(
     () => [
@@ -227,6 +364,42 @@ export function AadePage() {
     []
   );
 
+  const ledgerColumns: Column<AadeLedgerRow>[] = useMemo(
+    () => [
+      { key: "date", header: "Date", render: (row) => row.issue_date },
+      { key: "direction", header: "Direction", render: (row) => <strong>{row.direction}</strong> },
+      {
+        key: "invoice",
+        header: "Invoice type",
+        render: (row) => {
+          const label = aadeInvoiceTypeLabel(row.invoice_type);
+          return (
+            <div className="audit-title-cell">
+              <strong>{row.invoice_type || "-"}</strong>
+              {label ? <span>{label}</span> : null}
+            </div>
+          );
+        }
+      },
+      { key: "record", header: "Record", render: (row) => recordTypeLabels[row.record_type] ?? row.record_type },
+      { key: "issuer", header: "Issuer AFM", render: (row) => row.issuer_vat || "-" },
+      { key: "counterpart", header: "Counterpart AFM", render: (row) => row.counterpart_vat || "-" },
+      { key: "invoice_no", header: "Series / No", render: (row) => [row.series, row.aa].filter(Boolean).join(" / ") || "-" },
+      { key: "mark", header: "MARK", render: (row) => row.mark || "-" },
+      { key: "docs", header: "Docs", align: "right", render: (row) => number.format(row.document_count) },
+      { key: "net", header: "Net", align: "right", render: (row) => currency.format(row.net_value) },
+      { key: "vat", header: "VAT", align: "right", render: (row) => currency.format(row.vat_amount) },
+      { key: "gross", header: "Gross", align: "right", render: (row) => currency.format(row.gross_value) },
+      {
+        key: "status",
+        header: "Status",
+        render: (row) =>
+          row.is_cancelled ? <span className="badge badge-failed">Cancelled</span> : <StatusBadge value="success" />
+      }
+    ],
+    []
+  );
+
   return (
     <div className="page-stack">
       <header className="page-header">
@@ -265,6 +438,50 @@ export function AadePage() {
         <StatCard label="OpenCart gap" value={currency.format(aade.summary.revenue_gap)} detail={pct(aade.summary.revenue_gap_percent)} icon={Scale} />
         <StatCard label="Cancelled" value={number.format(aade.summary.cancelled_documents)} detail="myDATA cancelled documents" icon={AlertTriangle} />
         <StatCard label="OpenCart revenue" value={currency.format(aade.summary.opencart_revenue)} detail={`${number.format(aade.summary.opencart_orders)} orders`} icon={TrendingUp} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>Document ledger</h2>
+          <span>{number.format(visibleLedgerRows.length)} visible rows</span>
+        </div>
+        <div className="sync-controls">
+          <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)}>
+            <option value="all">All directions</option>
+            <option value="income">Income</option>
+            <option value="expense">Expenses</option>
+            <option value="vat">VAT</option>
+          </select>
+          <select value={invoiceTypeFilter} onChange={(event) => setInvoiceTypeFilter(event.target.value)}>
+            <option value="all">All invoice types</option>
+            {invoiceTypeOptions.map((code) => (
+              <option key={code} value={code}>
+                {formatAadeInvoiceType(code)}
+              </option>
+            ))}
+          </select>
+          <select value={recordTypeFilter} onChange={(event) => setRecordTypeFilter(event.target.value)}>
+            <option value="all">All records</option>
+            <option value="full_document">Full documents</option>
+            <option value="book_info">Book rows</option>
+            <option value="vat_info">VAT rows</option>
+            <option value="cancellation">Cancellations</option>
+          </select>
+          <input
+            value={ledgerSearch}
+            onChange={(event) => setLedgerSearch(event.target.value)}
+            placeholder="AFM, MARK, series..."
+          />
+          <button
+            className="secondary-action compact"
+            onClick={() => downloadCsv(`aade-documents-${dateFrom}-${dateTo}.csv`, visibleLedgerRows)}
+            disabled={visibleLedgerRows.length === 0}
+          >
+            <Download size={17} />
+            Export CSV
+          </button>
+        </div>
+        <DataTable rows={visibleLedgerRows} columns={ledgerColumns} empty="No AADE document rows for this period." />
       </section>
 
       <div className="two-column">
