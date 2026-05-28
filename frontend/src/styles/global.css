@@ -457,6 +457,40 @@ tr:last-child td {
   min-width: 560px;
 }
 
+.invoice-detail-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e1e6e1;
+}
+
+.invoice-detail-panel .panel-title p {
+  color: #66706a;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #3f4641;
+  font-size: 13px;
+}
+
+.detail-summary span {
+  border: 1px solid #dfe4df;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #f8faf8;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 18px;
+}
+
 .notice {
   border: 1px solid #d8d2bd;
   background: #fff8dd;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Download, FileText, Landmark, RefreshCw, ReceiptText, Scale, TrendingUp } from "lucide-react";
+import { AlertTriangle, Download, FileText, Landmark, List, RefreshCw, ReceiptText, Scale, TrendingUp } from "lucide-react";
 import { api } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -74,6 +74,48 @@ type AadeDocumentRow = {
   reason: string;
 };
 
+type AadeLineItem = {
+  source: string;
+  line_number: string | null;
+  description: string | null;
+  quantity: number | null;
+  measurement_unit: string | null;
+  unit_price: number;
+  net_value: number;
+  vat_amount: number;
+  gross_value: number;
+  vat_category: string | null;
+  classification: string | null;
+  line_type: string;
+};
+
+type OpenCartLineItem = {
+  source: string;
+  line_type: string;
+  name: string;
+  sku: string | null;
+  model: string | null;
+  brand: string | null;
+  category: string | null;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+};
+
+type OpenCartOrderMatch = {
+  order_id: string;
+  date_added: string;
+  status: string | null;
+  sub_total: number;
+  tax: number;
+  shipping: number;
+  total: number;
+  shipping_title: string | null;
+  shipping_method: string | null;
+  match_reason: string;
+  lines: OpenCartLineItem[];
+};
+
 type AadeLedgerRow = {
   source_endpoint: string;
   record_type: string;
@@ -95,6 +137,8 @@ type AadeLedgerRow = {
   is_cancelled: boolean;
   cancelled_by_mark: string | null;
   identity_key: string;
+  line_items: AadeLineItem[];
+  opencart_order: OpenCartOrderMatch | null;
 };
 
 type AadeAudit = {
@@ -200,6 +244,74 @@ function downloadCsv(filename: string, rows: AadeLedgerRow[]) {
   URL.revokeObjectURL(url);
 }
 
+function invoiceLabel(row: AadeLedgerRow) {
+  return [row.series, row.aa].filter(Boolean).join(" / ") || row.mark || row.uid || row.identity_key;
+}
+
+function downloadInvoiceLinesCsv(row: AadeLedgerRow) {
+  const headers = [
+    "Source",
+    "Invoice",
+    "MARK",
+    "Line",
+    "Type",
+    "Description",
+    "SKU",
+    "Model",
+    "Qty",
+    "Unit",
+    "Unit price",
+    "Net",
+    "VAT",
+    "Gross"
+  ];
+  const aadeLines = row.line_items.map((line) => [
+    "AADE",
+    invoiceLabel(row),
+    row.mark,
+    line.line_number,
+    line.line_type,
+    line.description,
+    "",
+    "",
+    line.quantity ?? "",
+    line.measurement_unit,
+    line.unit_price,
+    line.net_value,
+    line.vat_amount,
+    line.gross_value
+  ]);
+  const openCartLines = (row.opencart_order?.lines ?? []).map((line) => [
+    "OpenCart",
+    row.opencart_order?.order_id,
+    row.mark,
+    "",
+    line.line_type,
+    line.name,
+    line.sku,
+    line.model,
+    line.quantity,
+    "",
+    line.unit_price,
+    "",
+    "",
+    line.line_total
+  ]);
+  const lines = [
+    headers.map(csvCell).join(";"),
+    ...[...aadeLines, ...openCartLines].map((line) => line.map(csvCell).join(";"))
+  ];
+  const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `aade-invoice-lines-${invoiceLabel(row).replace(/[^a-z0-9_-]+/gi, "-")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function AadePage() {
   const [dateFrom, setDateFrom] = useState(isoDate(-1));
   const [dateTo, setDateTo] = useState(isoDate());
@@ -210,6 +322,7 @@ export function AadePage() {
   const [invoiceTypeFilter, setInvoiceTypeFilter] = useState("all");
   const [recordTypeFilter, setRecordTypeFilter] = useState("full_document");
   const [ledgerSearch, setLedgerSearch] = useState("");
+  const [selectedIdentityKey, setSelectedIdentityKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -281,6 +394,11 @@ export function AadePage() {
         .includes(needle);
     });
   }, [directionFilter, invoiceTypeFilter, ledgerRows, ledgerSearch, recordTypeFilter]);
+
+  const selectedLedgerRow = useMemo(
+    () => visibleLedgerRows.find((row) => row.identity_key === selectedIdentityKey) ?? null,
+    [selectedIdentityKey, visibleLedgerRows]
+  );
 
   const summaryRows = useMemo<AadeMetric[]>(
     () => [
@@ -368,6 +486,50 @@ export function AadePage() {
     []
   );
 
+  const aadeLineColumns: Column<AadeLineItem>[] = useMemo(
+    () => [
+      { key: "line", header: "Line", render: (row) => row.line_number || "-" },
+      {
+        key: "description",
+        header: "Description",
+        render: (row) => (
+          <div className="audit-title-cell">
+            <strong>{row.description || "No product description in AADE"}</strong>
+            <span>{[row.classification, row.vat_category ? `VAT ${row.vat_category}` : ""].filter(Boolean).join(" | ")}</span>
+          </div>
+        )
+      },
+      { key: "type", header: "Type", render: (row) => row.line_type },
+      { key: "qty", header: "Qty", align: "right", render: (row) => (row.quantity === null ? "-" : number.format(row.quantity)) },
+      { key: "unit", header: "Unit", render: (row) => row.measurement_unit || "-" },
+      { key: "unit_price", header: "Unit price", align: "right", render: (row) => currency.format(row.unit_price) },
+      { key: "net", header: "Net", align: "right", render: (row) => currency.format(row.net_value) },
+      { key: "vat", header: "VAT", align: "right", render: (row) => currency.format(row.vat_amount) },
+      { key: "gross", header: "Gross", align: "right", render: (row) => currency.format(row.gross_value) }
+    ],
+    []
+  );
+
+  const openCartLineColumns: Column<OpenCartLineItem>[] = useMemo(
+    () => [
+      {
+        key: "product",
+        header: "Product / shipping",
+        render: (row) => (
+          <div className="audit-title-cell">
+            <strong>{row.name}</strong>
+            <span>{[row.sku, row.model, row.brand, row.category].filter(Boolean).join(" | ")}</span>
+          </div>
+        )
+      },
+      { key: "type", header: "Type", render: (row) => row.line_type },
+      { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
+      { key: "unit_price", header: "Unit price", align: "right", render: (row) => currency.format(row.unit_price) },
+      { key: "line_total", header: "Line total", align: "right", render: (row) => currency.format(row.line_total) }
+    ],
+    []
+  );
+
   const ledgerColumns: Column<AadeLedgerRow>[] = useMemo(
     () => [
       { key: "date", header: "Date", render: (row) => row.issue_date },
@@ -396,13 +558,30 @@ export function AadePage() {
       { key: "vat", header: "VAT", align: "right", render: (row) => currency.format(row.vat_amount) },
       { key: "gross", header: "Gross", align: "right", render: (row) => currency.format(row.gross_value) },
       {
+        key: "lines",
+        header: "Lines",
+        render: (row) => {
+          const lineCount = row.line_items.length + (row.opencart_order?.lines.length ?? 0);
+          const selected = row.identity_key === selectedIdentityKey;
+          return (
+            <button
+              className="secondary-action compact"
+              onClick={() => setSelectedIdentityKey(selected ? "" : row.identity_key)}
+            >
+              <List size={15} />
+              {lineCount ? number.format(lineCount) : "View"}
+            </button>
+          );
+        }
+      },
+      {
         key: "status",
         header: "Status",
         render: (row) =>
           row.is_cancelled ? <span className="badge badge-failed">Cancelled</span> : <StatusBadge value="success" />
       }
     ],
-    []
+    [selectedIdentityKey]
   );
 
   return (
@@ -487,6 +666,75 @@ export function AadePage() {
           </button>
         </div>
         <DataTable rows={visibleLedgerRows} columns={ledgerColumns} empty="No AADE document rows for this period." />
+        {selectedLedgerRow ? (
+          <div className="invoice-detail-panel">
+            <div className="panel-title">
+              <div>
+                <h2>Invoice lines</h2>
+                <p>
+                  {selectedLedgerRow.issue_date} | {selectedLedgerRow.direction} | {formatAadeInvoiceType(selectedLedgerRow.invoice_type)} | {invoiceLabel(selectedLedgerRow)}
+                </p>
+              </div>
+              <button
+                className="secondary-action compact"
+                onClick={() => downloadInvoiceLinesCsv(selectedLedgerRow)}
+                disabled={selectedLedgerRow.line_items.length === 0 && !selectedLedgerRow.opencart_order}
+              >
+                <Download size={17} />
+                Export lines
+              </button>
+            </div>
+
+            <div className="detail-summary">
+              <span>Issuer: {selectedLedgerRow.issuer_vat || "-"} {selectedLedgerRow.issuer_name ? `| ${selectedLedgerRow.issuer_name}` : ""}</span>
+              <span>Counterpart: {selectedLedgerRow.counterpart_vat || "-"}</span>
+              <span>MARK: {selectedLedgerRow.mark || "-"}</span>
+              <span>Total: {currency.format(selectedLedgerRow.gross_value)}</span>
+            </div>
+
+            <div className="detail-grid">
+              <section>
+                <div className="panel-title tight">
+                  <h2>AADE document lines</h2>
+                  <span>{number.format(selectedLedgerRow.line_items.length)} rows</span>
+                </div>
+                <DataTable
+                  rows={selectedLedgerRow.line_items}
+                  columns={aadeLineColumns}
+                  empty="No product line details were included in this AADE payload."
+                />
+              </section>
+
+              <section>
+                <div className="panel-title tight">
+                  <h2>OpenCart products and shipping</h2>
+                  <span>
+                    {selectedLedgerRow.opencart_order
+                      ? `Order ${selectedLedgerRow.opencart_order.order_id} | ${selectedLedgerRow.opencart_order.match_reason}`
+                      : "No matched order"}
+                  </span>
+                </div>
+                {selectedLedgerRow.opencart_order ? (
+                  <>
+                    <div className="detail-summary">
+                      <span>Status: {selectedLedgerRow.opencart_order.status || "-"}</span>
+                      <span>Products: {currency.format(selectedLedgerRow.opencart_order.sub_total)}</span>
+                      <span>Shipping: {currency.format(selectedLedgerRow.opencart_order.shipping)}</span>
+                      <span>Total: {currency.format(selectedLedgerRow.opencart_order.total)}</span>
+                    </div>
+                    <DataTable
+                      rows={selectedLedgerRow.opencart_order.lines}
+                      columns={openCartLineColumns}
+                      empty="No OpenCart products found for the matched order."
+                    />
+                  </>
+                ) : (
+                  <div className="empty-state">No OpenCart order matched this AADE document.</div>
+                )}
+              </section>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <div className="two-column">

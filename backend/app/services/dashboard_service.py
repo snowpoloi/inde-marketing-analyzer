@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import and_, false, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     AADEDocument,
@@ -17,7 +17,7 @@ from app.models import (
     ProductCatalog,
     SearchConsoleDailyMetric,
 )
-from app.services.parsing import dec_to_float
+from app.services.parsing import as_decimal, dec_to_float
 
 
 def _period_filter(column, date_from: date, date_to: date):
@@ -101,6 +101,173 @@ def _aade_party_name(raw: dict[str, Any], party: str) -> str | None:
         text = _aade_text(candidate)
         if text:
             return text
+    return None
+
+
+def _aade_list(value: Any) -> list[Any]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _aade_line_classification(row: dict[str, Any]) -> str | None:
+    classification = (
+        _aade_pick(row, "incomeClassification", "income_classification")
+        or _aade_pick(row, "expensesClassification", "expenses_classification")
+        or _aade_pick(row, "classification")
+    )
+    if isinstance(classification, list):
+        classification = classification[0] if classification else None
+    if not isinstance(classification, dict):
+        return _aade_text(classification)
+    parts = [
+        _aade_text(_aade_pick(classification, "classificationCategory", "category")),
+        _aade_text(_aade_pick(classification, "classificationType", "type")),
+    ]
+    parts = [part for part in parts if part]
+    return " / ".join(parts) if parts else None
+
+
+def _aade_line_type(description: str | None, row: dict[str, Any]) -> str:
+    invoice_detail_type = _aade_text(_aade_pick(row, "invoiceDetailType", "invoice_detail_type"))
+    text = f"{description or ''} {invoice_detail_type or ''}".lower()
+    if any(token in text for token in ("shipping", "courier", "delivery", "μεταφορ", "αποστολ")):
+        return "shipping"
+    return "product"
+
+
+def _aade_line_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    details = (
+        _aade_pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "invoice_rows")
+        or _aade_pick(raw, "lineItems", "line_items", "lines", "rows")
+    )
+    if isinstance(details, dict):
+        details = (
+            _aade_pick(details, "invoiceDetails", "invoiceDetail", "invoiceRow", "row", "line")
+            or details
+        )
+
+    rows = []
+    for index, item in enumerate(_aade_list(details), start=1):
+        if not isinstance(item, dict):
+            continue
+        description = _aade_text(
+            _aade_pick(
+                item,
+                "itemDescr",
+                "itemDescription",
+                "productDescription",
+                "serviceDescription",
+                "description",
+                "lineComments",
+                "comments",
+                "name",
+                "title",
+            )
+        )
+        quantity_raw = _aade_pick(item, "quantity", "qty")
+        quantity = as_decimal(quantity_raw) if quantity_raw not in (None, "") else None
+        net_value = as_decimal(_aade_pick(item, "netValue", "totalNetValue", "net"))
+        vat_amount = as_decimal(_aade_pick(item, "vatAmount", "totalVatAmount", "vat"))
+        gross_value = as_decimal(_aade_pick(item, "grossValue", "totalGrossValue", "gross"))
+        if gross_value == 0 and (net_value or vat_amount):
+            gross_value = net_value + vat_amount
+        unit_price = as_decimal(_aade_pick(item, "unitPrice", "price", "unitNetValue"))
+        if unit_price == 0 and quantity and quantity != 0:
+            unit_price = net_value / quantity
+
+        rows.append(
+            {
+                "source": "AADE",
+                "line_number": _aade_text(_aade_pick(item, "lineNumber", "lineNo", "number")) or str(index),
+                "description": description,
+                "quantity": dec_to_float(quantity) if quantity is not None else None,
+                "measurement_unit": _aade_text(_aade_pick(item, "measurementUnit", "unit", "unitCode")),
+                "unit_price": dec_to_float(unit_price),
+                "net_value": dec_to_float(net_value),
+                "vat_amount": dec_to_float(vat_amount),
+                "gross_value": dec_to_float(gross_value),
+                "vat_category": _aade_text(_aade_pick(item, "vatCategory", "vatRate", "vatPercent")),
+                "classification": _aade_line_classification(item),
+                "line_type": _aade_line_type(description, item),
+            }
+        )
+    return rows
+
+
+def _money_key(value: Any) -> int:
+    return int((as_decimal(value) * 100).to_integral_value())
+
+
+def _opencart_product_lines(order: OpenCartOrder) -> list[dict[str, Any]]:
+    lines = []
+    for product in order.products:
+        line_total = (product.price or Decimal("0")) * (product.quantity or 0)
+        lines.append(
+            {
+                "source": "OpenCart",
+                "line_type": "product",
+                "name": product.name,
+                "sku": product.sku,
+                "model": product.model,
+                "brand": product.brand or product.manufacturer,
+                "category": product.category,
+                "quantity": int(product.quantity or 0),
+                "unit_price": dec_to_float(product.price),
+                "line_total": dec_to_float(line_total),
+            }
+        )
+    if order.shipping:
+        lines.append(
+            {
+                "source": "OpenCart",
+                "line_type": "shipping",
+                "name": order.shipping_title or order.shipping_method or "Shipping",
+                "sku": None,
+                "model": order.shipping_code,
+                "brand": None,
+                "category": "Shipping",
+                "quantity": 1,
+                "unit_price": dec_to_float(order.shipping),
+                "line_total": dec_to_float(order.shipping),
+            }
+        )
+    return lines
+
+
+def _opencart_order_payload(order: OpenCartOrder, match_reason: str) -> dict[str, Any]:
+    return {
+        "order_id": order.order_id,
+        "date_added": order.date_added.isoformat(),
+        "status": order.order_status,
+        "sub_total": dec_to_float(order.sub_total),
+        "tax": dec_to_float(order.tax),
+        "shipping": dec_to_float(order.shipping),
+        "total": dec_to_float(order.total),
+        "shipping_title": order.shipping_title,
+        "shipping_method": order.shipping_method,
+        "match_reason": match_reason,
+        "lines": _opencart_product_lines(order),
+    }
+
+
+def _opencart_match(
+    document: AADEDocument,
+    orders_by_id: dict[str, OpenCartOrder],
+    orders_by_date_total: dict[tuple[date, int], list[OpenCartOrder]],
+) -> dict[str, Any] | None:
+    if document.document_direction != "income":
+        return None
+    for value in (document.aa, document.uid):
+        key = str(value or "").strip()
+        if key and key in orders_by_id:
+            return _opencart_order_payload(orders_by_id[key], "invoice/order number")
+
+    same_total = orders_by_date_total.get((document.issue_date, _money_key(document.gross_value)), [])
+    if len(same_total) == 1:
+        return _opencart_order_payload(same_total[0], "same date and total")
     return None
 
 
@@ -1304,6 +1471,30 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
         )
     ).all()
 
+    income_order_ids = {
+        str(document.aa or "").strip()
+        for document in documents
+        if document.document_direction == "income" and str(document.aa or "").strip()
+    }
+    period_orders = db.scalars(
+        select(OpenCartOrder)
+        .options(selectinload(OpenCartOrder.products))
+        .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
+    ).all()
+    direct_orders = (
+        db.scalars(
+            select(OpenCartOrder)
+            .options(selectinload(OpenCartOrder.products))
+            .where(OpenCartOrder.order_id.in_(income_order_ids))
+        ).all()
+        if income_order_ids
+        else []
+    )
+    orders_by_id = {order.order_id: order for order in [*period_orders, *direct_orders]}
+    orders_by_date_total: dict[tuple[date, int], list[OpenCartOrder]] = {}
+    for order in period_orders:
+        orders_by_date_total.setdefault((order.date_added.date(), _money_key(order.total)), []).append(order)
+
     rows = []
     categories: dict[tuple[str, str], dict[str, Any]] = {}
     for document in documents:
@@ -1355,6 +1546,8 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
                 "is_cancelled": document.is_cancelled,
                 "cancelled_by_mark": document.cancelled_by_mark,
                 "identity_key": document.identity_key,
+                "line_items": _aade_line_items(raw) if record_type == "full_document" else [],
+                "opencart_order": _opencart_match(document, orders_by_id, orders_by_date_total),
             }
         )
 
