@@ -42,6 +42,68 @@ def _aade_document_count(document: AADEDocument) -> int:
         return 1
 
 
+def _aade_pick(row: Any, *keys: str) -> Any:
+    if not isinstance(row, dict):
+        return None
+    for key in keys:
+        if key in row:
+            return row[key]
+        key_lower = key.lower()
+        for row_key, value in row.items():
+            if str(row_key).lower() == key_lower:
+                return value
+    return None
+
+
+def _aade_text(value: Any) -> str | None:
+    if value in (None, "") or isinstance(value, (dict, list)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _aade_party_name(raw: dict[str, Any], party: str) -> str | None:
+    header = _aade_pick(raw, "invoiceHeader", "header") or {}
+    party_data = _aade_pick(raw, party) or _aade_pick(header, party) or {}
+    name_keys = (
+        "name",
+        "legalName",
+        "companyName",
+        "businessName",
+        "fullName",
+        "partyName",
+        "traderName",
+        "description",
+        "denomination",
+        "eponymia",
+    )
+    prefixes = (party,)
+    if party == "counterpart":
+        prefixes = ("counterpart", "counterparty", "counter")
+    direct_keys = tuple(
+        key
+        for prefix in prefixes
+        for key in (
+            f"{prefix}Name",
+            f"{prefix}_name",
+            f"{prefix}LegalName",
+            f"{prefix}CompanyName",
+            f"{prefix}BusinessName",
+            f"{prefix}FullName",
+            f"{prefix}Description",
+        )
+    )
+    for candidate in (
+        _aade_pick(party_data, *name_keys),
+        _aade_pick(raw, *direct_keys),
+        _aade_pick(header, *direct_keys),
+    ):
+        text = _aade_text(candidate)
+        if text:
+            return text
+    return None
+
+
 def _configured_sale_statuses(db: Session) -> list[str] | None:
     integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
     config = integration.config if integration else {}
@@ -1250,6 +1312,9 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
         direction = document.document_direction or "unknown"
         invoice_type = document.invoice_type or "Unknown"
         record_type = str(raw.get("record_type") or "full_document")
+        issuer_name = _aade_party_name(raw, "issuer")
+        if not issuer_name and record_type == "book_info" and direction == "expense":
+            issuer_name = _aade_party_name(raw, "counterpart")
         category_key = (direction, invoice_type)
         category = categories.setdefault(
             category_key,
@@ -1279,6 +1344,7 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
                 "uid": document.uid,
                 "issue_date": document.issue_date.isoformat(),
                 "issuer_vat": document.issuer_vat,
+                "issuer_name": issuer_name,
                 "counterpart_vat": document.counterpart_vat,
                 "series": document.series,
                 "aa": document.aa,

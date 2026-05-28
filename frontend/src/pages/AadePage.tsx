@@ -84,6 +84,7 @@ type AadeLedgerRow = {
   uid: string | null;
   issue_date: string;
   issuer_vat: string | null;
+  issuer_name: string | null;
   counterpart_vat: string | null;
   series: string | null;
   aa: string | null;
@@ -149,6 +150,7 @@ function downloadCsv(filename: string, rows: AadeLedgerRow[]) {
     "Invoice type",
     "Record type",
     "Issuer AFM",
+    "Issuer company",
     "Counterpart AFM",
     "Series",
     "Number",
@@ -171,6 +173,7 @@ function downloadCsv(filename: string, rows: AadeLedgerRow[]) {
         formatAadeInvoiceType(row.invoice_type),
         recordTypeLabels[row.record_type] ?? row.record_type,
         row.issuer_vat,
+        row.issuer_name,
         row.counterpart_vat,
         row.series,
         row.aa,
@@ -266,6 +269,7 @@ export function AadePage() {
         row.mark,
         row.uid,
         row.issuer_vat,
+        row.issuer_name,
         row.counterpart_vat,
         row.series,
         row.aa,
@@ -383,6 +387,7 @@ export function AadePage() {
       },
       { key: "record", header: "Record", render: (row) => recordTypeLabels[row.record_type] ?? row.record_type },
       { key: "issuer", header: "Issuer AFM", render: (row) => row.issuer_vat || "-" },
+      { key: "issuer_name", header: "Issuer company", render: (row) => row.issuer_name || "-" },
       { key: "counterpart", header: "Counterpart AFM", render: (row) => row.counterpart_vat || "-" },
       { key: "invoice_no", header: "Series / No", render: (row) => [row.series, row.aa].filter(Boolean).join(" / ") || "-" },
       { key: "mark", header: "MARK", render: (row) => row.mark || "-" },
@@ -470,7 +475,7 @@ export function AadePage() {
           <input
             value={ledgerSearch}
             onChange={(event) => setLedgerSearch(event.target.value)}
-            placeholder="AFM, MARK, series..."
+            placeholder="AFM, company, MARK, series..."
           />
           <button
             className="secondary-action compact"
