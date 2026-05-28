@@ -183,6 +183,11 @@ def _aade_line_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
                 "source": "AADE",
                 "line_number": _aade_text(_aade_pick(item, "lineNumber", "lineNo", "number")) or str(index),
                 "description": description,
+                "item_code": _aade_text(
+                    _aade_pick(item, "itemCode", "item_code", "productCode", "product_code", "code")
+                ),
+                "taric": _aade_text(_aade_pick(item, "TaricNo", "taricNo", "taric", "taricCode")),
+                "fuel_code": _aade_text(_aade_pick(item, "fuelCode", "fuel_code")),
                 "quantity": dec_to_float(quantity) if quantity is not None else None,
                 "measurement_unit": _aade_text(_aade_pick(item, "measurementUnit", "unit", "unitCode")),
                 "unit_price": dec_to_float(unit_price),

@@ -78,6 +78,9 @@ type AadeLineItem = {
   source: string;
   line_number: string | null;
   description: string | null;
+  item_code: string | null;
+  taric: string | null;
+  fuel_code: string | null;
   quantity: number | null;
   measurement_unit: string | null;
   unit_price: number;
@@ -256,8 +259,10 @@ function downloadInvoiceLinesCsv(row: AadeLedgerRow) {
     "Line",
     "Type",
     "Description",
-    "SKU",
+    "Item code",
     "Model",
+    "TARIC",
+    "Fuel code",
     "Qty",
     "Unit",
     "Unit price",
@@ -272,8 +277,10 @@ function downloadInvoiceLinesCsv(row: AadeLedgerRow) {
     line.line_number,
     line.line_type,
     line.description,
+    line.item_code,
     "",
-    "",
+    line.taric,
+    line.fuel_code,
     line.quantity ?? "",
     line.measurement_unit,
     line.unit_price,
@@ -290,6 +297,8 @@ function downloadInvoiceLinesCsv(row: AadeLedgerRow) {
     line.name,
     line.sku,
     line.model,
+    "",
+    "",
     line.quantity,
     "",
     line.unit_price,
@@ -499,6 +508,9 @@ export function AadePage() {
           </div>
         )
       },
+      { key: "item_code", header: "Item code", render: (row) => row.item_code || "-" },
+      { key: "taric", header: "TARIC", render: (row) => row.taric || "-" },
+      { key: "fuel_code", header: "Fuel code", render: (row) => row.fuel_code || "-" },
       { key: "type", header: "Type", render: (row) => row.line_type },
       { key: "qty", header: "Qty", align: "right", render: (row) => (row.quantity === null ? "-" : number.format(row.quantity)) },
       { key: "unit", header: "Unit", render: (row) => row.measurement_unit || "-" },
