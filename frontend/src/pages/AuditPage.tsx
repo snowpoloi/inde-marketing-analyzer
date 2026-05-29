@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Download,
+  FileText,
   RefreshCw,
   SearchCheck,
   ShieldCheck,
@@ -395,8 +396,8 @@ function buildCsvSection<T>(title: string, rows: T[], columns: ExportColumn<T>[]
   ].join("\r\n");
 }
 
-function downloadCsv(filename: string, content: string) {
-  const blob = new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8" });
+function downloadTextFile(filename: string, content: string, type: string) {
+  const blob = new Blob([`\uFEFF${content}`], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -405,6 +406,98 @@ function downloadCsv(filename: string, content: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadCsv(filename: string, content: string) {
+  downloadTextFile(filename, content, "text/csv;charset=utf-8");
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === ";" && !quoted) {
+      cells.push(value);
+      value = "";
+    } else {
+      value += char;
+    }
+  }
+  cells.push(value);
+  return cells;
+}
+
+function parseCsvBlocks(content: string) {
+  return content
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.split(/\r?\n/).filter(Boolean).map(parseCsvLine))
+    .filter((block) => block.length);
+}
+
+function htmlCell(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function auditReportTables(content: string) {
+  return parseCsvBlocks(content)
+    .map((block) => {
+      const title = block[0]?.[0] ?? "";
+      if (title === "INDE Marketing Audit") {
+        const metaRows = block
+          .slice(1)
+          .map((row) => `<tr><th>${htmlCell(row[0])}</th><td>${htmlCell(row[1])}</td></tr>`)
+          .join("");
+        return `<h1>${htmlCell(title)}</h1><table class="meta-table">${metaRows}</table>`;
+      }
+
+      const headers = block[1] ?? [];
+      const rows = block.slice(2);
+      const headerHtml = headers.map((header) => `<th>${htmlCell(header)}</th>`).join("");
+      const bodyHtml = rows
+        .map((row) => `<tr>${headers.map((_, index) => `<td>${htmlCell(row[index])}</td>`).join("")}</tr>`)
+        .join("");
+      return `<section><h2>${htmlCell(title)}</h2><table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></section>`;
+    })
+    .join("");
+}
+
+function buildAuditReportHtml(content: string, mode: "excel" | "print") {
+  const pageCss =
+    mode === "print"
+      ? "@page { size: A4 landscape; margin: 12mm; } body { padding: 0; }"
+      : "";
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>INDE Marketing Audit</title>
+  <style>
+    ${pageCss}
+    body { font-family: Arial, sans-serif; color: #1f2328; background: #ffffff; }
+    h1 { font-size: 24px; margin: 0 0 14px; }
+    h2 { font-size: 16px; margin: 24px 0 8px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 14px; }
+    th, td { border: 1px solid #d9dfd9; padding: 7px 8px; font-size: 11px; vertical-align: top; text-align: left; }
+    th { background: #eef2ef; color: #3f4641; font-weight: 700; }
+    .meta-table { width: auto; min-width: 360px; }
+    section { break-inside: avoid; page-break-inside: avoid; }
+  </style>
+</head>
+<body>${auditReportTables(content)}</body>
+</html>`;
 }
 
 const actionSorters: SortAccessors<AuditAction> = {
@@ -867,7 +960,7 @@ export function AuditPage() {
     [sorts]
   );
 
-  function exportAudit() {
+  function buildAuditCsvContent() {
     const overviewRows = [
       {
         score: `${number.format(audit.overview.readiness_score)}/100`,
@@ -1009,7 +1102,33 @@ export function AuditPage() {
         { header: "Last detected", value: (row) => formatDateTime(row.last_detected_at) }
       ])
     ];
-    downloadCsv(`inde-marketing-audit-${dateFrom}-to-${dateTo}.csv`, sections.join("\r\n\r\n"));
+    return sections.join("\r\n\r\n");
+  }
+
+  function exportAuditCsv() {
+    downloadCsv(`inde-marketing-audit-${dateFrom}-to-${dateTo}.csv`, buildAuditCsvContent());
+  }
+
+  function exportAuditExcel() {
+    downloadTextFile(
+      `inde-marketing-audit-${dateFrom}-to-${dateTo}.xls`,
+      buildAuditReportHtml(buildAuditCsvContent(), "excel"),
+      "application/vnd.ms-excel;charset=utf-8"
+    );
+  }
+
+  function exportAuditPdf() {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setError("Could not open the PDF export window. Please allow popups for this site.");
+      return;
+    }
+    printWindow.document.write(buildAuditReportHtml(buildAuditCsvContent(), "print"));
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => {
+      printWindow.print();
+    }, 250);
   }
 
   function operationExportColumns(): ExportColumn<OperationRow>[] {
@@ -1044,9 +1163,17 @@ export function AuditPage() {
           </div>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="secondary-action compact" onClick={exportAudit} disabled={loading}>
+          <button className="secondary-action compact" onClick={exportAuditCsv} disabled={loading}>
             <Download size={17} />
             Export CSV
+          </button>
+          <button className="secondary-action compact" onClick={exportAuditExcel} disabled={loading}>
+            <Download size={17} />
+            Export Excel
+          </button>
+          <button className="secondary-action compact" onClick={exportAuditPdf} disabled={loading}>
+            <FileText size={17} />
+            Export PDF
           </button>
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
