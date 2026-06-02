@@ -92,7 +92,8 @@ function depositExportRows(rows: BankTransaction[]) {
     row.match?.shipping ?? "",
     row.match?.amount_gap ?? "",
     row.match?.related_transactions.map((related) => `${related.transaction_date} ${related.amount}`).join(" | ") || "",
-    row.match?.match_reason || "unmatched"
+    row.match?.match_reason || "unmatched",
+    row.review_reason || ""
   ]);
 }
 
@@ -218,7 +219,16 @@ export function BanksPage() {
         align: "right",
         render: (row) => (row.match ? currency.format(row.match.amount_gap) : "-")
       },
-      { key: "match", header: "Match", render: (row) => <StatusBadge value={row.match?.match_reason || "unmatched"} /> }
+      {
+        key: "match",
+        header: "Match",
+        render: (row) => (
+          <div className="audit-title-cell">
+            <StatusBadge value={row.match?.match_reason || "manual review"} />
+            {!row.match && row.review_reason ? <span>{row.review_reason}</span> : null}
+          </div>
+        )
+      }
     ],
     []
   );
@@ -350,7 +360,8 @@ export function BanksPage() {
                     "Shipping",
                     "Gap",
                     "Related payments",
-                    "Match"
+                    "Match",
+                    "Review reason"
                   ],
                   depositExportRows(dashboard.deposits)
                 )

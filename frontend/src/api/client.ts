@@ -58,6 +58,7 @@ export type BankTransaction = {
   transaction_type: string;
   source_filename: string;
   match: BankTransactionMatch | null;
+  review_reason: string | null;
 };
 
 export type BankDashboard = {

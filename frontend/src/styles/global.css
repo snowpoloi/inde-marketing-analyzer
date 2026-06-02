@@ -412,7 +412,9 @@ tr:last-child td {
 .badge-investigate-operations,
 .badge-review-landing-page,
 .badge-partial,
-.badge-overpaid {
+.badge-overpaid,
+.badge-manual-review,
+.badge-unmatched {
   background: #fff0c7;
   color: #7d5300;
 }

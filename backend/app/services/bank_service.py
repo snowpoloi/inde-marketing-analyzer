@@ -409,10 +409,19 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
     deposit_rows: list[dict[str, Any]] = []
     transaction_rows: list[dict[str, Any]] = []
     deposit_matches = match_bank_deposits_for_orders(transactions, orders)
+    order_lookup = {order.order_id: order for order in orders}
+    orders_by_amount: dict[int, list[Any]] = {}
+    for order in orders:
+        orders_by_amount.setdefault(_money_key(order.total), []).append(order)
 
     for transaction in transactions:
         match = deposit_matches.get(transaction.id) if transaction.amount > 0 else None
-        row = {**_transaction_row(transaction), "match": match}
+        review_reason = (
+            _deposit_review_reason(transaction, match, order_lookup, orders_by_amount)
+            if transaction.amount > 0
+            else None
+        )
+        row = {**_transaction_row(transaction), "match": match, "review_reason": review_reason}
         transaction_rows.append(row)
         if transaction.amount > 0:
             deposit_rows.append(row)
@@ -505,6 +514,47 @@ def _extract_order_ids(text: str) -> list[str]:
     return ids
 
 
+def _order_age_days(transaction: Any, order: Any) -> int:
+    return (transaction.transaction_date - order.date_added.date()).days
+
+
+def _is_after_order(transaction: Any, order: Any, *, max_days: int = 14) -> bool:
+    age_days = _order_age_days(transaction, order)
+    return 0 <= age_days <= max_days
+
+
+def _order_text_score(transaction: Any, order: Any) -> int:
+    text = _normalise_text(" ".join([transaction.description, transaction.counterparty or "", transaction.reference or ""]))
+    raw = order.raw or {}
+    values = [
+        order.order_id,
+        raw.get("firstname"),
+        raw.get("lastname"),
+        raw.get("customer"),
+        raw.get("customer_name"),
+        raw.get("payment_firstname"),
+        raw.get("payment_lastname"),
+        raw.get("shipping_firstname"),
+        raw.get("shipping_lastname"),
+        raw.get("email"),
+        raw.get("telephone"),
+    ]
+    score = 0
+    for value in values:
+        token = _normalise_text(value)
+        if len(token) >= 4 and token in text:
+            score += 1
+    return score
+
+
+def _single_text_supported_candidate(transaction: Any, candidates: list[Any]) -> Any | None:
+    scored = [(candidate, _order_text_score(transaction, candidate)) for candidate in candidates]
+    supported = [candidate for candidate, score in scored if score > 0]
+    if len(supported) == 1:
+        return supported[0]
+    return None
+
+
 def _match_deposit(
     transaction: Any,
     order_lookup: dict[str, Any],
@@ -513,14 +563,44 @@ def _match_deposit(
     text = " ".join([transaction.description, transaction.counterparty or "", transaction.reference or ""])
     for order_id in _extract_order_ids(text):
         order = order_lookup.get(order_id)
-        if order:
+        if order and _is_after_order(transaction, order):
             return _order_match_payload(order, transaction.amount, "order reference")
 
     candidates = orders_by_amount.get(_money_key(transaction.amount), [])
-    near = [order for order in candidates if abs((order.date_added.date() - transaction.transaction_date).days) <= 7]
+    near = [order for order in candidates if _is_after_order(transaction, order)]
     if len(near) == 1:
         return _order_match_payload(near[0], transaction.amount, "same amount near date")
+    if len(near) > 1:
+        supported = _single_text_supported_candidate(transaction, near)
+        if supported:
+            return _order_match_payload(supported, transaction.amount, "same amount with depositor/comment match")
     return None
+
+
+def _deposit_review_reason(
+    transaction: Any,
+    match: dict[str, Any] | None,
+    order_lookup: dict[str, Any],
+    orders_by_amount: dict[int, list[Any]],
+) -> str | None:
+    if transaction.amount <= 0 or match:
+        return None
+
+    text = " ".join([transaction.description, transaction.counterparty or "", transaction.reference or ""])
+    referenced_ids = _extract_order_ids(text)
+    for order_id in referenced_ids:
+        order = order_lookup.get(order_id)
+        if not order:
+            return "Order reference not found in this order window."
+        if not _is_after_order(transaction, order):
+            return "Payment date is before the order date or too far after it."
+
+    same_amount = [order for order in orders_by_amount.get(_money_key(transaction.amount), []) if _is_after_order(transaction, order)]
+    if len(same_amount) > 1:
+        return "Multiple orders have the same amount. Check depositor name and comments before matching."
+    if len(same_amount) == 1:
+        return "Same amount found, but no clear order reference or depositor/comment support."
+    return "No safe order match found."
 
 
 def _enrich_split_deposit_matches(
@@ -538,6 +618,8 @@ def _enrich_split_deposit_matches(
         order = order_lookup.get(match["order_id"])
         if not order:
             continue
+        if not _is_after_order(transaction, order):
+            continue
 
         total = Decimal(str(order.total or 0))
         residual = total - Decimal(str(transaction.amount or 0))
@@ -551,7 +633,9 @@ def _enrich_split_deposit_matches(
             and candidate.id not in used_transaction_ids
             and matches.get(candidate.id) is None
             and _money_key(candidate.amount) == _money_key(residual)
-            and abs((candidate.transaction_date - transaction.transaction_date).days) <= 7
+            and _is_after_order(candidate, order)
+            and candidate.transaction_date <= transaction.transaction_date
+            and (transaction.transaction_date - candidate.transaction_date).days <= 14
         ]
         if len(candidates) != 1:
             continue

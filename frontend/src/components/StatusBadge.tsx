@@ -20,7 +20,14 @@ const labels: Record<string, string> = {
   paid: "Paid",
   unpaid: "Unpaid",
   partial: "Partial",
-  overpaid: "Overpaid"
+  overpaid: "Overpaid",
+  unmatched: "Unmatched",
+  "manual review": "Review",
+  "order reference": "Order ref",
+  "same amount near date": "Amount",
+  "same amount with depositor/comment match": "Name/comment",
+  "split payment order reference": "Split ref",
+  "split payment residual": "Split residual"
 };
 
 export function StatusBadge({ value }: { value: string }) {
