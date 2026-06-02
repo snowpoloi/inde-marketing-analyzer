@@ -19,6 +19,56 @@ export type SyncRun = {
   meta: Record<string, unknown>;
 };
 
+export type BankTransactionMatch = {
+  order_id: string;
+  status: string | null;
+  date_added: string;
+  order_total: number;
+  product_amount: number;
+  shipping: number;
+  amount_gap: number;
+  payment_coverage: string;
+  match_reason: string;
+};
+
+export type BankTransaction = {
+  id: string;
+  bank_name: string;
+  account: string | null;
+  transaction_date: string;
+  value_date: string | null;
+  description: string;
+  counterparty: string | null;
+  reference: string | null;
+  amount: number;
+  debit: number;
+  credit: number;
+  balance: number | null;
+  currency: string;
+  category: string;
+  transaction_type: string;
+  source_filename: string;
+  match: BankTransactionMatch | null;
+};
+
+export type BankDashboard = {
+  summary: {
+    deposits: number;
+    expenses: number;
+    net_cashflow: number;
+    bank_fees: number;
+    transactions: number;
+    unmatched_deposits: number;
+  };
+  expense_categories: Array<{
+    category: string;
+    transactions: number;
+    amount: number;
+  }>;
+  deposits: BankTransaction[];
+  transactions: BankTransaction[];
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -59,6 +109,16 @@ export const api = {
   me: () => request<{ id: string; email: string; is_admin: boolean }>("/auth/me"),
   dashboard: (section: string, dateFrom: string, dateTo: string) =>
     request<{ data: any }>(`/dashboard/${section}?date_from=${dateFrom}&date_to=${dateTo}`),
+  bankDashboard: (dateFrom: string, dateTo: string) =>
+    request<{ data: BankDashboard }>(`/banks/transactions?date_from=${dateFrom}&date_to=${dateTo}`),
+  importBankFile: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<{ filename: string; total: number; imported: number; skipped: number }>("/banks/import", {
+      method: "POST",
+      body
+    });
+  },
   integrations: () => request<IntegrationSetting[]>("/settings/integrations"),
   opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),
   saveIntegration: (provider: string, payload: Pick<IntegrationSetting, "is_enabled" | "config">) =>

@@ -1,7 +1,7 @@
-import { BarChart3, FileClock, Landmark, LogOut, PackageSearch, SearchCheck, Settings, Store } from "lucide-react";
+import { Banknote, BarChart3, FileClock, Landmark, LogOut, PackageSearch, SearchCheck, Settings, Store } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "products" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -36,6 +36,10 @@ export function Layout({
           <button className={active === "aade" ? "active" : ""} onClick={() => onNavigate("aade")}>
             <Landmark size={18} />
             AADE
+          </button>
+          <button className={active === "banks" ? "active" : ""} onClick={() => onNavigate("banks")}>
+            <Banknote size={18} />
+            Banks
           </button>
           <button className={active === "products" ? "active" : ""} onClick={() => onNavigate("products")}>
             <PackageSearch size={18} />

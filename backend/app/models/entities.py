@@ -179,6 +179,30 @@ class AADESummaryMetric(TimestampMixin, Base):
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class BankTransaction(TimestampMixin, Base):
+    __tablename__ = "bank_transactions"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_bank_transactions_source_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    bank_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    account: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    transaction_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    value_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    counterparty: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    reference: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    debit: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    credit: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class OpenCartOrder(TimestampMixin, Base):
     __tablename__ = "opencart_orders"
     __table_args__ = (UniqueConstraint("order_id", name="uq_opencart_orders_order_id"),)
