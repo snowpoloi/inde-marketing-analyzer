@@ -26,9 +26,18 @@ export type BankTransactionMatch = {
   order_total: number;
   product_amount: number;
   shipping: number;
+  matched_bank_total: number;
   amount_gap: number;
   payment_coverage: string;
   match_reason: string;
+  related_transactions: Array<{
+    id: string;
+    transaction_date: string;
+    bank_name: string;
+    amount: number;
+    description: string;
+    reference: string | null;
+  }>;
 };
 
 export type BankTransaction = {

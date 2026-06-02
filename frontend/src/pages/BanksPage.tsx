@@ -35,6 +35,10 @@ function isoDate(daysOffset = 0) {
 
 function scopeLabel(scope: string | undefined) {
   switch (scope) {
+    case "split":
+      return "Split payment";
+    case "remaining":
+      return "Remaining balance";
     case "all":
       return "Products + shipping";
     case "products":
@@ -83,9 +87,11 @@ function depositExportRows(rows: BankTransaction[]) {
     row.match?.order_id || "",
     scopeLabel(row.match?.payment_coverage),
     row.match?.order_total ?? "",
+    row.match?.matched_bank_total ?? "",
     row.match?.product_amount ?? "",
     row.match?.shipping ?? "",
     row.match?.amount_gap ?? "",
+    row.match?.related_transactions.map((related) => `${related.transaction_date} ${related.amount}`).join(" | ") || "",
     row.match?.match_reason || "unmatched"
   ]);
 }
@@ -189,7 +195,17 @@ export function BanksPage() {
           row.match ? (
             <div className="audit-title-cell">
               <strong>{row.match.order_id}</strong>
-              <span>{currency.format(row.match.order_total)} | {row.match.status || "-"}</span>
+              <span>
+                {currency.format(row.match.order_total)} | matched {currency.format(row.match.matched_bank_total)} |{" "}
+                {row.match.status || "-"}
+              </span>
+              {row.match.related_transactions.length ? (
+                <span>
+                  With {row.match.related_transactions
+                    .map((related) => `${related.transaction_date} ${currency.format(related.amount)}`)
+                    .join(", ")}
+                </span>
+              ) : null}
             </div>
           ) : (
             "-"
@@ -329,9 +345,11 @@ export function BanksPage() {
                     "Order",
                     "Payment covers",
                     "Order total",
+                    "Matched bank total",
                     "Products",
                     "Shipping",
                     "Gap",
+                    "Related payments",
                     "Match"
                   ],
                   depositExportRows(dashboard.deposits)

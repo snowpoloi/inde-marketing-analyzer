@@ -413,9 +413,20 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
     category_totals: dict[str, dict[str, Any]] = {}
     deposit_rows: list[dict[str, Any]] = []
     transaction_rows: list[dict[str, Any]] = []
+    deposit_matches: dict[Any, dict[str, Any] | None] = {}
 
     for transaction in transactions:
-        match = _match_deposit(transaction, order_lookup, orders_by_amount) if transaction.amount > 0 else None
+        if transaction.amount > 0:
+            deposit_matches[transaction.id] = _match_deposit(transaction, order_lookup, orders_by_amount)
+
+    _enrich_split_deposit_matches(
+        [transaction for transaction in transactions if transaction.amount > 0],
+        deposit_matches,
+        order_lookup,
+    )
+
+    for transaction in transactions:
+        match = deposit_matches.get(transaction.id) if transaction.amount > 0 else None
         row = {**_transaction_row(transaction), "match": match}
         transaction_rows.append(row)
         if transaction.amount > 0:
@@ -512,11 +523,101 @@ def _match_deposit(
     return None
 
 
-def _order_match_payload(order: Any, amount: Decimal, reason: str) -> dict[str, Any]:
+def _enrich_split_deposit_matches(
+    transactions: list[Any],
+    matches: dict[Any, dict[str, Any] | None],
+    order_lookup: dict[str, Any],
+) -> None:
+    used_transaction_ids: set[Any] = set()
+
+    for transaction in transactions:
+        match = matches.get(transaction.id)
+        if not match or match.get("amount_gap", 0) >= 0:
+            continue
+
+        order = order_lookup.get(match["order_id"])
+        if not order:
+            continue
+
+        total = Decimal(str(order.total or 0))
+        residual = total - Decimal(str(transaction.amount or 0))
+        if residual <= 0:
+            continue
+
+        candidates = [
+            candidate
+            for candidate in transactions
+            if candidate.id != transaction.id
+            and candidate.id not in used_transaction_ids
+            and matches.get(candidate.id) is None
+            and _money_key(candidate.amount) == _money_key(residual)
+            and abs((candidate.transaction_date - transaction.transaction_date).days) <= 7
+        ]
+        if len(candidates) != 1:
+            continue
+
+        candidate = candidates[0]
+        used_transaction_ids.add(candidate.id)
+        matched_total = Decimal(str(transaction.amount or 0)) + Decimal(str(candidate.amount or 0))
+        transaction_related = [_related_transaction_payload(candidate)]
+        candidate_related = [_related_transaction_payload(transaction)]
+
+        matches[transaction.id] = _order_match_payload(
+            order,
+            transaction.amount,
+            "split payment order reference",
+            matched_bank_total=matched_total,
+            coverage_override="split",
+            related_transactions=transaction_related,
+        )
+        matches[candidate.id] = _order_match_payload(
+            order,
+            candidate.amount,
+            "split payment residual",
+            matched_bank_total=matched_total,
+            coverage_override=_residual_coverage(order, candidate.amount),
+            related_transactions=candidate_related,
+        )
+
+
+def _related_transaction_payload(transaction: Any) -> dict[str, Any]:
+    return {
+        "id": str(transaction.id),
+        "transaction_date": transaction.transaction_date.isoformat(),
+        "bank_name": transaction.bank_name,
+        "amount": dec_to_float(transaction.amount),
+        "description": transaction.description,
+        "reference": transaction.reference,
+    }
+
+
+def _residual_coverage(order: Any, amount: Decimal) -> str:
     total = Decimal(str(order.total or 0))
     shipping = Decimal(str(order.shipping or 0))
     product_amount = total - shipping
-    if _money_key(amount) == _money_key(total):
+    if _money_key(amount) == _money_key(product_amount):
+        return "products"
+    if _money_key(amount) == _money_key(shipping):
+        return "shipping"
+    return "remaining"
+
+
+def _order_match_payload(
+    order: Any,
+    amount: Decimal,
+    reason: str,
+    *,
+    matched_bank_total: Decimal | None = None,
+    coverage_override: str | None = None,
+    related_transactions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    total = Decimal(str(order.total or 0))
+    shipping = Decimal(str(order.shipping or 0))
+    product_amount = total - shipping
+    comparison_amount = matched_bank_total or amount
+    if coverage_override:
+        coverage = coverage_override
+    elif _money_key(amount) == _money_key(total):
         coverage = "all"
     elif _money_key(amount) == _money_key(product_amount):
         coverage = "products"
@@ -533,7 +634,9 @@ def _order_match_payload(order: Any, amount: Decimal, reason: str) -> dict[str, 
         "order_total": dec_to_float(total),
         "product_amount": dec_to_float(product_amount),
         "shipping": dec_to_float(shipping),
-        "amount_gap": dec_to_float(amount - total),
+        "matched_bank_total": dec_to_float(comparison_amount),
+        "amount_gap": dec_to_float(comparison_amount - total),
         "payment_coverage": coverage,
         "match_reason": reason,
+        "related_transactions": related_transactions or [],
     }
