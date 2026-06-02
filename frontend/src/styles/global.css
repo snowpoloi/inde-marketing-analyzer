@@ -390,7 +390,8 @@ tr:last-child td {
 
 .badge-success,
 .badge-scale,
-.badge-positive {
+.badge-positive,
+.badge-paid {
   background: #dff3e8;
   color: #166b57;
 }
@@ -398,7 +399,8 @@ tr:last-child td {
 .badge-failed,
 .badge-pause,
 .badge-high,
-.badge-critical {
+.badge-critical,
+.badge-unpaid {
   background: #ffe1de;
   color: #a13228;
 }
@@ -408,7 +410,9 @@ tr:last-child td {
 .badge-investigate-tracking,
 .badge-investigate-product-feed,
 .badge-investigate-operations,
-.badge-review-landing-page {
+.badge-review-landing-page,
+.badge-partial,
+.badge-overpaid {
   background: #fff0c7;
   color: #7d5300;
 }

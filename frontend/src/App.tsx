@@ -6,15 +6,24 @@ import { AuditPage } from "./pages/AuditPage";
 import { BanksPage } from "./pages/BanksPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
+import { OrdersPage } from "./pages/OrdersPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SyncLogsPage } from "./pages/SyncLogsPage";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "products" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "");
-  if (hash === "audit" || hash === "aade" || hash === "banks" || hash === "products" || hash === "settings" || hash === "sync") {
+  if (
+    hash === "audit" ||
+    hash === "aade" ||
+    hash === "banks" ||
+    hash === "orders" ||
+    hash === "products" ||
+    hash === "settings" ||
+    hash === "sync"
+  ) {
     return hash;
   }
   return "dashboard";
@@ -56,6 +65,7 @@ export function App() {
       {view === "audit" ? <AuditPage /> : null}
       {view === "aade" ? <AadePage /> : null}
       {view === "banks" ? <BanksPage /> : null}
+      {view === "orders" ? <OrdersPage /> : null}
       {view === "products" ? <ProductsPage /> : null}
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}

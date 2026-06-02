@@ -78,6 +78,74 @@ export type BankDashboard = {
   transactions: BankTransaction[];
 };
 
+export type OrderPayment = {
+  id: string;
+  transaction_date: string;
+  bank_name: string;
+  amount: number;
+  description: string;
+  reference: string | null;
+  coverage: string;
+  match_reason: string;
+};
+
+export type OrderRow = {
+  order_id: string;
+  date_added: string;
+  order_status: string | null;
+  payment_method: string | null;
+  shipping_method: string | null;
+  products_total: number;
+  shipping_total: number;
+  tax_total: number;
+  order_total: number;
+  paid_amount: number;
+  balance_due: number;
+  payment_status: string;
+  product_quantity: number;
+  product_lines: number;
+  payments: OrderPayment[];
+};
+
+export type SupplierSale = {
+  supplier: string;
+  orders: number;
+  product_lines: number;
+  quantity: number;
+  revenue: number;
+};
+
+export type SupplierProductSale = {
+  supplier: string;
+  sku: string | null;
+  model: string | null;
+  product_id: string | null;
+  product_name: string;
+  orders: number;
+  quantity: number;
+  revenue: number;
+};
+
+export type OrdersOverview = {
+  summary: {
+    orders: number;
+    paid_orders: number;
+    partial_orders: number;
+    unpaid_orders: number;
+    overpaid_orders: number;
+    products_total: number;
+    shipping_total: number;
+    order_total: number;
+    paid_amount: number;
+    balance_due: number;
+    product_quantity: number;
+    suppliers: number;
+  };
+  orders: OrderRow[];
+  supplier_sales: SupplierSale[];
+  supplier_products: SupplierProductSale[];
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -120,6 +188,8 @@ export const api = {
     request<{ data: any }>(`/dashboard/${section}?date_from=${dateFrom}&date_to=${dateTo}`),
   bankDashboard: (dateFrom: string, dateTo: string) =>
     request<{ data: BankDashboard }>(`/banks/transactions?date_from=${dateFrom}&date_to=${dateTo}`),
+  ordersOverview: (dateFrom: string, dateTo: string) =>
+    request<{ data: OrdersOverview }>(`/orders/overview?date_from=${dateFrom}&date_to=${dateTo}`),
   importBankFile: (file: File) => {
     const body = new FormData();
     body.append("file", file);

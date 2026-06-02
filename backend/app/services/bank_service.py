@@ -405,25 +405,10 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
         .options(selectinload(OpenCartOrder.products))
         .where(func.date(OpenCartOrder.date_added).between(date_from - timedelta(days=14), date_to + timedelta(days=14)))
     ).all()
-    order_lookup = {order.order_id: order for order in orders}
-    orders_by_amount: dict[int, list[OpenCartOrder]] = {}
-    for order in orders:
-        orders_by_amount.setdefault(_money_key(order.total), []).append(order)
-
     category_totals: dict[str, dict[str, Any]] = {}
     deposit_rows: list[dict[str, Any]] = []
     transaction_rows: list[dict[str, Any]] = []
-    deposit_matches: dict[Any, dict[str, Any] | None] = {}
-
-    for transaction in transactions:
-        if transaction.amount > 0:
-            deposit_matches[transaction.id] = _match_deposit(transaction, order_lookup, orders_by_amount)
-
-    _enrich_split_deposit_matches(
-        [transaction for transaction in transactions if transaction.amount > 0],
-        deposit_matches,
-        order_lookup,
-    )
+    deposit_matches = match_bank_deposits_for_orders(transactions, orders)
 
     for transaction in transactions:
         match = deposit_matches.get(transaction.id) if transaction.amount > 0 else None
@@ -464,6 +449,21 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
         "deposits": deposit_rows,
         "transactions": transaction_rows,
     }
+
+
+def match_bank_deposits_for_orders(transactions: list[Any], orders: list[Any]) -> dict[Any, dict[str, Any] | None]:
+    order_lookup = {order.order_id: order for order in orders}
+    orders_by_amount: dict[int, list[Any]] = {}
+    for order in orders:
+        orders_by_amount.setdefault(_money_key(order.total), []).append(order)
+
+    deposit_matches: dict[Any, dict[str, Any] | None] = {}
+    deposit_transactions = [transaction for transaction in transactions if transaction.amount > 0]
+    for transaction in deposit_transactions:
+        deposit_matches[transaction.id] = _match_deposit(transaction, order_lookup, orders_by_amount)
+
+    _enrich_split_deposit_matches(deposit_transactions, deposit_matches, order_lookup)
+    return deposit_matches
 
 
 def _transaction_row(transaction: BankTransaction) -> dict[str, Any]:

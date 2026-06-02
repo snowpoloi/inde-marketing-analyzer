@@ -16,7 +16,11 @@ const labels: Record<string, string> = {
   positive: "Positive",
   medium: "Medium",
   high: "High",
-  critical: "Critical"
+  critical: "Critical",
+  paid: "Paid",
+  unpaid: "Unpaid",
+  partial: "Partial",
+  overpaid: "Overpaid"
 };
 
 export function StatusBadge({ value }: { value: string }) {

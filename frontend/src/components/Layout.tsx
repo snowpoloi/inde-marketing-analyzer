@@ -1,7 +1,18 @@
-import { Banknote, BarChart3, FileClock, Landmark, LogOut, PackageSearch, SearchCheck, Settings, Store } from "lucide-react";
+import {
+  Banknote,
+  BarChart3,
+  FileClock,
+  Landmark,
+  LogOut,
+  PackageSearch,
+  SearchCheck,
+  Settings,
+  ShoppingCart,
+  Store
+} from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "products" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -40,6 +51,10 @@ export function Layout({
           <button className={active === "banks" ? "active" : ""} onClick={() => onNavigate("banks")}>
             <Banknote size={18} />
             Banks
+          </button>
+          <button className={active === "orders" ? "active" : ""} onClick={() => onNavigate("orders")}>
+            <ShoppingCart size={18} />
+            Orders
           </button>
           <button className={active === "products" ? "active" : ""} onClick={() => onNavigate("products")}>
             <PackageSearch size={18} />
