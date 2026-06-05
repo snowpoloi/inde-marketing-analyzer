@@ -8,7 +8,8 @@ from xml.etree import ElementTree
 import httpx
 
 
-DEFAULT_PRODUCT_FEED_TIMEOUT_SECONDS = 300.0
+DEFAULT_PRODUCT_FEED_TIMEOUT_SECONDS = 60.0
+MAX_PRODUCT_FEED_TIMEOUT_SECONDS = 120.0
 
 
 def _float_config(value: Any, default: float) -> float:
@@ -27,8 +28,9 @@ class OpenCartConnector:
         self.product_feed_timeout = max(
             _float_config(config.get("product_feed_timeout_seconds"), DEFAULT_PRODUCT_FEED_TIMEOUT_SECONDS),
             self.timeout,
-            DEFAULT_PRODUCT_FEED_TIMEOUT_SECONDS,
+            10.0,
         )
+        self.product_feed_timeout = min(self.product_feed_timeout, MAX_PRODUCT_FEED_TIMEOUT_SECONDS)
 
     def fetch_orders(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
         if not self.endpoint_url:

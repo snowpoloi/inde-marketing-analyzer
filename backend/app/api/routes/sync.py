@@ -17,7 +17,7 @@ from app.services.import_service import (
     import_opencart_orders,
     import_shoply_sales,
 )
-from app.services.sync_service import finish_run, run_many, start_run
+from app.services.sync_service import expire_stale_runs, finish_run, run_many, start_run
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -40,6 +40,7 @@ def _serialize_run(run: SyncRun) -> SyncRunResponse:
 
 @router.get("/runs", response_model=list[SyncRunResponse])
 def list_runs(_: User = Depends(require_admin), db: Session = Depends(get_db), limit: int = 100):
+    expire_stale_runs(db)
     runs = db.scalars(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(limit)).all()
     return [_serialize_run(run) for run in runs]
 

@@ -42,6 +42,23 @@ def _aade_document_count(document: AADEDocument) -> int:
         return 1
 
 
+def _aade_record_type(document: AADEDocument) -> str:
+    raw = document.raw if isinstance(document.raw, dict) else {}
+    return str(raw.get("record_type") or "full_document")
+
+
+def _aade_documents_for_totals(documents: list[AADEDocument]) -> list[AADEDocument]:
+    selected: list[AADEDocument] = []
+    for direction in ("income", "expense"):
+        direction_documents = [document for document in documents if document.document_direction == direction]
+        full_documents = [document for document in direction_documents if _aade_record_type(document) == "full_document"]
+        book_rows = [document for document in direction_documents if _aade_record_type(document) == "book_info"]
+        cancellations = [document for document in direction_documents if _aade_record_type(document) == "cancellation"]
+        selected.extend(full_documents or book_rows)
+        selected.extend(cancellations)
+    return selected
+
+
 def _aade_pick(row: Any, *keys: str) -> Any:
     if not isinstance(row, dict):
         return None
@@ -1302,6 +1319,7 @@ def _aade_audit(
     documents = db.scalars(
         select(AADEDocument).where(_period_filter(AADEDocument.issue_date, date_from, date_to))
     ).all()
+    fiscal_documents = _aade_documents_for_totals(documents)
 
     rows_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     income_documents = 0
@@ -1312,7 +1330,7 @@ def _aade_audit(
     income_vat = Decimal("0")
     expense_vat = Decimal("0")
 
-    for document in documents:
+    for document in fiscal_documents:
         direction = document.document_direction or "unknown"
         invoice_type = document.invoice_type or "Unknown"
         document_count = _aade_document_count(document)

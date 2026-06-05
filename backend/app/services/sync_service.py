@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.connectors.aade import AADEConnector
+from app.connectors.aade import AADEConnector, AADERateLimitError
 from app.connectors.ga4 import GA4Connector
 from app.connectors.google_ads import GoogleAdsConnector
 from app.connectors.merchant_center import MerchantCenterConnector
@@ -68,6 +68,22 @@ def finish_run(db: Session, run: SyncRun, status: str, records: int = 0, error: 
     return run
 
 
+def expire_stale_runs(db: Session, older_than_minutes: int = 30) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    stale_runs = db.scalars(
+        select(SyncRun).where(SyncRun.status == "running", SyncRun.started_at < cutoff)
+    ).all()
+    for run in stale_runs:
+        run.status = "failed"
+        run.finished_at = datetime.now(timezone.utc)
+        run.error_message = "Sync stopped before finishing. Please run it again."
+        run.meta = {**(run.meta or {}), "stale_run_expired": True}
+        db.add(run)
+    if stale_runs:
+        db.commit()
+    return len(stale_runs)
+
+
 def _json_number(value: Decimal) -> int | float:
     integral = value.to_integral_value()
     return int(integral) if value == integral else float(value)
@@ -113,6 +129,18 @@ def _aade_record_type(row: dict[str, Any]) -> str:
     return str(raw.get("record_type") or "")
 
 
+def _aade_rows_for_totals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for direction in ("income", "expense"):
+        direction_rows = [row for row in rows if row.get("document_direction") == direction]
+        full_rows = [row for row in direction_rows if not _aade_record_type(row)]
+        book_rows = [row for row in direction_rows if _aade_record_type(row) == "book_info"]
+        cancellations = [row for row in direction_rows if _aade_record_type(row) == "cancellation"]
+        selected.extend(full_rows or book_rows)
+        selected.extend(cancellations)
+    return selected
+
+
 def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
     documents = payload.get("documents") if isinstance(payload, dict) else []
     summary_rows = payload.get("summary_rows") if isinstance(payload, dict) else []
@@ -121,16 +149,17 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
         documents = []
     if not isinstance(summary_rows, list):
         summary_rows = []
+    total_rows = _aade_rows_for_totals(documents)
     income = sum(
-        (as_decimal(row.get("gross_value")) for row in documents if row.get("document_direction") == "income"),
+        (as_decimal(row.get("gross_value")) for row in total_rows if row.get("document_direction") == "income"),
         Decimal("0"),
     )
     expenses = sum(
-        (as_decimal(row.get("gross_value")) for row in documents if row.get("document_direction") == "expense"),
+        (as_decimal(row.get("gross_value")) for row in total_rows if row.get("document_direction") == "expense"),
         Decimal("0"),
     )
-    document_count = sum(as_int(row.get("document_count")) or 1 for row in documents)
-    cancelled = sum(as_int(row.get("document_count")) or 1 for row in documents if row.get("is_cancelled"))
+    document_count = sum(as_int(row.get("document_count")) or 1 for row in total_rows)
+    cancelled = sum(as_int(row.get("document_count")) or 1 for row in total_rows if row.get("is_cancelled"))
     full_documents = sum(1 for row in documents if not _aade_record_type(row))
     book_rows = [row for row in documents if _aade_record_type(row) == "book_info"]
     book_documents = sum(as_int(row.get("document_count")) or 1 for row in book_rows)
@@ -183,6 +212,7 @@ def aade_sync_meta(payload: dict[str, Any]) -> dict[str, Any]:
         "aade_full_documents": full_documents,
         "aade_book_rows": len(book_rows),
         "aade_book_documents": book_documents,
+        "aade_total_source": "full_documents_preferred_over_book_rows",
         "aade_vat_rows": len(vat_rows),
         "aade_vat_amount": _json_number(vat_amount),
         "aade_summary_rows": len(summary_rows),
@@ -225,14 +255,6 @@ def run_provider_sync(
             order_product_updates = 0
             product_feed_error = None
             order_error = None
-            try:
-                product_rows = connector.fetch_product_catalog()
-                product_count = import_product_catalog(db, product_rows)
-                db.commit()
-                order_product_updates = enrich_order_products_from_catalog(db)
-            except Exception as exc:
-                db.rollback()
-                product_feed_error = str(exc)
             if connector.endpoint_url:
                 try:
                     rows = connector.fetch_orders(date_from, date_to)
@@ -240,6 +262,18 @@ def run_provider_sync(
                 except Exception as exc:
                     db.rollback()
                     order_error = str(exc)
+            should_fetch_product_feed = bool(connector.product_feed_url)
+            if sync_type == "manual" and connector.endpoint_url and not config.get("sync_product_feed_on_manual"):
+                should_fetch_product_feed = False
+            if should_fetch_product_feed:
+                try:
+                    product_rows = connector.fetch_product_catalog()
+                    product_count = import_product_catalog(db, product_rows)
+                    db.commit()
+                    order_product_updates = enrich_order_products_from_catalog(db)
+                except Exception as exc:
+                    db.rollback()
+                    product_feed_error = str(exc)
             count = product_count + order_count
         elif provider == "meta_ads":
             rows = MetaAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
@@ -263,7 +297,17 @@ def run_provider_sync(
             connector_config = dict(config)
             if sync_type == "manual":
                 connector_config["ignore_document_cursor"] = True
-            payload = AADEConnector(connector_config).fetch_documents(date_from, date_to)
+            try:
+                payload = AADEConnector(connector_config).fetch_documents(date_from, date_to)
+            except AADERateLimitError as exc:
+                return finish_run(
+                    db,
+                    run,
+                    "skipped",
+                    0,
+                    error=str(exc),
+                    meta={"reason": "AADE rate limit", "retry_after_seconds": exc.retry_after_seconds},
+                )
             count = import_aade_payload(db, payload, date_from)
             cursor = payload.get("cursor") if isinstance(payload, dict) else {}
             if isinstance(cursor, dict) and cursor:
@@ -296,6 +340,8 @@ def run_provider_sync(
             }
             if product_feed_error:
                 meta["product_feed_error"] = product_feed_error
+            if not product_feed_error and not product_count and sync_type == "manual" and connector.product_feed_url and connector.endpoint_url:
+                meta["product_feed_skipped"] = "Manual OpenCart sync imported orders only. Product feed runs on scheduled sync or when sync_product_feed_on_manual is enabled."
             if order_error:
                 return finish_run(db, run, "failed", count, error=order_error, meta=meta)
             if product_feed_error and connector.product_feed_url and order_count == 0:
@@ -308,5 +354,6 @@ def run_provider_sync(
 
 
 def run_many(db: Session, providers: list[str] | None, date_from: date | None, date_to: date | None, sync_type: str = "manual") -> list[SyncRun]:
+    expire_stale_runs(db)
     selected = providers or list(PROVIDERS.keys())
     return [run_provider_sync(db, provider, date_from, date_to, sync_type=sync_type) for provider in selected]

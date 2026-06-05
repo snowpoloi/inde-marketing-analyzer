@@ -34,6 +34,14 @@ AADE_BLOCKED_ENDPOINT_FRAGMENTS = (
 )
 
 
+class AADERateLimitError(RuntimeError):
+    def __init__(self, retry_after_seconds: int):
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(
+            f"AADE rate limit reached. Try again in {retry_after_seconds} seconds before running sync again."
+        )
+
+
 class AADEConnector:
     """Read-only myDATA connector.
 
@@ -171,13 +179,9 @@ class AADEConnector:
 
             retry_after = self._retry_after_seconds(response)
             if retry_after > self.retry_after_max_seconds:
-                raise RuntimeError(
-                    f"AADE rate limit reached. Try again in {retry_after} seconds before running sync again."
-                )
+                raise AADERateLimitError(retry_after)
             if attempt >= self.max_retries:
-                raise RuntimeError(
-                    f"AADE rate limit reached after {attempt + 1} attempts. Try again in {retry_after} seconds."
-                )
+                raise AADERateLimitError(retry_after)
             time.sleep(max(float(retry_after), self.page_delay_seconds))
         return response
 
