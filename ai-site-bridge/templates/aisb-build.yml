@@ -1,0 +1,55 @@
+# AI Site Bridge — build workflow
+#
+# Copy this file into your AI-builder repository (the one Lovable/Bolt syncs
+# to GitHub) as: .github/workflows/aisb-build.yml
+#
+# On every push to main it builds the site and force-pushes ONLY the static
+# output to the "aisb-build" branch. In WordPress → AI Site Bridge →
+# Settings, set Branch = aisb-build so the plugin always syncs a ready build.
+#
+# If your app is a single-page app (one index.html, routes rendered by JS),
+# add a prerender step so every route becomes its own HTML file — e.g. use
+# vite-ssg, vite-plugin-prerender or react-snap — otherwise only the home
+# page can be imported.
+
+name: Build for AI Site Bridge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish static build to aisb-build branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: aisb-build
+          publish_dir: ./dist
+          force_orphan: true
+
+      # Optional: notify WordPress to re-import immediately.
+      # Create the AISB_WEBHOOK_URL secret as:
+      #   https://YOUR-SITE.com/wp-json/aisb/v1/sync?secret=YOUR_WEBHOOK_SECRET
+      - name: Trigger WordPress sync
+        if: ${{ vars.AISB_NOTIFY == 'true' }}
+        run: curl -fsS -X POST "${{ secrets.AISB_WEBHOOK_URL }}" || true
