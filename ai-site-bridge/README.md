@@ -49,6 +49,17 @@ AI builder (design)  ──GitHub──▶  AI Site Bridge  ──▶  WordPress
 - Πίνακας μεταφράσεων ανά σελίδα/γλώσσα, `hreflang` tags, `<html lang>`,
   αυτόματο language prefix στα εσωτερικά links, floating language switcher.
 
+### Companion Theme (ολοκληρωμένο look σε όλο το site)
+- Με ένα κλικ (**Dashboard → Generate theme**) το plugin παράγει το **AI Site Bridge
+  Theme** μέσα στο `wp-content/themes/` από το imported design: ίδιο header, footer,
+  γραμματοσειρές, CSS και body classes.
+- Έτσι οι σελίδες που σερβίρει το WordPress — **σελίδες προϊόντος, καλάθι, checkout,
+  άρθρα blog, αναζήτηση, 404** — δείχνουν σαν φυσική συνέχεια του design σου.
+- Τα edits που κάνεις στα κείμενα του header/footer (Content & SEO) εφαρμόζονται
+  και στο theme, και το theme **ανανεώνεται αυτόματα σε κάθε design sync**.
+- Το ενεργοποιείς από Appearance → Themes· αν δεν θες, οτιδήποτε άλλο theme
+  συνεχίζει να δουλεύει κανονικά (οι imported σελίδες το παρακάμπτουν έτσι κι αλλιώς).
+
 ### WooCommerce & Blog ζώνες
 - Ορίζεις "ζώνες": ένα CSS selector (π.χ. `#products`, `section.shop`) ή marker
   `@name` (στοιχείο με `data-aisb-zone="name"` μέσα στον AI builder).
@@ -88,6 +99,7 @@ ai-site-bridge/
 │   ├── class-renderer.php      # Front-end render: overrides, langs, zones
 │   ├── class-seo.php           # Head injection, sitemap
 │   ├── class-zones.php         # WooCommerce/blog ζώνες, selector→XPath
+│   ├── class-theme.php         # Companion theme generator + chrome runtime
 │   └── class-admin.php         # Admin UI + form handlers
 ├── admin/css/admin.css
 └── templates/aisb-build.yml    # GitHub Action για auto-build
@@ -105,5 +117,7 @@ ai-site-bridge/
 - [ ] AI auto-translate των strings (Claude API) με ένα κλικ.
 - [ ] Visual zone picker (point & click πάνω στο design αντί για CSS selector).
 - [ ] Ζώνες cart/checkout με πλήρη Woo blocks integration.
+- [ ] JS για mobile menu toggle στο companion theme (τα burger menus των SPA
+      builds βασίζονται σε JS που δεν μεταφέρεται στο theme).
 - [ ] Μενού του design συνδεδεμένα με WP Menus.
 - [ ] Ενσωμάτωση με Rank Math / Yoast αντί για το built-in SEO layer.

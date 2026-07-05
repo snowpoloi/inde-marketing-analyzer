@@ -19,6 +19,7 @@ class AISB_Admin {
 		add_action( 'admin_post_aisb_save_zone', array( __CLASS__, 'handle_save_zone' ) );
 		add_action( 'admin_post_aisb_delete_zone', array( __CLASS__, 'handle_delete_zone' ) );
 		add_action( 'admin_post_aisb_save_settings', array( __CLASS__, 'handle_save_settings' ) );
+		add_action( 'admin_post_aisb_generate_theme', array( __CLASS__, 'handle_generate_theme' ) );
 	}
 
 	public static function menu() {
@@ -120,6 +121,27 @@ class AISB_Admin {
 				</div>
 
 				<div class="aisb-panel">
+					<h2><?php esc_html_e( 'Companion theme', 'ai-site-bridge' ); ?></h2>
+					<p class="description"><?php esc_html_e( 'Generates a WordPress theme from your imported design (same header, footer, fonts and CSS) so WooCommerce pages, blog posts, search and 404 match the rest of the site.', 'ai-site-bridge' ); ?></p>
+					<?php if ( ! AISB_Theme::is_generated() ) : ?>
+						<p><em><?php esc_html_e( 'Not generated yet.', 'ai-site-bridge' ); ?></em></p>
+					<?php elseif ( AISB_Theme::is_active() ) : ?>
+						<p><strong style="color:#1d6f42">&#10003; <?php esc_html_e( 'Generated and active.', 'ai-site-bridge' ); ?></strong></p>
+					<?php else : ?>
+						<p><strong><?php esc_html_e( 'Generated, but not active.', 'ai-site-bridge' ); ?></strong>
+							<a href="<?php echo esc_url( admin_url( 'themes.php' ) ); ?>"><?php esc_html_e( 'Activate it in Appearance → Themes.', 'ai-site-bridge' ); ?></a></p>
+					<?php endif; ?>
+					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+						<input type="hidden" name="action" value="aisb_generate_theme">
+						<?php wp_nonce_field( 'aisb_generate_theme' ); ?>
+						<?php submit_button( AISB_Theme::is_generated() ? __( 'Regenerate theme', 'ai-site-bridge' ) : __( 'Generate theme', 'ai-site-bridge' ), 'secondary', 'submit', false, empty( $pages ) ? array( 'disabled' => 'disabled' ) : array() ); ?>
+					</form>
+					<?php if ( empty( $pages ) ) : ?>
+						<p class="description"><?php esc_html_e( 'Run a sync first — the theme is built from the imported design.', 'ai-site-bridge' ); ?></p>
+					<?php endif; ?>
+				</div>
+
+				<div class="aisb-panel">
 					<h2><?php esc_html_e( 'Auto-sync webhook', 'ai-site-bridge' ); ?></h2>
 					<p class="description"><?php esc_html_e( 'Add this as a GitHub webhook (content type: application/json, secret below) to re-import automatically on every push.', 'ai-site-bridge' ); ?></p>
 					<code class="aisb-code"><?php echo esc_html( rest_url( 'aisb/v1/sync' ) ); ?></code>
@@ -173,6 +195,26 @@ class AISB_Admin {
 		if ( ! empty( $result['errors'] ) ) {
 			$msg .= ' ' . __( 'Some pages failed:', 'ai-site-bridge' ) . ' ' . implode( '; ', $result['errors'] );
 		}
+		self::redirect( 'aisb', array( 'aisb_msg' => $msg ) );
+	}
+
+	public static function handle_generate_theme() {
+		self::guard();
+		check_admin_referer( 'aisb_generate_theme' );
+
+		if ( ! AISB_Theme::refresh_chrome() ) {
+			self::redirect( 'aisb', array(
+				'aisb_msg' => __( 'Could not read the imported front page — run a sync first.', 'ai-site-bridge' ),
+				'aisb_err' => 1,
+			) );
+		}
+		$result = AISB_Theme::generate();
+		if ( is_wp_error( $result ) ) {
+			self::redirect( 'aisb', array( 'aisb_msg' => $result->get_error_message(), 'aisb_err' => 1 ) );
+		}
+		$msg = AISB_Theme::is_active()
+			? __( 'Theme regenerated from the current design.', 'ai-site-bridge' )
+			: __( 'Theme generated. Activate "AI Site Bridge Theme" in Appearance → Themes.', 'ai-site-bridge' );
 		self::redirect( 'aisb', array( 'aisb_msg' => $msg ) );
 	}
 

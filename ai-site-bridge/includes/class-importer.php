@@ -53,6 +53,12 @@ class AISB_Importer {
 				'report' => $report,
 			) );
 			flush_rewrite_rules( false );
+
+			// Keep the companion theme in step with the fresh design.
+			AISB_Theme::refresh_chrome();
+			if ( AISB_Theme::is_generated() ) {
+				AISB_Theme::generate();
+			}
 		}
 		return $report;
 	}

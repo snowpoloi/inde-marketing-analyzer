@@ -25,6 +25,7 @@ require_once AISB_DIR . 'includes/class-store.php';
 require_once AISB_DIR . 'includes/class-parser.php';
 require_once AISB_DIR . 'includes/class-importer.php';
 require_once AISB_DIR . 'includes/class-zones.php';
+require_once AISB_DIR . 'includes/class-theme.php';
 require_once AISB_DIR . 'includes/class-seo.php';
 require_once AISB_DIR . 'includes/class-renderer.php';
 require_once AISB_DIR . 'includes/class-admin.php';
