@@ -34,9 +34,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # --legacy-peer-deps: AI-builder projects often ship peer-dependency
+        # conflicts (e.g. react-day-picker vs date-fns v4) that npm rejects.
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Build
+        env:
+          CI: "false"
         run: npm run build
 
       - name: Publish static build to aisb-build branch
