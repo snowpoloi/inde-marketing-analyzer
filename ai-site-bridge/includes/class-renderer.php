@@ -67,6 +67,10 @@ class AISB_Renderer {
 		self::apply_images( $xpath, $resolved );
 		$has_zones = self::apply_zones( $doc, $xpath, $slug );
 
+		if ( AISB_Plugin::setting( 'strip_js', 1 ) ) {
+			self::strip_design_js( $xpath );
+		}
+
 		AISB_SEO::inject_head( $doc, $post, $slug, $lang, $resolved );
 
 		if ( $has_zones ) {
@@ -135,6 +139,40 @@ class AISB_Renderer {
 			}
 		}
 		return $applied;
+	}
+
+	/**
+	 * Freeze the design: remove the SPA's JavaScript so it cannot re-mount
+	 * over the imported static markup (and crash on missing backends).
+	 * External scripts (analytics etc.) and JSON-LD are kept.
+	 */
+	private static function strip_design_js( DOMXPath $xpath ) {
+		$uploads = wp_upload_dir();
+		$marker  = trailingslashit( $uploads['baseurl'] ) . 'aisb-site';
+
+		foreach ( iterator_to_array( $xpath->query( '//script' ) ) as $script ) {
+			/** @var DOMElement $script */
+			$src  = (string) $script->getAttribute( 'src' );
+			$type = strtolower( (string) $script->getAttribute( 'type' ) );
+			if ( 'application/ld+json' === $type ) {
+				continue;
+			}
+			$is_app_bundle = ( '' !== $src && false !== strpos( $src, $marker ) ) || 'module' === $type;
+			$is_inline     = ( '' === $src );
+			if ( $is_app_bundle || $is_inline ) {
+				$script->parentNode->removeChild( $script );
+			}
+		}
+
+		// Script preloads are useless once the scripts are gone.
+		foreach ( iterator_to_array( $xpath->query( "//link[@rel='modulepreload' or @rel='preload' or @rel='prefetch']" ) ) as $link ) {
+			/** @var DOMElement $link */
+			$as   = strtolower( (string) $link->getAttribute( 'as' ) );
+			$href = (string) $link->getAttribute( 'href' );
+			if ( 'script' === $as || preg_match( '/\.m?js(\?|$)/', $href ) ) {
+				$link->parentNode->removeChild( $link );
+			}
+		}
 	}
 
 	/** Prefix internal links with the current language ("/about/" => "/en/about/"). */

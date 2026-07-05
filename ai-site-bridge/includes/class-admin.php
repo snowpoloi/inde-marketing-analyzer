@@ -647,6 +647,18 @@ class AISB_Admin {
 					</tr>
 				</table>
 
+				<h2><?php esc_html_e( 'Rendering', 'ai-site-bridge' ); ?></h2>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Freeze design (recommended)', 'ai-site-bridge' ); ?></th>
+						<td>
+							<label><input type="checkbox" name="strip_js" value="1" <?php checked( AISB_Plugin::setting( 'strip_js', 1 ) ); ?>>
+								<?php esc_html_e( 'Remove the app JavaScript on imported pages', 'ai-site-bridge' ); ?></label>
+							<p class="description"><?php esc_html_e( 'AI-builder apps re-mount over the static design and often crash calling backends that do not exist here (blank/black page after a couple of seconds). Freezing serves the design as a stable static page. Disable only if your app runs fully client-side and you want its interactivity.', 'ai-site-bridge' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
 				<h2><?php esc_html_e( 'Routing', 'ai-site-bridge' ); ?></h2>
 				<table class="form-table">
 					<tr>
@@ -685,6 +697,7 @@ class AISB_Admin {
 		$settings['build_dir']     = isset( $_POST['build_dir'] ) ? sanitize_text_field( wp_unslash( $_POST['build_dir'] ) ) : '';
 		$settings['front_slug']    = isset( $_POST['front_slug'] ) ? sanitize_text_field( wp_unslash( $_POST['front_slug'] ) ) : 'home';
 		$settings['show_switcher'] = empty( $_POST['show_switcher'] ) ? 0 : 1;
+		$settings['strip_js']      = empty( $_POST['strip_js'] ) ? 0 : 1;
 		$settings['default_lang']  = isset( $_POST['default_lang'] ) ? sanitize_key( wp_unslash( $_POST['default_lang'] ) ) : 'en';
 
 		$languages = array();

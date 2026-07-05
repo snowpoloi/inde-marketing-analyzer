@@ -67,6 +67,7 @@ class AISB_Activator {
 			'default_lang'   => 'en',
 			'front_slug'     => 'home',
 			'show_switcher'  => 1,
+			'strip_js'       => 1,
 			'webhook_secret' => wp_generate_password( 32, false, false ),
 		) );
 		update_option( 'aisb_settings', $settings );
