@@ -190,7 +190,9 @@ class AISB_Parser {
 		$src = (string) $img->getAttribute( 'src' );
 		$alt = (string) $img->getAttribute( 'alt' );
 
-		if ( '' !== $src ) {
+		// Inlined data: URIs (e.g. from live-site snapshots) are not
+		// meaningfully editable and would bloat the catalog — skip those.
+		if ( '' !== $src && 0 !== strpos( $src, 'data:' ) ) {
 			$key = self::make_key( $slug, 'img_src|' . $src, $seen );
 			$img->setAttribute( 'data-aisb-ks', $key );
 			$strings[ $key ] = array( 'context' => 'img_src', 'original' => $src );
