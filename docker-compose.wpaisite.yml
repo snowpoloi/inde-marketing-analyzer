@@ -1,16 +1,14 @@
 # wpaisite — test WordPress site for the AI Site Bridge plugin.
+# Lives at the repo root so the Docker build context ('.') includes the
+# ai-site-bridge/ plugin folder (Coolify-friendly, no '..' contexts).
 #
-# Coolify setup:
-#   1. + New Resource -> Docker Compose -> this repository,
-#      branch: claude/wordpress-ai-builder-2q4mhh
-#   2. Docker Compose location: /wpaisite/docker-compose.yml
-#   3. Set the WORDPRESS_DB_PASSWORD env var (any strong value).
-#   4. Attach your domain to the "wordpress" service (port 80) and deploy.
+# Coolify: Docker Compose resource, compose location /docker-compose.wpaisite.yml,
+# env var WORDPRESS_DB_PASSWORD required, domain on the "wordpress" service.
 
 services:
   wordpress:
     build:
-      context: ..
+      context: .
       dockerfile: wpaisite/Dockerfile
     restart: unless-stopped
     depends_on:
@@ -20,11 +18,9 @@ services:
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_NAME: wordpress
       WORDPRESS_DB_USER: wordpress
-      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:?set WORDPRESS_DB_PASSWORD}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
     volumes:
       - wp_data:/var/www/html
-    ports:
-      - "80"
 
   db:
     image: mariadb:11
@@ -32,7 +28,7 @@ services:
     environment:
       MYSQL_DATABASE: wordpress
       MYSQL_USER: wordpress
-      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD:?set WORDPRESS_DB_PASSWORD}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
       MYSQL_RANDOM_ROOT_PASSWORD: "1"
     volumes:
       - db_data:/var/lib/mysql
