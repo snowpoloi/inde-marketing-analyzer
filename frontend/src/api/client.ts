@@ -69,11 +69,21 @@ export type BankDashboard = {
     bank_fees: number;
     transactions: number;
     unmatched_deposits: number;
+    ignored_duplicates: number;
+    ignored_duplicate_amount: number;
   };
   expense_categories: Array<{
     category: string;
     transactions: number;
     amount: number;
+  }>;
+  bank_totals: Array<{
+    bank_name: string;
+    accounts: string;
+    transactions: number;
+    credits: number;
+    debits: number;
+    net_cashflow: number;
   }>;
   deposits: BankTransaction[];
   transactions: BankTransaction[];

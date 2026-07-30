@@ -405,7 +405,9 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
         .options(selectinload(OpenCartOrder.products))
         .where(func.date(OpenCartOrder.date_added).between(date_from - timedelta(days=14), date_to + timedelta(days=14)))
     ).all()
+    transactions, duplicate_transactions = _unique_bank_transactions(transactions)
     category_totals: dict[str, dict[str, Any]] = {}
+    bank_totals: dict[str, dict[str, Any]] = {}
     deposit_rows: list[dict[str, Any]] = []
     transaction_rows: list[dict[str, Any]] = []
     deposit_matches = match_bank_deposits_for_orders(transactions, orders)
@@ -415,6 +417,24 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
         orders_by_amount.setdefault(_money_key(order.total), []).append(order)
 
     for transaction in transactions:
+        bank_bucket = bank_totals.setdefault(
+            transaction.bank_name,
+            {
+                "bank_name": transaction.bank_name,
+                "accounts": set(),
+                "transactions": 0,
+                "credits": Decimal("0"),
+                "debits": Decimal("0"),
+            },
+        )
+        if transaction.account:
+            bank_bucket["accounts"].add(transaction.account)
+        bank_bucket["transactions"] += 1
+        if transaction.amount > 0:
+            bank_bucket["credits"] += transaction.amount
+        elif transaction.amount < 0:
+            bank_bucket["debits"] += abs(transaction.amount)
+
         match = deposit_matches.get(transaction.id) if transaction.amount > 0 else None
         review_reason = (
             _deposit_review_reason(transaction, match, order_lookup, orders_by_amount)
@@ -446,6 +466,10 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
             "bank_fees": dec_to_float(bank_fees),
             "transactions": len(transactions),
             "unmatched_deposits": unmatched_deposits,
+            "ignored_duplicates": len(duplicate_transactions),
+            "ignored_duplicate_amount": dec_to_float(
+                sum((abs(transaction.amount) for transaction in duplicate_transactions), Decimal("0"))
+            ),
         },
         "expense_categories": [
             {
@@ -455,9 +479,59 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
             }
             for row in sorted(category_totals.values(), key=lambda item: item["amount"], reverse=True)
         ],
+        "bank_totals": [
+            {
+                "bank_name": row["bank_name"],
+                "accounts": ", ".join(sorted(row["accounts"])) or "-",
+                "transactions": row["transactions"],
+                "credits": dec_to_float(row["credits"]),
+                "debits": dec_to_float(row["debits"]),
+                "net_cashflow": dec_to_float(row["credits"] - row["debits"]),
+            }
+            for row in sorted(bank_totals.values(), key=lambda item: item["bank_name"].casefold())
+        ],
         "deposits": deposit_rows,
         "transactions": transaction_rows,
     }
+
+
+def _unique_bank_transactions(transactions: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Exclude only exact cross-export duplicates from reporting totals.
+
+    Import-level source keys already reject identical rows. This second check catches
+    the same movement imported through two export formats without guessing from
+    description text or amount alone.
+    """
+    seen: set[tuple[Any, ...]] = set()
+    unique: list[Any] = []
+    duplicates: list[Any] = []
+
+    for transaction in transactions:
+        fingerprint = _bank_transaction_fingerprint(transaction)
+        if fingerprint and fingerprint in seen:
+            duplicates.append(transaction)
+            continue
+        if fingerprint:
+            seen.add(fingerprint)
+        unique.append(transaction)
+    return unique, duplicates
+
+
+def _bank_transaction_fingerprint(transaction: Any) -> tuple[Any, ...] | None:
+    reference = re.sub(r"[^a-z0-9]", "", _normalise_text(transaction.reference))
+    if len(reference) >= 8:
+        return ("reference", transaction.transaction_date.isoformat(), _money_key(transaction.amount), reference)
+
+    account = _normalise_text(transaction.account)
+    if account and transaction.balance is not None:
+        return (
+            "account_balance",
+            account,
+            transaction.transaction_date.isoformat(),
+            _money_key(transaction.amount),
+            _money_key(transaction.balance),
+        )
+    return None
 
 
 def match_bank_deposits_for_orders(transactions: list[Any], orders: list[Any]) -> dict[Any, dict[str, Any] | None]:

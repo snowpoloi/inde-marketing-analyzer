@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Banknote, Download, RefreshCw, Scale, TrendingDown, TrendingUp, Upload, WalletCards } from "lucide-react";
+import { Banknote, CopyX, Download, RefreshCw, Scale, TrendingDown, TrendingUp, Upload, WalletCards } from "lucide-react";
 import { api } from "../api/client";
 import type { BankDashboard, BankTransaction } from "../api/client";
 import { DataTable } from "../components/DataTable";
@@ -20,9 +20,12 @@ const emptyDashboard: BankDashboard = {
     net_cashflow: 0,
     bank_fees: 0,
     transactions: 0,
-    unmatched_deposits: 0
+    unmatched_deposits: 0,
+    ignored_duplicates: 0,
+    ignored_duplicate_amount: 0
   },
   expense_categories: [],
+  bank_totals: [],
   deposits: [],
   transactions: []
 };
@@ -173,6 +176,18 @@ export function BanksPage() {
     []
   );
 
+  const bankTotalsColumns: Column<BankDashboard["bank_totals"][number]>[] = useMemo(
+    () => [
+      { key: "bank", header: "Bank", render: (row) => <strong>{row.bank_name}</strong> },
+      { key: "accounts", header: "Account", render: (row) => row.accounts },
+      { key: "credits", header: "Credits", align: "right", render: (row) => currency.format(row.credits) },
+      { key: "debits", header: "Debits", align: "right", render: (row) => currency.format(row.debits) },
+      { key: "net", header: "Net cashflow", align: "right", render: (row) => currency.format(row.net_cashflow) },
+      { key: "transactions", header: "Movements", align: "right", render: (row) => number.format(row.transactions) }
+    ],
+    []
+  );
+
   const depositColumns: Column<BankTransaction>[] = useMemo(
     () => [
       { key: "date", header: "Date", render: (row) => row.transaction_date },
@@ -303,6 +318,22 @@ export function BanksPage() {
         <StatCard label="Net cashflow" value={currency.format(dashboard.summary.net_cashflow)} detail="Deposits minus expenses" icon={Scale} />
         <StatCard label="Bank fees" value={currency.format(dashboard.summary.bank_fees)} detail="Detected commissions and fees" icon={Banknote} />
         <StatCard label="Unmatched deposits" value={number.format(dashboard.summary.unmatched_deposits)} detail="Need manual review before order release" icon={WalletCards} />
+        <StatCard
+          label="Ignored exact duplicates"
+          value={number.format(dashboard.summary.ignored_duplicates)}
+          detail={`${currency.format(dashboard.summary.ignored_duplicate_amount)} excluded from totals`}
+          icon={CopyX}
+        />
+      </section>
+
+      <section className="panel">
+        <div className="panel-title">
+          <div>
+            <h2>Totals by bank</h2>
+            <span>Credits, debits and net cashflow for the selected period. Exact duplicates are excluded.</span>
+          </div>
+        </div>
+        <DataTable rows={dashboard.bank_totals} columns={bankTotalsColumns} empty="No bank movements in this period." />
       </section>
 
       <section className="panel">
