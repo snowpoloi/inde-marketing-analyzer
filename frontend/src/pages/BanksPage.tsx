@@ -152,7 +152,7 @@ export function BanksPage() {
     try {
       const result = await api.importBankFile(file);
       setNotice(
-        `${result.filename}: imported ${number.format(result.imported)} of ${number.format(result.total)} rows, skipped ${number.format(result.skipped)} duplicates.`
+        `${result.filename}: imported ${number.format(result.imported)} of ${number.format(result.total)} rows, reconciled ${number.format(result.reconciled)} existing NBG movements, skipped ${number.format(result.skipped)} duplicates.`
       );
       setFile(null);
       await load();
@@ -179,7 +179,7 @@ export function BanksPage() {
   const bankTotalsColumns: Column<BankDashboard["bank_totals"][number]>[] = useMemo(
     () => [
       { key: "bank", header: "Bank", render: (row) => <strong>{row.bank_name}</strong> },
-      { key: "accounts", header: "Account", render: (row) => row.accounts },
+      { key: "account", header: "Account", render: (row) => row.account },
       { key: "credits", header: "Credits", align: "right", render: (row) => currency.format(row.credits) },
       { key: "debits", header: "Debits", align: "right", render: (row) => currency.format(row.debits) },
       { key: "net", header: "Net cashflow", align: "right", render: (row) => currency.format(row.net_cashflow) },
@@ -330,7 +330,7 @@ export function BanksPage() {
         <div className="panel-title">
           <div>
             <h2>Totals by bank</h2>
-            <span>Credits, debits and net cashflow for the selected period. Exact duplicates are excluded.</span>
+            <span>Credits, debits and net cashflow per bank account. Exact duplicates are excluded.</span>
           </div>
         </div>
         <DataTable rows={dashboard.bank_totals} columns={bankTotalsColumns} empty="No bank movements in this period." />

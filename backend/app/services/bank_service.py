@@ -16,6 +16,12 @@ from dateutil import parser as date_parser
 from app.services.parsing import dec_to_float
 
 
+_NBG_ACCOUNT_LABEL = "".join(
+    chr(value)
+    for value in (945, 961, 953, 952, 956, 959, 963, 32, 955, 959, 947, 945, 961, 953, 945, 963, 956, 959, 965)
+)
+
+
 class _TableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -124,16 +130,31 @@ def _xlsx_rows(content: bytes) -> tuple[list[list[Any]], dict[str, Any]]:
 
     workbook = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     metadata: dict[str, Any] = {}
-    rows: list[list[Any]] = []
+    sheets: list[list[list[Any]]] = []
     for sheet in workbook.worksheets:
+        sheet_rows: list[list[Any]] = []
         for raw_row in sheet.iter_rows(values_only=True):
             row = list(raw_row)
-            rows.append(row)
+            sheet_rows.append(row)
             joined = " ".join(_clean_text(cell) for cell in row)
+            for index, cell in enumerate(row):
+                if _NBG_ACCOUNT_LABEL not in _normalise_text(cell):
+                    continue
+                account = next((_clean_text(value) for value in row[index + 1 :] if _clean_text(value)), "")
+                if account:
+                    metadata["account"] = account
             iban = _extract_iban(joined)
             if iban and not metadata.get("account"):
                 metadata["account"] = iban
-    return rows, metadata
+        sheets.append(sheet_rows)
+
+    for rows in sheets:
+        if _find_nbg_header(rows) is not None:
+            return rows, metadata
+    for rows in sheets:
+        if _find_piraeus_header(rows) is not None:
+            return rows, metadata
+    return (sheets[0] if sheets else []), metadata
 
 
 def _extract_iban(value: str) -> str | None:
@@ -378,14 +399,44 @@ def import_bank_transactions(db: Any, filename: str, content: bytes) -> dict[str
 
     keys = [row["source_key"] for row in parsed]
     existing = set(db.scalars(select(BankTransaction.source_key).where(BankTransaction.source_key.in_(keys))).all())
+    nbg_rows = [row for row in parsed if row["bank_name"] == "NBG"]
+    legacy_nbg: dict[tuple[Any, ...], list[Any]] = {}
+    if nbg_rows:
+        first_date = min(row["transaction_date"] for row in nbg_rows)
+        last_date = max(row["transaction_date"] for row in nbg_rows)
+        for transaction in db.scalars(
+            select(BankTransaction).where(
+                BankTransaction.bank_name == "NBG",
+                BankTransaction.transaction_date >= first_date,
+                BankTransaction.transaction_date <= last_date,
+            )
+        ).all():
+            fingerprint = _nbg_transaction_fingerprint(transaction)
+            if fingerprint:
+                legacy_nbg.setdefault(fingerprint, []).append(transaction)
+
     imported = 0
+    reconciled = 0
     for row in parsed:
         if row["source_key"] in existing:
+            continue
+        fingerprint = _nbg_record_fingerprint(row)
+        matching_legacy = legacy_nbg.get(fingerprint, []) if fingerprint else []
+        if matching_legacy:
+            for transaction in matching_legacy:
+                transaction.account = row["account"]
+            reconciled += len(matching_legacy)
             continue
         db.add(BankTransaction(**row))
         imported += 1
     db.commit()
-    return {"filename": filename, "total": len(parsed), "imported": imported, "skipped": len(parsed) - imported}
+    return {
+        "filename": filename,
+        "total": len(parsed),
+        "imported": imported,
+        "reconciled": reconciled,
+        "skipped": len(parsed) - imported - reconciled,
+    }
 
 
 def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
@@ -407,7 +458,7 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
     ).all()
     transactions, duplicate_transactions = _unique_bank_transactions(transactions)
     category_totals: dict[str, dict[str, Any]] = {}
-    bank_totals: dict[str, dict[str, Any]] = {}
+    bank_totals: dict[tuple[str, str], dict[str, Any]] = {}
     deposit_rows: list[dict[str, Any]] = []
     transaction_rows: list[dict[str, Any]] = []
     deposit_matches = match_bank_deposits_for_orders(transactions, orders)
@@ -418,17 +469,15 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
 
     for transaction in transactions:
         bank_bucket = bank_totals.setdefault(
-            transaction.bank_name,
+            (transaction.bank_name, transaction.account or "-"),
             {
                 "bank_name": transaction.bank_name,
-                "accounts": set(),
+                "account": transaction.account or "-",
                 "transactions": 0,
                 "credits": Decimal("0"),
                 "debits": Decimal("0"),
             },
         )
-        if transaction.account:
-            bank_bucket["accounts"].add(transaction.account)
         bank_bucket["transactions"] += 1
         if transaction.amount > 0:
             bank_bucket["credits"] += transaction.amount
@@ -482,13 +531,13 @@ def bank_dashboard(db: Any, date_from: date, date_to: date) -> dict[str, Any]:
         "bank_totals": [
             {
                 "bank_name": row["bank_name"],
-                "accounts": ", ".join(sorted(row["accounts"])) or "-",
+                "account": row["account"],
                 "transactions": row["transactions"],
                 "credits": dec_to_float(row["credits"]),
                 "debits": dec_to_float(row["debits"]),
                 "net_cashflow": dec_to_float(row["credits"] - row["debits"]),
             }
-            for row in sorted(bank_totals.values(), key=lambda item: item["bank_name"].casefold())
+            for row in sorted(bank_totals.values(), key=lambda item: (item["bank_name"].casefold(), item["account"]))
         ],
         "deposits": deposit_rows,
         "transactions": transaction_rows,
@@ -518,6 +567,10 @@ def _unique_bank_transactions(transactions: list[Any]) -> tuple[list[Any], list[
 
 
 def _bank_transaction_fingerprint(transaction: Any) -> tuple[Any, ...] | None:
+    nbg_fingerprint = _nbg_transaction_fingerprint(transaction)
+    if nbg_fingerprint:
+        return nbg_fingerprint
+
     reference = re.sub(r"[^a-z0-9]", "", _normalise_text(transaction.reference))
     if len(reference) >= 8:
         return ("reference", transaction.transaction_date.isoformat(), _money_key(transaction.amount), reference)
@@ -532,6 +585,53 @@ def _bank_transaction_fingerprint(transaction: Any) -> tuple[Any, ...] | None:
             _money_key(transaction.balance),
         )
     return None
+
+
+def _nbg_record_fingerprint(record: dict[str, Any]) -> tuple[Any, ...] | None:
+    if record.get("bank_name") != "NBG":
+        return None
+    return _nbg_fingerprint_values(
+        record.get("transaction_date"),
+        record.get("amount"),
+        record.get("balance"),
+        record.get("description"),
+        record.get("counterparty"),
+        record.get("reference"),
+    )
+
+
+def _nbg_transaction_fingerprint(transaction: Any) -> tuple[Any, ...] | None:
+    if transaction.bank_name != "NBG":
+        return None
+    return _nbg_fingerprint_values(
+        transaction.transaction_date,
+        transaction.amount,
+        transaction.balance,
+        transaction.description,
+        transaction.counterparty,
+        transaction.reference,
+    )
+
+
+def _nbg_fingerprint_values(
+    transaction_date: Any,
+    amount: Any,
+    balance: Any,
+    description: Any,
+    counterparty: Any,
+    reference: Any,
+) -> tuple[Any, ...] | None:
+    if transaction_date is None or balance is None:
+        return None
+    return (
+        "nbg",
+        transaction_date.isoformat(),
+        _money_key(amount),
+        _money_key(balance),
+        _normalise_text(description),
+        _normalise_text(counterparty),
+        _normalise_text(reference),
+    )
 
 
 def match_bank_deposits_for_orders(transactions: list[Any], orders: list[Any]) -> dict[Any, dict[str, Any] | None]:
