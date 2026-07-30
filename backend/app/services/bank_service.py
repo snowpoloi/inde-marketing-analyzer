@@ -16,6 +16,7 @@ from dateutil import parser as date_parser
 from app.services.parsing import dec_to_float
 
 
+# Keep the source ASCII-only while matching the NBG export's Greek account label.
 _NBG_ACCOUNT_LABEL = "".join(
     chr(value)
     for value in (945, 961, 953, 952, 956, 959, 963, 32, 955, 959, 947, 945, 961, 953, 945, 963, 956, 959, 965)
@@ -395,15 +396,28 @@ def import_bank_transactions(db: Any, filename: str, content: bytes) -> dict[str
 
     parsed = parse_bank_export(filename, content)
     if not parsed:
-        return {"filename": filename, "total": 0, "imported": 0, "skipped": 0}
+        return {
+            "filename": filename,
+            "total": 0,
+            "imported": 0,
+            "reconciled": 0,
+            "removed_stale": 0,
+            "skipped": 0,
+        }
 
-    keys = [row["source_key"] for row in parsed]
-    existing = set(db.scalars(select(BankTransaction.source_key).where(BankTransaction.source_key.in_(keys))).all())
     nbg_rows = [row for row in parsed if row["bank_name"] == "NBG"]
     legacy_nbg: dict[tuple[Any, ...], list[Any]] = {}
+    reconciled_fingerprints: set[tuple[Any, ...]] = set()
+    removed_stale = 0
+    reconciled = 0
     if nbg_rows:
         first_date = min(row["transaction_date"] for row in nbg_rows)
         last_date = max(row["transaction_date"] for row in nbg_rows)
+        expected_nbg = {
+            fingerprint: row
+            for row in nbg_rows
+            if (fingerprint := _nbg_record_fingerprint(row)) is not None
+        }
         for transaction in db.scalars(
             select(BankTransaction).where(
                 BankTransaction.bank_name == "NBG",
@@ -412,15 +426,30 @@ def import_bank_transactions(db: Any, filename: str, content: bytes) -> dict[str
             )
         ).all():
             fingerprint = _nbg_transaction_fingerprint(transaction)
-            if fingerprint:
-                legacy_nbg.setdefault(fingerprint, []).append(transaction)
+            source_row = expected_nbg.get(fingerprint) if fingerprint else None
+            if source_row is None:
+                # A downloaded statement is authoritative for this sole NBG account and date range.
+                db.delete(transaction)
+                removed_stale += 1
+                continue
+            if fingerprint in reconciled_fingerprints:
+                db.delete(transaction)
+                removed_stale += 1
+                continue
+            transaction.account = source_row["account"]
+            reconciled_fingerprints.add(fingerprint)
+            reconciled += 1
+            legacy_nbg.setdefault(fingerprint, []).append(transaction)
 
+    keys = [row["source_key"] for row in parsed]
+    existing = set(db.scalars(select(BankTransaction.source_key).where(BankTransaction.source_key.in_(keys))).all())
     imported = 0
-    reconciled = 0
     for row in parsed:
+        fingerprint = _nbg_record_fingerprint(row)
+        if fingerprint and fingerprint in reconciled_fingerprints:
+            continue
         if row["source_key"] in existing:
             continue
-        fingerprint = _nbg_record_fingerprint(row)
         matching_legacy = legacy_nbg.get(fingerprint, []) if fingerprint else []
         if matching_legacy:
             for transaction in matching_legacy:
@@ -435,6 +464,7 @@ def import_bank_transactions(db: Any, filename: str, content: bytes) -> dict[str
         "total": len(parsed),
         "imported": imported,
         "reconciled": reconciled,
+        "removed_stale": removed_stale,
         "skipped": len(parsed) - imported - reconciled,
     }
 

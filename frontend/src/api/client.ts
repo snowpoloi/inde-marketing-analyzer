@@ -204,7 +204,7 @@ export const api = {
   importBankFile: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return request<{ filename: string; total: number; imported: number; reconciled: number; skipped: number }>("/banks/import", {
+    return request<{ filename: string; total: number; imported: number; reconciled: number; removed_stale: number; skipped: number }>("/banks/import", {
       method: "POST",
       body
     });

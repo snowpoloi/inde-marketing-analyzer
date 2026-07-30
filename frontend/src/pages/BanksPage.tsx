@@ -152,7 +152,7 @@ export function BanksPage() {
     try {
       const result = await api.importBankFile(file);
       setNotice(
-        `${result.filename}: imported ${number.format(result.imported)} of ${number.format(result.total)} rows, reconciled ${number.format(result.reconciled)} existing NBG movements, skipped ${number.format(result.skipped)} duplicates.`
+        `${result.filename}: imported ${number.format(result.imported)} of ${number.format(result.total)} rows, reconciled ${number.format(result.reconciled ?? 0)} NBG movements, removed ${number.format(result.removed_stale ?? 0)} stale NBG movements, skipped ${number.format(result.skipped)} duplicates.`
       );
       setFile(null);
       await load();
