@@ -222,13 +222,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ providers, date_from: dateFrom, date_to: dateTo })
     }),
-  importCsv: (kind: "google" | "meta", reportDate: string, file: File) => {
+  importCsv: (kind: "google" | "meta" | "tiktok", reportDate: string, file: File) => {
     const body = new FormData();
     body.append("file", file);
     const path =
       kind === "google"
         ? `/sync/import/google-ads-csv?report_date=${reportDate}`
-        : `/sync/import/meta-ads-csv?fallback_date=${reportDate}`;
+        : kind === "meta"
+          ? `/sync/import/meta-ads-csv?fallback_date=${reportDate}`
+          : `/sync/import/tiktok-ads-csv?fallback_date=${reportDate}`;
     return request<SyncRun>(path, { method: "POST", body });
   }
 };

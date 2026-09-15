@@ -47,6 +47,12 @@ def google_performance(date_from: date | None = None, date_to: date | None = Non
     return DashboardResponse(data={"rows": source_performance(db, "google_ads", start, end)})
 
 
+@router.get("/tiktok-performance", response_model=DashboardResponse)
+def tiktok_performance(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _window(date_from, date_to)
+    return DashboardResponse(data={"rows": source_performance(db, "tiktok_ads", start, end)})
+
+
 @router.get("/opencart-sales", response_model=DashboardResponse)
 def opencart(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)

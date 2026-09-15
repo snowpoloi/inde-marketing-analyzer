@@ -1,6 +1,7 @@
 PROVIDERS = {
     "meta_ads": "Meta Ads",
     "google_ads": "Google Ads",
+    "tiktok_ads": "TikTok Ads",
     "ga4": "GA4",
     "merchant_center": "Google Merchant Center",
     "search_console": "Google Search Console",

@@ -13,6 +13,7 @@ from app.connectors.meta_ads import MetaAdsConnector
 from app.connectors.opencart import OpenCartConnector
 from app.connectors.search_console import SearchConsoleConnector
 from app.connectors.shoply import ShoplyConnector
+from app.connectors.tiktok_ads import TikTokAdsConnector
 from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
@@ -26,6 +27,7 @@ from app.services.import_service import (
     import_product_catalog,
     import_search_console_rows,
     import_shoply_sales,
+    import_tiktok_ads_rows,
 )
 from app.services.parsing import as_decimal, as_int
 from app.services.product_catalog_service import enrich_order_products_from_catalog
@@ -119,6 +121,14 @@ def search_console_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
         "search_console_rows": len(rows),
         "search_console_clicks": sum(as_int(row.get("clicks")) for row in rows),
         "search_console_impressions": sum(as_int(row.get("impressions")) for row in rows),
+    }
+
+
+def tiktok_ads_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int | float]:
+    return {
+        "tiktok_ads_rows": len(rows),
+        "tiktok_ads_spend": _json_number(sum((as_decimal(row.get("cost") or row.get("spend")) for row in rows), Decimal("0"))),
+        "tiktok_ads_clicks": sum(as_int(row.get("clicks")) for row in rows),
     }
 
 
@@ -281,6 +291,10 @@ def run_provider_sync(
         elif provider == "google_ads":
             rows = GoogleAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
             count = import_google_ads_rows(db, rows, date_from)
+        elif provider == "tiktok_ads":
+            rows = TikTokAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
+            count = import_tiktok_ads_rows(db, rows, date_from)
+            meta = tiktok_ads_sync_meta(rows)
         elif provider == "ga4":
             rows = GA4Connector(config).fetch_daily_metrics(date_from, date_to)
             count = import_ga4_rows(db, rows, date_from)

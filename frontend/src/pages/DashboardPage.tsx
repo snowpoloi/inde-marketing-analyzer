@@ -86,6 +86,7 @@ export function DashboardPage() {
   const [summary, setSummary] = useState<any>({});
   const [meta, setMeta] = useState<PerformanceRow[]>([]);
   const [google, setGoogle] = useState<PerformanceRow[]>([]);
+  const [tiktok, setTiktok] = useState<PerformanceRow[]>([]);
   const [attribution, setAttribution] = useState<any[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationRow[]>([]);
   const [brandCategory, setBrandCategory] = useState<BrandCategoryData>({ brands: [], categories: [] });
@@ -96,10 +97,11 @@ export function DashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const [summaryRes, metaRes, googleRes, attributionRes, recRes, brandRes, productRes, salesRes] = await Promise.all([
+      const [summaryRes, metaRes, googleRes, tiktokRes, attributionRes, recRes, brandRes, productRes, salesRes] = await Promise.all([
         api.dashboard("summary", nextDateFrom, nextDateTo),
         api.dashboard("meta-performance", nextDateFrom, nextDateTo),
         api.dashboard("google-performance", nextDateFrom, nextDateTo),
+        api.dashboard("tiktok-performance", nextDateFrom, nextDateTo),
         api.dashboard("attribution", nextDateFrom, nextDateTo),
         api.dashboard("recommendations", nextDateFrom, nextDateTo),
         api.dashboard("brand-category", nextDateFrom, nextDateTo),
@@ -109,6 +111,7 @@ export function DashboardPage() {
       setSummary(summaryRes.data);
       setMeta(metaRes.data.rows ?? []);
       setGoogle(googleRes.data.rows ?? []);
+      setTiktok(tiktokRes.data.rows ?? []);
       setAttribution(attributionRes.data.rows ?? []);
       setRecommendations(recRes.data.rows ?? []);
       setBrandCategory({
@@ -195,7 +198,7 @@ export function DashboardPage() {
       <section className="panel">
         <div className="panel-title">
           <h2>Attribution comparison</h2>
-          <span>Meta vs Google vs GA4 vs OpenCart</span>
+          <span>Meta vs Google vs TikTok vs GA4 vs OpenCart</span>
         </div>
         <DataTable
           rows={attribution}
@@ -226,6 +229,14 @@ export function DashboardPage() {
           <DataTable rows={google} columns={performanceColumns} empty="No Google Ads data loaded." />
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>TikTok Ads performance</h2>
+          <span>Campaign level</span>
+        </div>
+        <DataTable rows={tiktok} columns={performanceColumns} empty="No TikTok Ads data loaded." />
+      </section>
 
       <section className="panel">
         <div className="panel-title">

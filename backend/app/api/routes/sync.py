@@ -16,6 +16,7 @@ from app.services.import_service import (
     import_meta_ads_csv,
     import_opencart_orders,
     import_shoply_sales,
+    import_tiktok_ads_csv,
 )
 from app.services.sync_service import expire_stale_runs, finish_run, run_many, start_run
 
@@ -83,6 +84,24 @@ async def import_meta_ads(
     try:
         text = (await file.read()).decode("utf-8-sig")
         count = import_meta_ads_csv(db, text, fallback_date)
+        run = finish_run(db, run, "success", count, meta={"filename": file.filename})
+    except Exception as exc:
+        db.rollback()
+        run = finish_run(db, run, "failed", 0, error=str(exc), meta={"filename": file.filename})
+    return _serialize_run(run)
+
+
+@router.post("/import/tiktok-ads-csv", response_model=SyncRunResponse)
+async def import_tiktok_ads(
+    fallback_date: date,
+    file: UploadFile = File(...),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    run = start_run(db, "tiktok_ads", "csv_import", fallback_date, fallback_date)
+    try:
+        text = (await file.read()).decode("utf-8-sig")
+        count = import_tiktok_ads_csv(db, text, fallback_date)
         run = finish_run(db, run, "success", count, meta={"filename": file.filename})
     except Exception as exc:
         db.rollback()

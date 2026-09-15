@@ -1212,7 +1212,7 @@ export function AuditPage() {
         <section className="panel">
           <div className="panel-title">
             <h2>Campaign audit</h2>
-            <span>Meta and Google Ads</span>
+            <span>Meta, Google and TikTok Ads</span>
           </div>
           <DataTable rows={sortedCampaigns} columns={campaignColumns} empty="No campaign data yet." />
         </section>

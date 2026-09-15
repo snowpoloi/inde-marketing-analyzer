@@ -41,6 +41,16 @@ const placeholders: Record<string, Record<string, unknown>> = {
     login_customer_id: "optional-manager-id",
     customer_id: "1234567890"
   },
+  tiktok_ads: {
+    advertiser_id: "1234567890123456789",
+    access_token: "read-only-marketing-api-token",
+    base_url: "https://business-api.tiktok.com/open_api",
+    api_version: "v1.3",
+    currency: "EUR",
+    timeout_seconds: 60,
+    max_days_per_request: 30,
+    page_size: 1000
+  },
   ga4: {
     property_id: "123456789",
     credentials_json: {

@@ -20,6 +20,9 @@ from app.models import (
 from app.services.parsing import as_decimal, dec_to_float
 
 
+PAID_AD_SOURCES = ("meta_ads", "google_ads", "tiktok_ads")
+
+
 def _period_filter(column, date_from: date, date_to: date):
     return and_(column >= date_from, column <= date_to)
 
@@ -434,6 +437,12 @@ def attribution_comparison(db: Session, date_from: date, date_to: date) -> dict[
             _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
         )
     )
+    tiktok_purchases = db.scalar(
+        select(func.coalesce(func.sum(CampaignDailyMetric.purchases), 0)).where(
+            CampaignDailyMetric.source == "tiktok_ads",
+            _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
+        )
+    )
     ga4_purchases = db.scalar(
         select(func.coalesce(func.sum(GA4DailyMetric.purchases), 0)).where(
             _period_filter(GA4DailyMetric.metric_date, date_from, date_to)
@@ -447,6 +456,7 @@ def attribution_comparison(db: Session, date_from: date, date_to: date) -> dict[
     sources = [
         ("Meta purchases", meta_purchases or 0),
         ("Google conversions", google_conversions or 0),
+        ("TikTok purchases", tiktok_purchases or 0),
         ("GA4 purchases", ga4_purchases or 0),
         ("OpenCart orders", actual),
     ]
@@ -642,7 +652,7 @@ def product_performance(db: Session, date_from: date, date_to: date) -> list[dic
 
 
 def campaign_recommendations(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:
-    rows = source_performance(db, "meta_ads", date_from, date_to) + source_performance(db, "google_ads", date_from, date_to)
+    rows = [row for source in PAID_AD_SOURCES for row in source_performance(db, source, date_from, date_to)]
     recommendations = []
     for row in rows:
         if row["cost"] <= 0:
@@ -669,7 +679,7 @@ def campaign_recommendations(db: Session, date_from: date, date_to: date) -> lis
 
         recommendations.append(
             {
-                "source": "Meta Ads" if row["source"] == "meta_ads" else "Google Ads",
+                "source": _source_label(row["source"]),
                 "campaign_id": row["campaign_id"],
                 "campaign_name": row["campaign_name"],
                 "action": action,
@@ -682,7 +692,7 @@ def campaign_recommendations(db: Session, date_from: date, date_to: date) -> lis
 
 
 def _source_label(source: str) -> str:
-    return {"meta_ads": "Meta Ads", "google_ads": "Google Ads"}.get(source, source)
+    return {"meta_ads": "Meta Ads", "google_ads": "Google Ads", "tiktok_ads": "TikTok Ads"}.get(source, source)
 
 
 def _severity_rank(severity: str) -> int:
@@ -783,6 +793,15 @@ def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[s
             _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
         )
     ).one()
+    tiktok = db.execute(
+        select(
+            func.coalesce(func.sum(CampaignDailyMetric.purchases), 0),
+            func.coalesce(func.sum(CampaignDailyMetric.purchase_value), 0),
+        ).where(
+            CampaignDailyMetric.source == "tiktok_ads",
+            _period_filter(CampaignDailyMetric.metric_date, date_from, date_to),
+        )
+    ).one()
     ga4 = db.execute(
         select(
             func.coalesce(func.sum(GA4DailyMetric.purchases), 0),
@@ -797,6 +816,7 @@ def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[s
         ("GA4", float(ga4[0] or 0), float(ga4[1] or 0), "Site analytics"),
         ("Meta Ads", float(meta[0] or 0), float(meta[1] or 0), "Paid attribution"),
         ("Google Ads", float(google[0] or 0), float(google[1] or 0), "Paid attribution"),
+        ("TikTok Ads", float(tiktok[0] or 0), float(tiktok[1] or 0), "Paid attribution"),
     ]
 
     rows = []
@@ -856,7 +876,7 @@ def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[s
             )
         )
 
-    paid_attributed_value = float(meta[1] or 0) + float(google[1] or 0)
+    paid_attributed_value = float(meta[1] or 0) + float(google[1] or 0) + float(tiktok[1] or 0)
     if opencart_revenue and paid_attributed_value > opencart_revenue * 1.25:
         actions.append(
             _audit_action(
@@ -864,20 +884,20 @@ def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[s
                 "Paid platforms may over-attribute revenue",
                 "medium",
                 "investigate tracking",
-                "Meta and Google attributed revenue together exceed actual OpenCart revenue. Review duplicate conversions and attribution windows.",
+                "Meta, Google and TikTok attributed revenue together exceed actual OpenCart revenue. Review duplicate conversions and attribution windows.",
                 "Paid / actual revenue",
                 f"{_ratio(paid_attributed_value, opencart_revenue):.2f}x",
             )
         )
 
-    if opencart_orders and float(meta[0] or 0) == 0 and float(google[0] or 0) == 0:
+    if opencart_orders and float(meta[0] or 0) == 0 and float(google[0] or 0) == 0 and float(tiktok[0] or 0) == 0:
         actions.append(
             _audit_action(
                 "Tracking",
                 "Paid conversion signals are missing",
                 "high",
                 "investigate tracking",
-                "OpenCart has sales, but Meta and Google report no purchases/conversions in this period.",
+                "OpenCart has sales, but Meta, Google and TikTok report no purchases/conversions in this period.",
                 "Paid conversions",
                 0,
             )
@@ -887,7 +907,7 @@ def _tracking_audit(db: Session, date_from: date, date_to: date, summary: dict[s
 
 
 def _campaign_audit(db: Session, date_from: date, date_to: date) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    rows = source_performance(db, "meta_ads", date_from, date_to) + source_performance(db, "google_ads", date_from, date_to)
+    rows = [row for source in PAID_AD_SOURCES for row in source_performance(db, source, date_from, date_to)]
     audited = []
     actions = []
     for row in rows:

@@ -6,7 +6,7 @@ import type { SyncRun } from "../api/client";
 import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
 
-const providers = ["meta_ads", "google_ads", "ga4", "merchant_center", "search_console", "aade", "opencart", "shoply"];
+const providers = ["meta_ads", "google_ads", "tiktok_ads", "ga4", "merchant_center", "search_console", "aade", "opencart", "shoply"];
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 
@@ -58,6 +58,15 @@ function syncDetails(row: SyncRun) {
   }
   if (meta.ga4_purchase_revenue !== undefined) {
     details.push(`GA4 revenue: ${currency.format(Number(meta.ga4_purchase_revenue) || 0)}`);
+  }
+  if (meta.tiktok_ads_rows !== undefined) {
+    details.push(`TikTok rows: ${number.format(Number(meta.tiktok_ads_rows) || 0)}`);
+  }
+  if (meta.tiktok_ads_spend !== undefined) {
+    details.push(`TikTok spend: ${currency.format(Number(meta.tiktok_ads_spend) || 0)}`);
+  }
+  if (meta.tiktok_ads_clicks !== undefined) {
+    details.push(`TikTok clicks: ${number.format(Number(meta.tiktok_ads_clicks) || 0)}`);
   }
   if (meta.merchant_rows !== undefined) {
     details.push(`Merchant rows: ${number.format(Number(meta.merchant_rows) || 0)}`);
@@ -160,6 +169,7 @@ export function SyncLogsPage() {
   const [selectedProviders, setSelectedProviders] = useState(providers);
   const [googleFile, setGoogleFile] = useState<File | null>(null);
   const [metaFile, setMetaFile] = useState<File | null>(null);
+  const [tiktokFile, setTiktokFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
 
   async function load() {
@@ -176,9 +186,9 @@ export function SyncLogsPage() {
     await load();
   }
 
-  async function importFile(event: FormEvent, kind: "google" | "meta") {
+  async function importFile(event: FormEvent, kind: "google" | "meta" | "tiktok") {
     event.preventDefault();
-    const file = kind === "google" ? googleFile : metaFile;
+    const file = kind === "google" ? googleFile : kind === "meta" ? metaFile : tiktokFile;
     if (!file) {
       setMessage("Select a CSV file first.");
       return;
@@ -258,6 +268,17 @@ export function SyncLogsPage() {
             <span>date, campaign, adset, ad, spend...</span>
           </div>
           <input type="file" accept=".csv,text/csv" onChange={(event) => setMetaFile(event.target.files?.[0] ?? null)} />
+          <button className="primary-action compact">
+            <Upload size={17} />
+            Import
+          </button>
+        </form>
+        <form className="panel import-panel" onSubmit={(event) => importFile(event, "tiktok")}>
+          <div className="panel-title">
+            <h2>TikTok Ads CSV</h2>
+            <span>date, campaign name, total cost, impressions, clicks...</span>
+          </div>
+          <input type="file" accept=".csv,text/csv" onChange={(event) => setTiktokFile(event.target.files?.[0] ?? null)} />
           <button className="primary-action compact">
             <Upload size={17} />
             Import

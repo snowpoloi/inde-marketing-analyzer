@@ -407,6 +407,96 @@ def import_meta_ads_csv(db: Session, text: str, fallback_date: date) -> int:
     return import_meta_ads_rows(db, rows, fallback_date)
 
 
+def import_tiktok_ads_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date) -> int:
+    touched_dates = {as_date(row.get("date") or row.get("stat_time_day"), fallback_date) for row in rows} or {fallback_date}
+    db.execute(
+        delete(CampaignDailyMetric).where(
+            CampaignDailyMetric.source == "tiktok_ads",
+            CampaignDailyMetric.metric_date.in_(touched_dates),
+        )
+    )
+
+    for row in rows:
+        purchases = as_decimal(row.get("purchases") or row.get("onsite_total_purchase") or row.get("conversions"))
+        purchase_value = as_decimal(
+            row.get("purchase_value")
+            or row.get("onsite_total_purchase_value_day29")
+            or row.get("conversion_value")
+        )
+        db.add(
+            CampaignDailyMetric(
+                source="tiktok_ads",
+                metric_date=as_date(row.get("date") or row.get("stat_time_day"), fallback_date),
+                campaign_id=str(row.get("campaign_id") or "") or None,
+                campaign_name=str(row.get("campaign_name") or "Unknown campaign"),
+                campaign_type=row.get("campaign_type") or row.get("objective_type"),
+                cost=as_decimal(row.get("cost") or row.get("spend")),
+                clicks=as_int(row.get("clicks")),
+                impressions=as_int(row.get("impressions")),
+                conversions=purchases,
+                conversion_value=purchase_value,
+                purchases=purchases,
+                purchase_value=purchase_value,
+                cpc=as_decimal(row.get("cpc")),
+                cpm=as_decimal(row.get("cpm")),
+                ctr=as_decimal(row.get("ctr")),
+                raw=row,
+            )
+        )
+    db.commit()
+    return len(rows)
+
+
+_TIKTOK_CSV_HEADER_ALIASES = {
+    "date": "date",
+    "stat time day": "date",
+    "day": "date",
+    "campaign": "campaign_name",
+    "campaign name": "campaign_name",
+    "campaign_name": "campaign_name",
+    "campaign id": "campaign_id",
+    "campaign_id": "campaign_id",
+    "total cost": "cost",
+    "spend": "cost",
+    "cost": "cost",
+    "impressions": "impressions",
+    "clicks": "clicks",
+    "clicks (destination)": "clicks",
+    "ctr": "ctr",
+    "cpc": "cpc",
+    "cpm": "cpm",
+    "conversions": "conversions",
+    "conversion": "conversions",
+    "purchase": "purchases",
+    "purchases": "purchases",
+    "purchase value": "purchase_value",
+    "conversion value": "conversion_value",
+    "onsite total purchase": "purchases",
+    "onsite total purchase value day29": "purchase_value",
+}
+
+
+def import_tiktok_ads_csv(db: Session, text: str, fallback_date: date) -> int:
+    raw_rows = list(csv.DictReader(io.StringIO(text)))
+    rows: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        normalized: dict[str, Any] = {"raw_csv": raw}
+        for header, value in raw.items():
+            field = _TIKTOK_CSV_HEADER_ALIASES.get(_normalize_csv_key(header))
+            if field:
+                normalized[field] = value
+        campaign_name = str(normalized.get("campaign_name") or "").strip()
+        if campaign_name and _normalize_csv_key(campaign_name) not in {"-", "--", "—"}:
+            rows.append(normalized)
+    if not rows and raw_rows:
+        headers = [str(header or "").strip() for header in raw_rows[0].keys()]
+        raise ValueError(
+            "No TikTok Ads campaign rows were recognized. "
+            f"Detected CSV columns: {', '.join(headers[:12])}"
+        )
+    return import_tiktok_ads_rows(db, rows, fallback_date)
+
+
 def import_ga4_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date) -> int:
     touched_dates = {as_date(row.get("date"), fallback_date) for row in rows} or {fallback_date}
     db.execute(delete(GA4DailyMetric).where(GA4DailyMetric.metric_date.in_(touched_dates)))
