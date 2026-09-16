@@ -216,6 +216,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload)
     }),
+  tiktokAuthorizationUrl: () => request<{ authorization_url: string }>("/settings/integrations/tiktok_ads/authorization-url"),
+  completeTikTokAuthorization: (authCode: string, state: string) =>
+    request<{ connected: boolean }>("/settings/integrations/tiktok_ads/authorization", {
+      method: "POST",
+      body: JSON.stringify({ auth_code: authCode, state })
+    }),
   syncRuns: () => request<SyncRun[]>("/sync/runs"),
   triggerSync: (providers: string[], dateFrom: string, dateTo: string) =>
     request<SyncRun[]>("/sync/run", {

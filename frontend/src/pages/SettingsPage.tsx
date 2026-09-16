@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Link2, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { IntegrationSetting } from "../api/client";
 
@@ -43,7 +43,9 @@ const placeholders: Record<string, Record<string, unknown>> = {
   },
   tiktok_ads: {
     advertiser_id: "1234567890123456789",
-    access_token: "read-only-marketing-api-token",
+    app_id: "1234567890123456789",
+    app_secret: "...",
+    redirect_uri: "https://your-public-domain/tiktok/callback",
     base_url: "https://business-api.tiktok.com/open_api",
     api_version: "v1.3",
     currency: "EUR",
@@ -479,6 +481,70 @@ export function SettingsPage() {
     );
   }
 
+  async function connectTikTok(item: IntegrationSetting) {
+    setMessage("");
+    try {
+      const config = JSON.parse(drafts.tiktok_ads || "{}");
+      await api.saveIntegration(item.provider, { is_enabled: item.is_enabled, config });
+      const { authorization_url } = await api.tiktokAuthorizationUrl();
+      window.location.assign(authorization_url);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not start TikTok authorization.");
+    }
+  }
+
+  function renderTikTokControls(item: IntegrationSetting) {
+    const config = parseDraft(drafts.tiktok_ads);
+    const isConnected = config.oauth_authorized === true && Boolean(config.access_token);
+    return (
+      <div className="integration-controls">
+        <div className="form-grid">
+          <label>
+            <span>Advertiser ID</span>
+            <input
+              value={String(config.advertiser_id ?? "")}
+              onChange={(event) => updateProviderConfig("tiktok_ads", { advertiser_id: event.target.value })}
+              placeholder="TikTok advertiser account ID"
+            />
+          </label>
+          <label>
+            <span>TikTok App ID</span>
+            <input
+              value={String(config.app_id ?? "")}
+              onChange={(event) => updateProviderConfig("tiktok_ads", { app_id: event.target.value })}
+              placeholder="TikTok developer app ID"
+            />
+          </label>
+          <label>
+            <span>App secret</span>
+            <input
+              type="password"
+              value={String(config.app_secret ?? "")}
+              onChange={(event) => updateProviderConfig("tiktok_ads", { app_secret: event.target.value })}
+              placeholder="TikTok developer app secret"
+            />
+          </label>
+          <label>
+            <span>Redirect URL</span>
+            <input
+              value={String(config.redirect_uri ?? "")}
+              onChange={(event) => updateProviderConfig("tiktok_ads", { redirect_uri: event.target.value })}
+              placeholder="https://your-public-domain/tiktok/callback"
+            />
+          </label>
+        </div>
+        <div className="panel-title tight">
+          <h2>{isConnected ? "TikTok Ads connected" : "Connect TikTok Ads"}</h2>
+          <span>{isConnected ? "Reporting access is stored." : "Uses the Reporting permission only."}</span>
+        </div>
+        <button className="secondary-action compact" onClick={() => connectTikTok(item)}>
+          <Link2 size={16} />
+          {isConnected ? "Reconnect" : "Connect"}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <header className="page-header">
@@ -501,15 +567,18 @@ export function SettingsPage() {
                 <span />
               </label>
             </div>
-            <textarea
-              value={drafts[item.provider] ?? ""}
-              onChange={(event) => setDrafts((current) => ({ ...current, [item.provider]: event.target.value }))}
-              placeholder={JSON.stringify(placeholders[item.provider] ?? {}, null, 2)}
-              spellCheck={false}
-            />
+            {item.provider !== "tiktok_ads" ? (
+              <textarea
+                value={drafts[item.provider] ?? ""}
+                onChange={(event) => setDrafts((current) => ({ ...current, [item.provider]: event.target.value }))}
+                placeholder={JSON.stringify(placeholders[item.provider] ?? {}, null, 2)}
+                spellCheck={false}
+              />
+            ) : null}
             {item.provider === "aade" ? renderAadeControls() : null}
             {item.provider === "opencart" ? renderOpenCartControls() : null}
             {item.provider === "ga4" ? renderGa4Controls() : null}
+            {item.provider === "tiktok_ads" ? renderTikTokControls(item) : null}
             <button className="primary-action compact" onClick={() => save(item)}>
               <Save size={17} />
               Save

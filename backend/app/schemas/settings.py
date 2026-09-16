@@ -14,3 +14,11 @@ class IntegrationSettingUpdate(BaseModel):
     is_enabled: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
 
+
+class TikTokAuthorizationUrlResponse(BaseModel):
+    authorization_url: str
+
+
+class TikTokAuthorizationCallback(BaseModel):
+    auth_code: str = Field(min_length=1)
+    state: str = Field(min_length=1)

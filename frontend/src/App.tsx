@@ -10,6 +10,7 @@ import { OrdersPage } from "./pages/OrdersPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SyncLogsPage } from "./pages/SyncLogsPage";
+import { TikTokCallbackPage } from "./pages/TikTokCallbackPage";
 
 type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "products" | "settings" | "sync";
 
@@ -46,6 +47,10 @@ export function App() {
   function navigate(next: View) {
     window.location.hash = next === "dashboard" ? "" : next;
     setView(next);
+  }
+
+  if (window.location.pathname === "/tiktok/callback") {
+    return <TikTokCallbackPage />;
   }
 
   if (!authenticated) {

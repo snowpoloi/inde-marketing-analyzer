@@ -33,3 +33,19 @@ def decode_access_token(token: str) -> str | None:
         return None
     subject = payload.get("sub")
     return str(subject) if subject else None
+
+
+def create_oauth_state(subject: str, provider: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=10)
+    return jwt.encode({"sub": subject, "provider": provider, "purpose": "oauth", "exp": expire}, settings.secret_key, algorithm=ALGORITHM)
+
+
+def decode_oauth_state(token: str, provider: str) -> str | None:
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("purpose") != "oauth" or payload.get("provider") != provider:
+        return None
+    subject = payload.get("sub")
+    return str(subject) if subject else None

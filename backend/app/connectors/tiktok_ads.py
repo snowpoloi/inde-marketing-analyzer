@@ -68,6 +68,34 @@ class TikTokAdsConnector:
             raise TikTokAdsApiError(f"TikTok Ads API error {payload.get('code')}: {payload.get('message') or 'Unknown error'}")
         return payload
 
+    @classmethod
+    def exchange_authorization_code(cls, config: dict[str, Any], auth_code: str) -> dict[str, Any]:
+        app_id = str(config.get("app_id") or "").strip()
+        app_secret = str(config.get("app_secret") or "").strip()
+        base_url = str(config.get("base_url") or "https://business-api.tiktok.com/open_api").rstrip("/")
+        api_version = str(config.get("api_version") or "v1.3").strip("/")
+        timeout = float(config.get("timeout_seconds") or 60)
+        if not app_id or not app_secret:
+            raise ValueError("TikTok Ads app_id and app_secret are required before authorization.")
+
+        response = httpx.post(
+            f"{base_url}/{api_version}/oauth2/access_token/",
+            json={"app_id": app_id, "secret": app_secret, "auth_code": auth_code},
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            raise TikTokAdsApiError(f"TikTok Ads authorization returned {response.status_code}: {cls._message(response)}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise TikTokAdsApiError("TikTok Ads authorization returned an invalid JSON response.") from exc
+        if str(payload.get("code")) != "0":
+            raise TikTokAdsApiError(f"TikTok Ads authorization error {payload.get('code')}: {payload.get('message') or 'Unknown error'}")
+        data = payload.get("data")
+        if not isinstance(data, dict) or not str(data.get("access_token") or "").strip():
+            raise TikTokAdsApiError("TikTok Ads authorization did not return an access token.")
+        return data
+
     @staticmethod
     def _message(response: httpx.Response) -> str:
         try:
