@@ -43,6 +43,11 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
         _add_status_option(statuses_by_key, name)
     for name in REFUND_STATUS_NAMES:
         _add_status_option(statuses_by_key, name)
+    saved_defaults = _configured_analytics_defaults(db)
+    for field in ("statuses", "aging_statuses", "completed_statuses", "cancelled_statuses"):
+        saved_names = saved_defaults.get(field)
+        for name in saved_names if isinstance(saved_names, list) else []:
+            _add_status_option(statuses_by_key, name)
 
     statuses = sorted(
         statuses_by_key.values(),
@@ -58,14 +63,63 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
         configured = _configured_completed_statuses(db)
         completed = [names_by_key[key] for key in configured if key in names_by_key and key not in cancelled_keys]
 
+    completed_keys = {_status_key(name) for name in completed}
+    fallback_aging = [name for name in names if _status_key(name) not in cancelled_keys | completed_keys]
+    defaults = _normalize_analytics_defaults(
+        saved_defaults,
+        statuses=names,
+        aging_statuses=fallback_aging,
+        completed_statuses=completed,
+        cancelled_statuses=cancelled,
+    )
+
     return {
         "statuses": statuses,
-        "aging_statuses": [
-            name for name in names if _status_key(name) not in cancelled_keys and name not in completed
-        ],
+        "aging_statuses": fallback_aging,
         "completed_statuses": completed,
         "cancelled_statuses": cancelled,
+        "defaults": defaults,
     }
+
+
+def save_order_analytics_defaults(
+    db: Session,
+    statuses: list[str],
+    aging_statuses: list[str],
+    completed_statuses: list[str],
+    cancelled_statuses: list[str],
+    group_by: str,
+    stale_days: int,
+) -> dict[str, Any]:
+    integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
+    if integration is None:
+        integration = IntegrationSetting(
+            provider="opencart",
+            display_name="OpenCart",
+            is_enabled=False,
+            config={},
+        )
+        db.add(integration)
+
+    defaults = _normalize_analytics_defaults(
+        {
+            "statuses": statuses,
+            "aging_statuses": aging_statuses,
+            "completed_statuses": completed_statuses,
+            "cancelled_statuses": cancelled_statuses,
+            "group_by": group_by,
+            "stale_days": stale_days,
+        },
+        statuses=[],
+        aging_statuses=[],
+        completed_statuses=[],
+        cancelled_statuses=[],
+    )
+    config = dict(integration.config or {})
+    config["order_analytics_defaults"] = defaults
+    integration.config = config
+    db.commit()
+    return order_analytics_options(db)
 
 
 def orders_analytics(
@@ -83,6 +137,7 @@ def orders_analytics(
     completed_keys = {_status_key(value) for value in completed_statuses if str(value).strip()}
     cancelled_keys = {_status_key(value) for value in cancelled_statuses if str(value).strip()}
     completed_keys -= cancelled_keys
+    aging_keys -= completed_keys | cancelled_keys
 
     earliest = min(period["date_from"] for period in periods)
     latest = max(period["date_to"] for period in periods)
@@ -283,6 +338,60 @@ def _configured_status_names(db: Session) -> list[str]:
         for rule in rules
         if isinstance(rule, dict) and str(rule.get("name") or "").strip()
     ]
+
+
+def _configured_analytics_defaults(db: Session) -> dict[str, Any]:
+    integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
+    defaults = ((integration.config if integration else {}) or {}).get("order_analytics_defaults")
+    return defaults if isinstance(defaults, dict) else {}
+
+
+def _normalize_analytics_defaults(
+    values: dict[str, Any],
+    *,
+    statuses: list[str],
+    aging_statuses: list[str],
+    completed_statuses: list[str],
+    cancelled_statuses: list[str],
+) -> dict[str, Any]:
+    displayed = _unique_status_names(values.get("statuses"), statuses)
+    cancelled = _unique_status_names(values.get("cancelled_statuses"), cancelled_statuses)
+    cancelled_keys = {_status_key(name) for name in cancelled}
+    completed = [
+        name
+        for name in _unique_status_names(values.get("completed_statuses"), completed_statuses)
+        if _status_key(name) not in cancelled_keys
+    ]
+    terminal_keys = cancelled_keys | {_status_key(name) for name in completed}
+    aging = [
+        name
+        for name in _unique_status_names(values.get("aging_statuses"), aging_statuses)
+        if _status_key(name) not in terminal_keys
+    ]
+    group_by = values.get("group_by")
+    stale_days = values.get("stale_days")
+    return {
+        "statuses": displayed,
+        "aging_statuses": aging,
+        "completed_statuses": completed,
+        "cancelled_statuses": cancelled,
+        "group_by": group_by if group_by in {"day", "month"} else "day",
+        "stale_days": min(max(int(stale_days), 0), 3650) if isinstance(stale_days, int) else 3,
+    }
+
+
+def _unique_status_names(values: Any, fallback: list[str]) -> list[str]:
+    source = values if isinstance(values, list) else fallback
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in source:
+        name = str(value or "").strip()
+        key = _status_key(name)
+        if not key or key in seen:
+            continue
+        names.append(name)
+        seen.add(key)
+    return names
 
 
 def _add_status_option(statuses: dict[str, dict[str, Any]], value: Any) -> None:

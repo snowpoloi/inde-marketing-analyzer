@@ -6,6 +6,7 @@ import {
   ListFilter,
   Plus,
   RefreshCw,
+  Save,
   ShoppingCart,
   Trash2,
   XCircle
@@ -35,7 +36,15 @@ const emptyOptions: OrderAnalyticsOptions = {
   statuses: [],
   aging_statuses: [],
   completed_statuses: [],
-  cancelled_statuses: []
+  cancelled_statuses: [],
+  defaults: {
+    statuses: [],
+    aging_statuses: [],
+    completed_statuses: [],
+    cancelled_statuses: [],
+    group_by: "day",
+    stale_days: 3
+  }
 };
 
 function localIso(value: Date) {
@@ -214,7 +223,9 @@ export function OrderAnalyticsPage() {
   const [cancelledStatuses, setCancelledStatuses] = useState<string[]>([]);
   const [analytics, setAnalytics] = useState<OrderAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savingDefaults, setSavingDefaults] = useState(false);
   const [error, setError] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
 
   async function fetchAnalytics(payload: OrderAnalyticsRequest) {
     setLoading(true);
@@ -241,6 +252,38 @@ export function OrderAnalyticsPage() {
     });
   }
 
+  async function saveDefaults() {
+    setSavingDefaults(true);
+    setError("");
+    setSavedMessage("");
+    const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
+    const safeAgingStatuses = agingStatuses.filter((status) => !terminalStatuses.has(status));
+    try {
+      const result = await api.saveOrderAnalyticsDefaults({
+        statuses: displayedStatuses,
+        aging_statuses: safeAgingStatuses,
+        completed_statuses: completedStatuses,
+        cancelled_statuses: cancelledStatuses,
+        group_by: groupBy,
+        stale_days: staleDays
+      });
+      const nextOptions = result.data;
+      const defaults = nextOptions.defaults;
+      setOptions(nextOptions);
+      setDisplayedStatuses(defaults.statuses);
+      setAgingStatuses(defaults.aging_statuses);
+      setCompletedStatuses(defaults.completed_statuses);
+      setCancelledStatuses(defaults.cancelled_statuses);
+      setGroupBy(defaults.group_by);
+      setStaleDays(defaults.stale_days);
+      setSavedMessage("Order analytics defaults saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save order analytics defaults");
+    } finally {
+      setSavingDefaults(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
     async function initialize() {
@@ -251,19 +294,29 @@ export function OrderAnalyticsPage() {
         if (!active) return;
         const nextOptions = result.data ?? emptyOptions;
         const allStatuses = nextOptions.statuses.map((status) => status.name);
-        setOptions(nextOptions);
-        setDisplayedStatuses(allStatuses);
-        setAgingStatuses(nextOptions.aging_statuses);
-        setCompletedStatuses(nextOptions.completed_statuses);
-        setCancelledStatuses(nextOptions.cancelled_statuses);
-        const analyticsResult = await api.orderAnalytics({
-          periods,
+        const defaults = nextOptions.defaults ?? {
           statuses: allStatuses,
           aging_statuses: nextOptions.aging_statuses,
           completed_statuses: nextOptions.completed_statuses,
           cancelled_statuses: nextOptions.cancelled_statuses,
-          group_by: groupBy,
-          stale_days: staleDays
+          group_by: "day" as const,
+          stale_days: 3
+        };
+        setOptions(nextOptions);
+        setDisplayedStatuses(defaults.statuses);
+        setAgingStatuses(defaults.aging_statuses);
+        setCompletedStatuses(defaults.completed_statuses);
+        setCancelledStatuses(defaults.cancelled_statuses);
+        setGroupBy(defaults.group_by);
+        setStaleDays(defaults.stale_days);
+        const analyticsResult = await api.orderAnalytics({
+          periods,
+          statuses: defaults.statuses,
+          aging_statuses: defaults.aging_statuses,
+          completed_statuses: defaults.completed_statuses,
+          cancelled_statuses: defaults.cancelled_statuses,
+          group_by: defaults.group_by,
+          stale_days: defaults.stale_days
         });
         if (active) setAnalytics(analyticsResult.data);
       } catch (err) {
@@ -313,6 +366,11 @@ export function OrderAnalyticsPage() {
       }))
       .filter((row) => row.values.some((value) => value > 0));
   }, [analytics, displayedStatuses, options.statuses]);
+
+  const agingOptions = useMemo(() => {
+    const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
+    return options.statuses.filter((option) => !terminalStatuses.has(option.name));
+  }, [cancelledStatuses, completedStatuses, options.statuses]);
 
   const appliedStaleDays = analytics?.stale_days ?? staleDays;
   const appliedGroupBy = analytics?.group_by ?? groupBy;
@@ -364,13 +422,20 @@ export function OrderAnalyticsPage() {
           <h1>Order analytics</h1>
           <p>Order flow, final outcomes and time spent in the current OpenCart status.</p>
         </div>
-        <button className="primary-action compact" onClick={() => load()} disabled={loading}>
-          <RefreshCw size={17} />
-          Refresh
-        </button>
+        <div className="date-controls">
+          <button className="secondary-action compact" onClick={() => saveDefaults()} disabled={savingDefaults || loading}>
+            <Save size={17} />
+            {savingDefaults ? "Saving..." : "Save defaults"}
+          </button>
+          <button className="primary-action compact" onClick={() => load()} disabled={loading}>
+            <RefreshCw size={17} />
+            Refresh
+          </button>
+        </div>
       </header>
 
       {error ? <div className="notice error">{error}</div> : null}
+      {savedMessage ? <div className="notice">{savedMessage}</div> : null}
 
       <section className="panel analytics-filters">
         <div className="panel-title">
@@ -438,7 +503,15 @@ export function OrderAnalyticsPage() {
 
         <div className="analytics-status-grid">
           <StatusPicker title="Displayed statuses" options={options.statuses} selected={displayedStatuses} onChange={setDisplayedStatuses} />
-          <StatusPicker title="Aging statuses" options={options.statuses} selected={agingStatuses} onChange={setAgingStatuses} />
+          <StatusPicker
+            title="Aging statuses"
+            options={agingOptions}
+            selected={agingStatuses}
+            onChange={(next) => {
+              const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
+              setAgingStatuses(next.filter((status) => !terminalStatuses.has(status)));
+            }}
+          />
           <StatusPicker
             title="Completed statuses"
             options={options.statuses}
@@ -446,6 +519,7 @@ export function OrderAnalyticsPage() {
             onChange={(next) => {
               setCompletedStatuses(next);
               setCancelledStatuses((current) => current.filter((status) => !next.includes(status)));
+              setAgingStatuses((current) => current.filter((status) => !next.includes(status)));
             }}
           />
           <StatusPicker
@@ -455,6 +529,7 @@ export function OrderAnalyticsPage() {
             onChange={(next) => {
               setCancelledStatuses(next);
               setCompletedStatuses((current) => current.filter((status) => !next.includes(status)));
+              setAgingStatuses((current) => current.filter((status) => !next.includes(status)));
             }}
           />
         </div>
@@ -566,7 +641,7 @@ export function OrderAnalyticsPage() {
             <div className="panel-title">
               <div>
                 <h2>Orders waiting in status</h2>
-                <span>{number.format(analytics.stale_orders_total)} orders; showing up to 500 oldest.</span>
+                <span>{number.format(analytics.stale_orders_total)} open orders; completed and cancelled statuses are excluded.</span>
               </div>
             </div>
             <DataTable rows={analytics.stale_orders} columns={staleColumns} empty={`No orders have remained in a selected status for ${appliedStaleDays} days.`} />

@@ -164,11 +164,21 @@ export type OrderAnalyticsPeriodInput = {
   date_to: string;
 };
 
+export type OrderAnalyticsDefaults = {
+  statuses: string[];
+  aging_statuses: string[];
+  completed_statuses: string[];
+  cancelled_statuses: string[];
+  group_by: "day" | "month";
+  stale_days: number;
+};
+
 export type OrderAnalyticsOptions = {
   statuses: Array<{ name: string; orders: number }>;
   aging_statuses: string[];
   completed_statuses: string[];
   cancelled_statuses: string[];
+  defaults: OrderAnalyticsDefaults;
 };
 
 export type OrderAnalyticsPoint = {
@@ -243,6 +253,8 @@ export type OrderAnalyticsRequest = {
   stale_days: number;
 };
 
+export type OrderAnalyticsDefaultsRequest = Omit<OrderAnalyticsRequest, "periods">;
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -291,6 +303,11 @@ export const api = {
   orderAnalytics: (payload: OrderAnalyticsRequest) =>
     request<{ data: OrderAnalytics }>("/orders/analytics", {
       method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  saveOrderAnalyticsDefaults: (payload: OrderAnalyticsDefaultsRequest) =>
+    request<{ data: OrderAnalyticsOptions }>("/orders/analytics/defaults", {
+      method: "PUT",
       body: JSON.stringify(payload)
     }),
   importBankFile: (file: File) => {

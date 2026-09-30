@@ -7,8 +7,13 @@ from app.api.deps import require_admin
 from app.db.session import get_db
 from app.models import User
 from app.schemas.dashboard import DashboardResponse
-from app.schemas.orders import OrderAnalyticsRequest
-from app.services.orders_service import order_analytics_options, orders_analytics, orders_overview
+from app.schemas.orders import OrderAnalyticsDefaultsRequest, OrderAnalyticsRequest
+from app.services.orders_service import (
+    order_analytics_options,
+    orders_analytics,
+    orders_overview,
+    save_order_analytics_defaults,
+)
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -31,6 +36,25 @@ def analytics_options(
     db: Session = Depends(get_db),
 ) -> DashboardResponse:
     return DashboardResponse(data=order_analytics_options(db))
+
+
+@router.put("/analytics/defaults", response_model=DashboardResponse)
+def analytics_defaults(
+    payload: OrderAnalyticsDefaultsRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> DashboardResponse:
+    return DashboardResponse(
+        data=save_order_analytics_defaults(
+            db,
+            payload.statuses,
+            payload.aging_statuses,
+            payload.completed_statuses,
+            payload.cancelled_statuses,
+            payload.group_by,
+            payload.stale_days,
+        )
+    )
 
 
 @router.post("/analytics", response_model=DashboardResponse)

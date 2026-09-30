@@ -25,3 +25,12 @@ class OrderAnalyticsRequest(BaseModel):
     cancelled_statuses: list[str] = Field(default_factory=list)
     group_by: Literal["day", "month"] = "day"
     stale_days: int = Field(default=3, ge=0, le=3650)
+
+
+class OrderAnalyticsDefaultsRequest(BaseModel):
+    statuses: list[str] = Field(default_factory=list, max_length=500)
+    aging_statuses: list[str] = Field(default_factory=list, max_length=500)
+    completed_statuses: list[str] = Field(default_factory=list, max_length=500)
+    cancelled_statuses: list[str] = Field(default_factory=list, max_length=500)
+    group_by: Literal["day", "month"] = "day"
+    stale_days: int = Field(default=3, ge=0, le=3650)
