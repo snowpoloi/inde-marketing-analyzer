@@ -157,6 +157,85 @@ export type OrdersOverview = {
   supplier_products: SupplierProductSale[];
 };
 
+export type OrderAnalyticsPeriodInput = {
+  key: string;
+  label: string;
+  date_from: string;
+  date_to: string;
+};
+
+export type OrderAnalyticsOptions = {
+  statuses: Array<{ name: string; orders: number }>;
+  aging_statuses: string[];
+  completed_statuses: string[];
+  cancelled_statuses: string[];
+};
+
+export type OrderAnalyticsPoint = {
+  bucket: string;
+  orders: number;
+  completed: number;
+  cancelled: number;
+};
+
+export type OrderAnalyticsPeriod = OrderAnalyticsPeriodInput & {
+  orders: number;
+  completed: number;
+  cancelled: number;
+  open: number;
+  completion_rate: number;
+  status_counts: Array<{ status: string; orders: number }>;
+  series: OrderAnalyticsPoint[];
+};
+
+export type OrderStatusAging = {
+  status: string;
+  orders: number;
+  stale_orders: number;
+  average_days: number;
+  max_days: number;
+};
+
+export type StaleOrder = {
+  order_id: string;
+  date_added: string;
+  status: string;
+  status_since: string;
+  days_in_status: number;
+  age_source: "tracked" | "estimated";
+  total: number;
+  payment_method: string | null;
+  shipping_method: string | null;
+};
+
+export type OrderAnalytics = {
+  summary: {
+    orders: number;
+    completed: number;
+    cancelled: number;
+    open: number;
+    completion_rate: number;
+    stale_orders: number;
+    primary_period: string;
+  };
+  group_by: "day" | "month";
+  stale_days: number;
+  periods: OrderAnalyticsPeriod[];
+  status_aging: OrderStatusAging[];
+  stale_orders: StaleOrder[];
+  stale_orders_total: number;
+};
+
+export type OrderAnalyticsRequest = {
+  periods: OrderAnalyticsPeriodInput[];
+  statuses: string[];
+  aging_statuses: string[];
+  completed_statuses: string[];
+  cancelled_statuses: string[];
+  group_by: "day" | "month";
+  stale_days: number;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -201,6 +280,12 @@ export const api = {
     request<{ data: BankDashboard }>(`/banks/transactions?date_from=${dateFrom}&date_to=${dateTo}`),
   ordersOverview: (dateFrom: string, dateTo: string) =>
     request<{ data: OrdersOverview }>(`/orders/overview?date_from=${dateFrom}&date_to=${dateTo}`),
+  orderAnalyticsOptions: () => request<{ data: OrderAnalyticsOptions }>("/orders/analytics/options"),
+  orderAnalytics: (payload: OrderAnalyticsRequest) =>
+    request<{ data: OrderAnalytics }>("/orders/analytics", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   importBankFile: (file: File) => {
     const body = new FormData();
     body.append("file", file);

@@ -7,12 +7,13 @@ import { BanksPage } from "./pages/BanksPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OrdersPage } from "./pages/OrdersPage";
+import { OrderAnalyticsPage } from "./pages/OrderAnalyticsPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SyncLogsPage } from "./pages/SyncLogsPage";
 import { TikTokCallbackPage } from "./pages/TikTokCallbackPage";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "");
@@ -21,6 +22,7 @@ function hashToView(): View {
     hash === "aade" ||
     hash === "banks" ||
     hash === "orders" ||
+    hash === "order-analytics" ||
     hash === "products" ||
     hash === "settings" ||
     hash === "sync"
@@ -71,6 +73,7 @@ export function App() {
       {view === "aade" ? <AadePage /> : null}
       {view === "banks" ? <BanksPage /> : null}
       {view === "orders" ? <OrdersPage /> : null}
+      {view === "order-analytics" ? <OrderAnalyticsPage /> : null}
       {view === "products" ? <ProductsPage /> : null}
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}

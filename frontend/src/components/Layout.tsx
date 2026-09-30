@@ -3,6 +3,7 @@ import {
   BarChart3,
   FileClock,
   Landmark,
+  ListChecks,
   LogOut,
   PackageSearch,
   SearchCheck,
@@ -12,7 +13,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -55,6 +56,10 @@ export function Layout({
           <button className={active === "orders" ? "active" : ""} onClick={() => onNavigate("orders")}>
             <ShoppingCart size={18} />
             Orders
+          </button>
+          <button className={active === "order-analytics" ? "active" : ""} onClick={() => onNavigate("order-analytics")}>
+            <ListChecks size={18} />
+            Order analytics
           </button>
           <button className={active === "products" ? "active" : ""} onClick={() => onNavigate("products")}>
             <PackageSearch size={18} />

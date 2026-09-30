@@ -1,18 +1,298 @@
 from __future__ import annotations
 
+import unicodedata
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import BankTransaction, OpenCartOrder
+from app.models import BankTransaction, IntegrationSetting, OpenCartOrder, OpenCartOrderChange
 from app.services.bank_service import match_bank_deposits_for_orders
 from app.services.parsing import dec_to_float
 
 PAYMENT_TOLERANCE = Decimal("0.05")
+UNKNOWN_STATUS = "Unknown"
+
+
+def order_analytics_options(db: Session) -> dict[str, Any]:
+    status_expr = func.coalesce(func.nullif(func.trim(OpenCartOrder.order_status), ""), UNKNOWN_STATUS)
+    status_rows = db.execute(
+        select(
+            status_expr.label("status"),
+            func.count(OpenCartOrder.id).label("orders"),
+        )
+        .group_by(status_expr)
+        .order_by(func.count(OpenCartOrder.id).desc(), status_expr)
+    ).all()
+    statuses = [{"name": str(row.status), "orders": int(row.orders or 0)} for row in status_rows]
+    names = [row["name"] for row in statuses]
+    names_by_key = {_status_key(name): name for name in names}
+
+    cancelled = [name for name in names if _looks_cancelled(name)]
+    cancelled_keys = {_status_key(name) for name in cancelled}
+    completed = [name for name in names if _looks_completed(name) and _status_key(name) not in cancelled_keys]
+    if not completed:
+        configured = _configured_completed_statuses(db)
+        completed = [names_by_key[key] for key in configured if key in names_by_key and key not in cancelled_keys]
+
+    return {
+        "statuses": statuses,
+        "aging_statuses": [
+            name for name in names if _status_key(name) not in cancelled_keys and name not in completed
+        ],
+        "completed_statuses": completed,
+        "cancelled_statuses": cancelled,
+    }
+
+
+def orders_analytics(
+    db: Session,
+    periods: list[dict[str, Any]],
+    statuses: list[str],
+    aging_statuses: list[str],
+    completed_statuses: list[str],
+    cancelled_statuses: list[str],
+    group_by: str,
+    stale_days: int,
+) -> dict[str, Any]:
+    selected_keys = {_status_key(value) for value in statuses if str(value).strip()}
+    aging_keys = {_status_key(value) for value in aging_statuses if str(value).strip()}
+    completed_keys = {_status_key(value) for value in completed_statuses if str(value).strip()}
+    cancelled_keys = {_status_key(value) for value in cancelled_statuses if str(value).strip()}
+    completed_keys -= cancelled_keys
+
+    earliest = min(period["date_from"] for period in periods)
+    latest = max(period["date_to"] for period in periods)
+    period_orders = db.scalars(
+        select(OpenCartOrder)
+        .where(func.date(OpenCartOrder.date_added).between(earliest, latest))
+        .order_by(OpenCartOrder.date_added)
+    ).all()
+
+    period_results = [
+        _period_analytics(
+            period,
+            period_orders,
+            selected_keys,
+            completed_keys,
+            cancelled_keys,
+            group_by,
+        )
+        for period in periods
+    ]
+    status_aging, stale_orders, stale_total = _status_aging(db, aging_keys, stale_days)
+    primary = period_results[0]
+
+    return {
+        "summary": {
+            "orders": primary["orders"],
+            "completed": primary["completed"],
+            "cancelled": primary["cancelled"],
+            "open": primary["open"],
+            "completion_rate": primary["completion_rate"],
+            "stale_orders": stale_total,
+            "primary_period": primary["label"],
+        },
+        "group_by": group_by,
+        "stale_days": stale_days,
+        "periods": period_results,
+        "status_aging": status_aging,
+        "stale_orders": stale_orders,
+        "stale_orders_total": stale_total,
+    }
+
+
+def _period_analytics(
+    period: dict[str, Any],
+    orders: list[OpenCartOrder],
+    selected_keys: set[str],
+    completed_keys: set[str],
+    cancelled_keys: set[str],
+    group_by: str,
+) -> dict[str, Any]:
+    start: date = period["date_from"]
+    end: date = period["date_to"]
+    rows = [order for order in orders if start <= _as_date(order.date_added) <= end]
+    completed = 0
+    cancelled = 0
+    status_counts: dict[str, int] = defaultdict(int)
+    series = {
+        bucket: {"bucket": bucket, "orders": 0, "completed": 0, "cancelled": 0}
+        for bucket in _period_buckets(start, end, group_by)
+    }
+
+    for order in rows:
+        status = order.order_status or UNKNOWN_STATUS
+        status_key = _status_key(status)
+        bucket = _bucket_key(_as_date(order.date_added), group_by)
+        point = series[bucket]
+        point["orders"] += 1
+        if status_key in cancelled_keys:
+            cancelled += 1
+            point["cancelled"] += 1
+        elif status_key in completed_keys:
+            completed += 1
+            point["completed"] += 1
+        if status_key in selected_keys:
+            status_counts[status] += 1
+
+    total = len(rows)
+    return {
+        "key": period["key"],
+        "label": period["label"],
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "orders": total,
+        "completed": completed,
+        "cancelled": cancelled,
+        "open": max(total - completed - cancelled, 0),
+        "completion_rate": round((completed / total * 100) if total else 0, 2),
+        "status_counts": [
+            {"status": status, "orders": count}
+            for status, count in sorted(status_counts.items(), key=lambda item: (-item[1], item[0].casefold()))
+        ],
+        "series": list(series.values()),
+    }
+
+
+def _status_aging(
+    db: Session,
+    selected_keys: set[str],
+    stale_days: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    if not selected_keys:
+        return [], [], 0
+
+    latest_change = (
+        select(
+            OpenCartOrderChange.order_pk.label("order_pk"),
+            func.max(
+                func.coalesce(OpenCartOrderChange.source_modified_at, OpenCartOrderChange.detected_at)
+            ).label("status_since"),
+        )
+        .where(OpenCartOrderChange.field_name == "order_status")
+        .group_by(OpenCartOrderChange.order_pk)
+        .subquery()
+    )
+    rows = db.execute(
+        select(OpenCartOrder, latest_change.c.status_since)
+        .outerjoin(latest_change, latest_change.c.order_pk == OpenCartOrder.id)
+        .order_by(OpenCartOrder.date_added.desc())
+    ).all()
+
+    now = datetime.now(timezone.utc)
+    aging: dict[str, dict[str, Any]] = {}
+    order_rows: list[dict[str, Any]] = []
+    for order, tracked_since in rows:
+        status = order.order_status or UNKNOWN_STATUS
+        if _status_key(status) not in selected_keys:
+            continue
+        status_since = tracked_since or order.date_modified or order.date_added
+        status_since = _as_utc(status_since)
+        days = max((now.date() - status_since.date()).days, 0)
+        source = "tracked" if tracked_since else "estimated"
+        bucket = aging.setdefault(
+            status,
+            {"status": status, "orders": 0, "stale_orders": 0, "days_total": 0, "max_days": 0},
+        )
+        bucket["orders"] += 1
+        bucket["days_total"] += days
+        bucket["max_days"] = max(bucket["max_days"], days)
+        if days >= stale_days:
+            bucket["stale_orders"] += 1
+            order_rows.append(
+                {
+                    "order_id": order.order_id,
+                    "date_added": order.date_added.isoformat(),
+                    "status": status,
+                    "status_since": status_since.isoformat(),
+                    "days_in_status": days,
+                    "age_source": source,
+                    "total": dec_to_float(order.total),
+                    "payment_method": order.payment_method,
+                    "shipping_method": order.shipping_method or order.shipping_title,
+                }
+            )
+
+    status_rows = [
+        {
+            "status": row["status"],
+            "orders": row["orders"],
+            "stale_orders": row["stale_orders"],
+            "average_days": round(row["days_total"] / row["orders"], 1) if row["orders"] else 0,
+            "max_days": row["max_days"],
+        }
+        for row in aging.values()
+    ]
+    status_rows.sort(key=lambda row: (-row["stale_orders"], -row["max_days"], row["status"].casefold()))
+    order_rows.sort(key=lambda row: (-row["days_in_status"], row["status"].casefold(), row["order_id"]))
+    return status_rows, order_rows[:500], len(order_rows)
+
+
+def _configured_completed_statuses(db: Session) -> list[str]:
+    integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
+    rules = ((integration.config if integration else {}) or {}).get("order_status_rules") or []
+    return [
+        _status_key(rule.get("name"))
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("counts_as_sale") and str(rule.get("name") or "").strip()
+    ]
+
+
+def _status_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").strip().casefold())
+    return "".join(character for character in text if not unicodedata.combining(character))
+
+
+def _looks_cancelled(status: str) -> bool:
+    value = _status_key(status)
+    return any(token in value for token in ("cancel", "ακυρ", "refund", "επιστροφ", "void"))
+
+
+def _looks_completed(status: str) -> bool:
+    value = _status_key(status)
+    return any(
+        token in value
+        for token in ("complete", "completed", "delivered", "shipped", "ολοκληρ", "παραδοθ", "παρεληφ", "αποσταλ")
+    )
+
+
+def _as_date(value: datetime) -> date:
+    return value.date()
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _bucket_key(value: date, group_by: str) -> str:
+    return value.isoformat() if group_by == "day" else value.strftime("%Y-%m")
+
+
+def _period_buckets(start: date, end: date, group_by: str) -> list[str]:
+    buckets: list[str] = []
+    cursor = start
+    if group_by == "day":
+        while cursor <= end:
+            buckets.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+        return buckets
+
+    cursor = cursor.replace(day=1)
+    end_month = end.replace(day=1)
+    while cursor <= end_month:
+        buckets.append(cursor.strftime("%Y-%m"))
+        cursor = date(
+            cursor.year + (1 if cursor.month == 12 else 0),
+            1 if cursor.month == 12 else cursor.month + 1,
+            1,
+        )
+    return buckets
 
 
 def orders_overview(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
