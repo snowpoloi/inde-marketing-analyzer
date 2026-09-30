@@ -180,10 +180,17 @@ export type OrderAnalyticsPoint = {
 
 export type OrderAnalyticsPeriod = OrderAnalyticsPeriodInput & {
   orders: number;
+  customers: number;
   completed: number;
   cancelled: number;
   open: number;
   completion_rate: number;
+  sub_total: number;
+  shipping: number;
+  coupon: number;
+  taxes: number;
+  total_value: number;
+  average_order_value: number;
   status_counts: Array<{ status: string; orders: number }>;
   series: OrderAnalyticsPoint[];
 };

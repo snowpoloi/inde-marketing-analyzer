@@ -487,9 +487,16 @@ export function OrderAnalyticsPage() {
                     <th>Period</th>
                     <th>Date range</th>
                     <th className="align-right">Received</th>
+                    <th className="align-right">Customers</th>
                     <th className="align-right">Completed</th>
                     <th className="align-right">Cancelled</th>
                     <th className="align-right">Open</th>
+                    <th className="align-right">Subtotal</th>
+                    <th className="align-right">Shipping</th>
+                    <th className="align-right">Coupon</th>
+                    <th className="align-right">Taxes</th>
+                    <th className="align-right">Total value</th>
+                    <th className="align-right">Avg. order value</th>
                     <th className="align-right">Completion</th>
                   </tr>
                 </thead>
@@ -499,9 +506,16 @@ export function OrderAnalyticsPage() {
                       <td><strong>{period.label}</strong></td>
                       <td>{formatDate(period.date_from)} - {formatDate(period.date_to)}</td>
                       <td className="align-right">{number.format(period.orders)}</td>
+                      <td className="align-right">{number.format(period.customers)}</td>
                       <td className="align-right">{number.format(period.completed)}</td>
                       <td className="align-right">{number.format(period.cancelled)}</td>
                       <td className="align-right">{number.format(period.open)}</td>
+                      <td className="align-right">{currency.format(period.sub_total)}</td>
+                      <td className="align-right">{currency.format(period.shipping)}</td>
+                      <td className="align-right">{currency.format(period.coupon)}</td>
+                      <td className="align-right">{currency.format(period.taxes)}</td>
+                      <td className="align-right"><strong>{currency.format(period.total_value)}</strong></td>
+                      <td className="align-right">{currency.format(period.average_order_value)}</td>
                       <td className="align-right">{number.format(period.completion_rate)}%</td>
                     </tr>
                   ))}

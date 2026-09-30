@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import BankTransaction, IntegrationSetting, OpenCartOrder, OpenCartOrderChange
 from app.services.bank_service import match_bank_deposits_for_orders
-from app.services.parsing import dec_to_float
+from app.services.parsing import as_decimal, dec_to_float
 
 PAYMENT_TOLERANCE = Decimal("0.05")
 UNKNOWN_STATUS = "Unknown"
+REFUND_STATUS_NAMES = ("Επιστράφηκε το ποσό", "Επιστροφή Χρημάτων")
 
 
 def order_analytics_options(db: Session) -> dict[str, Any]:
@@ -27,7 +28,26 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
         .group_by(status_expr)
         .order_by(func.count(OpenCartOrder.id).desc(), status_expr)
     ).all()
-    statuses = [{"name": str(row.status), "orders": int(row.orders or 0)} for row in status_rows]
+    statuses_by_key = {
+        _status_key(row.status): {"name": str(row.status), "orders": int(row.orders or 0)}
+        for row in status_rows
+    }
+    history_rows = db.execute(
+        select(OpenCartOrderChange.old_value, OpenCartOrderChange.new_value)
+        .where(OpenCartOrderChange.field_name == "order_status")
+    ).all()
+    for history_row in history_rows:
+        for value in (history_row.old_value, history_row.new_value):
+            _add_status_option(statuses_by_key, value)
+    for name in _configured_status_names(db):
+        _add_status_option(statuses_by_key, name)
+    for name in REFUND_STATUS_NAMES:
+        _add_status_option(statuses_by_key, name)
+
+    statuses = sorted(
+        statuses_by_key.values(),
+        key=lambda row: (-row["orders"], row["name"].casefold()),
+    )
     names = [row["name"] for row in statuses]
     names_by_key = {_status_key(name): name for name in names}
 
@@ -140,6 +160,12 @@ def _period_analytics(
             status_counts[status] += 1
 
     total = len(rows)
+    sub_total = sum((order.sub_total or Decimal("0") for order in rows), Decimal("0"))
+    shipping = sum((order.shipping or Decimal("0") for order in rows), Decimal("0"))
+    coupon = sum((_coupon_amount(order) for order in rows), Decimal("0"))
+    taxes = sum((order.tax or Decimal("0") for order in rows), Decimal("0"))
+    total_value = sum((order.total or Decimal("0") for order in rows), Decimal("0"))
+    customers = len({_customer_key(order) for order in rows})
     return {
         "key": period["key"],
         "label": period["label"],
@@ -150,6 +176,13 @@ def _period_analytics(
         "cancelled": cancelled,
         "open": max(total - completed - cancelled, 0),
         "completion_rate": round((completed / total * 100) if total else 0, 2),
+        "customers": customers,
+        "sub_total": dec_to_float(sub_total),
+        "shipping": dec_to_float(shipping),
+        "coupon": dec_to_float(coupon),
+        "taxes": dec_to_float(taxes),
+        "total_value": dec_to_float(total_value),
+        "average_order_value": dec_to_float(total_value / total) if total else 0,
         "status_counts": [
             {"status": status, "orders": count}
             for status, count in sorted(status_counts.items(), key=lambda item: (-item[1], item[0].casefold()))
@@ -240,6 +273,70 @@ def _configured_completed_statuses(db: Session) -> list[str]:
         for rule in rules
         if isinstance(rule, dict) and rule.get("counts_as_sale") and str(rule.get("name") or "").strip()
     ]
+
+
+def _configured_status_names(db: Session) -> list[str]:
+    integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "opencart"))
+    rules = ((integration.config if integration else {}) or {}).get("order_status_rules") or []
+    return [
+        str(rule.get("name")).strip()
+        for rule in rules
+        if isinstance(rule, dict) and str(rule.get("name") or "").strip()
+    ]
+
+
+def _add_status_option(statuses: dict[str, dict[str, Any]], value: Any) -> None:
+    name = str(value or "").strip()
+    key = _status_key(name)
+    if key and key not in statuses:
+        statuses[key] = {"name": name, "orders": 0}
+
+
+def _customer_key(order: OpenCartOrder) -> str:
+    customer_id = str(order.customer_id or "").strip()
+    if customer_id and customer_id != "0":
+        return f"id:{customer_id}"
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    for key in ("email", "customer_email", "payment_email"):
+        value = str(raw.get(key) or "").strip().casefold()
+        if value:
+            return f"email:{value}"
+    return f"order:{order.order_id}"
+
+
+def _coupon_amount(order: OpenCartOrder) -> Decimal:
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    for key in ("coupon_value", "coupon_total", "coupon_amount", "discount_value", "discount_total"):
+        if raw.get(key) not in (None, ""):
+            return _negative_discount(raw.get(key))
+
+    for totals_key in ("totals", "order_totals"):
+        totals = raw.get(totals_key)
+        if not isinstance(totals, list):
+            continue
+        amount = Decimal("0")
+        found = False
+        for item in totals:
+            if not isinstance(item, dict):
+                continue
+            code = _status_key(item.get("code"))
+            title = _status_key(item.get("title") or item.get("name"))
+            if code != "coupon" and "coupon" not in title and "κουπον" not in title:
+                continue
+            value = next(
+                (item.get(key) for key in ("value", "amount", "total") if item.get(key) not in (None, "")),
+                0,
+            )
+            amount += _negative_discount(value)
+            found = True
+        if found:
+            return amount
+    return Decimal("0")
+
+
+def _negative_discount(value: Any) -> Decimal:
+    amount = as_decimal(value)
+    return amount if amount <= 0 else -amount
 
 
 def _status_key(value: Any) -> str:
