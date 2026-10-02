@@ -7,4 +7,5 @@ node_modules/
 dist/
 .DS_Store
 pgdata/
-
+.test-postgres/
+test-results/

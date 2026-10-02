@@ -283,6 +283,97 @@ export type OrderAnalyticsRequest = {
 
 export type OrderAnalyticsDefaultsRequest = Omit<OrderAnalyticsRequest, "periods">;
 
+export type SupplierSummary = {
+  suppliers: number;
+  purchases: number;
+  freight: number;
+  matched_products: number;
+  unmatched_products: number;
+  products_with_cogs: number;
+};
+
+export type SupplierProduct = {
+  mapping_id: string;
+  supplier_id: string;
+  supplier: string;
+  supplier_sku: string | null;
+  supplier_code: string | null;
+  supplier_ean: string | null;
+  product_catalog_id: string | null;
+  opencart_product_id: string | null;
+  opencart_sku: string | null;
+  opencart_model: string | null;
+  product_name: string | null;
+  current_cogs: number | null;
+  previous_cogs: number | null;
+  cost_change_percent: number | null;
+  cost_source: string | null;
+  cost_reference: string | null;
+  cost_date: string | null;
+  cost_confidence: number | null;
+  match_status: string;
+  match_method: string;
+  match_confidence: number;
+  verified: boolean;
+  conversion_factor: number;
+};
+
+export type SupplierMatchCandidate = {
+  product_catalog_id: string;
+  product_id: string | null;
+  sku: string | null;
+  model: string | null;
+  name: string;
+  method: string;
+  confidence: number;
+};
+
+export type UnmatchedSupplierProduct = {
+  mapping_id: string;
+  supplier: string;
+  supplier_sku: string | null;
+  supplier_code: string | null;
+  supplier_ean: string | null;
+  description: string | null;
+  status: string;
+  candidates: SupplierMatchCandidate[];
+};
+
+export type SupplierPerformance = {
+  supplier_id: string;
+  supplier: string;
+  purchases: number;
+  freight: number;
+  freight_ratio: number;
+  orders: number;
+  average_order: number;
+  average_freight_per_order: number;
+  free_shipping_orders: number;
+  paid_shipping_orders: number;
+  unknown_shipping_orders: number;
+  shipping_trend: Array<{ month: string; freight: number }>;
+  shipping_by_type: Array<{ shipping_type: string; freight: number }>;
+  free_shipping_threshold: number | null;
+  threshold_gap: number;
+  potential_freight_savings: number;
+  price_increases: number;
+  margin_erosion_products: Array<{
+    mapping_id: string;
+    product_name: string | null;
+    supplier_sku: string | null;
+    previous_cogs: number;
+    current_cogs: number;
+    increase_percent: number | null;
+    current_price_net: number | null;
+    margin_change_points: number | null;
+  }>;
+};
+
+export type SupplierCostHistory = {
+  id: string; date: string; source: string; reference: string | null;
+  net_unit_cost: number; quantity: number; confidence: number; currency: string; status: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -338,6 +429,49 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload)
     }),
+  supplierSummary: (dateFrom: string, dateTo: string) =>
+    request<{ data: SupplierSummary }>(`/suppliers/summary?date_from=${dateFrom}&date_to=${dateTo}`),
+  supplierProducts: (asOf: string) =>
+    request<{ data: { rows: SupplierProduct[] } }>(`/suppliers/products?as_of=${asOf}`),
+  unmatchedSupplierProducts: () =>
+    request<{ data: { rows: UnmatchedSupplierProduct[] } }>("/suppliers/unmatched"),
+  supplierPerformance: (dateFrom: string, dateTo: string) =>
+    request<{ data: { rows: SupplierPerformance[] } }>(
+      `/suppliers/performance?date_from=${dateFrom}&date_to=${dateTo}`
+    ),
+  supplierCatalogSearch: (query: string) => request<{ data: { rows: SupplierMatchCandidate[] } }>(`/suppliers/catalog-search?q=${encodeURIComponent(query)}`),
+  supplierCostHistory: (mappingId: string) => request<{ data: { rows: SupplierCostHistory[] } }>(`/suppliers/mappings/${mappingId}/cost-history`),
+  saveSupplierThreshold: (supplierId: string, threshold: number | null) => request<{ data: { saved: boolean } }>(`/suppliers/${supplierId}/settings`, {
+    method: "PUT", body: JSON.stringify({ free_shipping_threshold: threshold })
+  }),
+  supplierShippingSimulation: (supplierId: string, threshold: number, dateFrom: string, dateTo: string) =>
+    request<{ data: { threshold: number; eligible_orders: number; orders: number; potential_savings: number; additional_purchase_to_threshold: number } }>(`/suppliers/${supplierId}/shipping-simulation?threshold=${threshold}&date_from=${dateFrom}&date_to=${dateTo}`),
+  addManualSupplierCost: (payload: { supplier_id: string; supplier_product_map_id: string; purchase_date: string; net_unit_cost: number; source_reference: string }) =>
+    request<{ data: { cost_id: string; duplicate: boolean } }>("/suppliers/costs/manual", { method: "POST", body: JSON.stringify(payload) }),
+  verifySupplierMapping: (
+    mappingId: string,
+    payload: { product_catalog_id: string; conversion_factor: number; pack_quantity: number }
+  ) =>
+    request<{ data: { mapping_id: string; verified: boolean; costs_created: number } }>(
+      `/suppliers/mappings/${mappingId}/verify`,
+      { method: "PUT", body: JSON.stringify(payload) }
+    ),
+  importSupplierJson: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<{
+      data: {
+        batch_id: string;
+        duplicate: boolean;
+        documents_imported: number;
+        documents_skipped: number;
+        product_lines: number;
+        matched_lines: number;
+        unmatched_lines: number;
+        shipping_lines: number;
+      };
+    }>("/suppliers/imports/json", { method: "POST", body });
+  },
   importBankFile: (file: File) => {
     const body = new FormData();
     body.append("file", file);

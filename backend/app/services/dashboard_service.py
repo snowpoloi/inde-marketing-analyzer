@@ -18,6 +18,7 @@ from app.models import (
     SearchConsoleDailyMetric,
 )
 from app.services.parsing import as_decimal, dec_to_float
+from app.services.supplier_service import product_profitability
 
 
 PAID_AD_SOURCES = ("meta_ads", "google_ads", "tiktok_ads")
@@ -517,32 +518,7 @@ def brand_category_performance(db: Session, date_from: date, date_to: date) -> d
 
 
 def product_profitability_hints(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:
-    brand_expr = func.coalesce(OpenCartOrderProduct.brand, OpenCartOrderProduct.manufacturer, "Unknown")
-    category_expr = func.coalesce(OpenCartOrderProduct.category, "Unknown")
-    rows = db.execute(
-        select(
-            OpenCartOrderProduct.product_id,
-            OpenCartOrderProduct.sku,
-            OpenCartOrderProduct.name,
-            brand_expr.label("brand"),
-            category_expr.label("category"),
-            func.coalesce(func.sum(OpenCartOrderProduct.quantity), 0).label("quantity"),
-            func.count(func.distinct(OpenCartOrder.id)).label("orders"),
-            func.coalesce(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity), 0).label("revenue"),
-        )
-        .join(OpenCartOrder, OpenCartOrderProduct.order_pk == OpenCartOrder.id)
-        .where(_opencart_sales_filter(db, date_from, date_to))
-        .group_by(
-            OpenCartOrderProduct.product_id,
-            OpenCartOrderProduct.sku,
-            OpenCartOrderProduct.name,
-            brand_expr,
-            category_expr,
-        )
-        .order_by(func.sum(OpenCartOrderProduct.price * OpenCartOrderProduct.quantity).desc())
-        .limit(50)
-    ).all()
-
+    rows = product_profitability(db, date_from, date_to, _configured_sale_statuses(db))
     merchant_by_item = {
         row.item_id: row
         for row in db.execute(
@@ -552,42 +528,33 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
 
     hints = []
     for row in rows:
-        merchant = merchant_by_item.get(row.sku or "") or merchant_by_item.get(row.product_id or "")
-        order_count = int(row.orders or 0)
-        average_quantity_per_order = _ratio(row.quantity, order_count)
+        merchant = merchant_by_item.get(row.get("sku") or "") or merchant_by_item.get(row.get("product_id") or "")
+        order_count = int(row.get("orders") or 0)
         action = "monitor"
-        reason = "Sales exist; add margin/COGS to turn this into net profit."
-        if merchant and merchant.availability and merchant.availability.lower() not in {"in stock", "in_stock"}:
+        reason = "Margin uses the best historical purchase cost available on each sale date."
+        if row.get("cogs") is None:
+            action = "review cost"
+            reason = "No reliable historical COGS exists for every sale in this period."
+        elif row.get("margin_percent") is not None and row["margin_percent"] < 15:
+            action = "review margin"
+            reason = "Product gross margin is below 15%; review supplier cost or selling price."
+        elif merchant and merchant.availability and merchant.availability.lower() not in {"in stock", "in_stock"}:
             action = "investigate product/feed"
             reason = f"OpenCart has sales, but Merchant availability is {merchant.availability}."
-        elif order_count <= 1 and row.quantity >= 5:
+        elif order_count <= 1 and row.get("quantity", 0) >= 5:
             action = "monitor"
             reason = "Bulk quantity from one order; wait for more distinct orders before treating it as strong demand."
-        elif order_count >= 3 and row.quantity >= 5 and row.revenue > 0:
+        elif order_count >= 3 and row.get("quantity", 0) >= 5 and (row.get("net_sales") or 0) > 0:
             action = "scale"
-            reason = "Sales came from multiple orders; stronger demand signal than a single bulk purchase."
-        elif row.quantity <= 1:
+            reason = "Sales came from multiple orders and the product has reliable margin data."
+        elif row.get("quantity", 0) <= 1:
             action = "reduce"
             reason = "Low sales volume; review margin, feed quality, price, and campaign match."
-        hints.append(
-            {
-                "product_id": row.product_id,
-                "sku": row.sku,
-                "name": row.name,
-                "brand": row.brand,
-                "category": row.category,
-                "quantity": int(row.quantity or 0),
-                "orders": order_count,
-                "average_quantity_per_order": average_quantity_per_order,
-                "revenue": dec_to_float(row.revenue),
-                "hint": action,
-                "reason": reason,
-            }
-        )
-    return hints
+        hints.append({**row, "hint": action, "reason": reason})
+    return hints[:50]
 
 
-def product_performance(db: Session, date_from: date, date_to: date) -> list[dict[str, Any]]:
+def product_performance(db: Session, date_from: date, date_to: date, include_costs: bool = False) -> list[dict[str, Any]]:
     rows = db.execute(
         select(
             OpenCartOrderProduct.product_id,
@@ -622,11 +589,16 @@ def product_performance(db: Session, date_from: date, date_to: date) -> list[dic
         for product in db.scalars(select(ProductCatalog)).all()
         if product.sku
     }
+    profitability_lookup = {
+        tuple(profit_row["sales_group_key"]): profit_row
+        for profit_row in product_profitability(db, date_from, date_to, _configured_sale_statuses(db))
+    } if include_costs else {}
     results = []
     for row in rows:
         catalog = catalog_lookup.get(row.sku or "")
         brand = row.brand or row.manufacturer or (catalog.brand if catalog else None) or "Unknown"
         category = row.category or (catalog.category if catalog else None) or "Unknown"
+        profitability = profitability_lookup.get((row.product_id, row.sku, row.model, row.name, row.brand, row.manufacturer, row.category))
         results.append(
             {
                 "product_id": row.product_id,
@@ -638,6 +610,17 @@ def product_performance(db: Session, date_from: date, date_to: date) -> list[dic
                 "quantity": int(row.quantity or 0),
                 "orders": int(row.orders or 0),
                 "revenue": dec_to_float(row.revenue),
+                "net_sales": profitability.get("net_sales") if profitability else dec_to_float(row.revenue),
+                "cogs": profitability.get("cogs") if profitability else None,
+                "gross_profit": profitability.get("gross_profit") if profitability else None,
+                "margin_percent": profitability.get("margin_percent") if profitability else None,
+                "cost_coverage_percent": profitability.get("cost_coverage_percent") if profitability else 0,
+                "current_unit_cogs": profitability.get("current_unit_cogs") if profitability else None,
+                "cogs_source": profitability.get("cogs_source") if profitability else None,
+                "cogs_date": profitability.get("cogs_date") if profitability else None,
+                "cogs_confidence": profitability.get("cogs_confidence") if profitability else None,
+                "cost_provenance": profitability.get("cost_provenance", []) if profitability else [],
+                "net_quantity": profitability.get("quantity") if profitability else None,
                 "average_unit_price": _ratio(row.revenue, row.quantity),
                 "average_quantity_per_order": _ratio(row.quantity, row.orders),
                 "last_sold_at": row.last_sold_at.isoformat() if row.last_sold_at else None,

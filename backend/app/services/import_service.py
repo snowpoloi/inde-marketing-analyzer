@@ -23,6 +23,7 @@ from app.models import (
     ShoplySale,
 )
 from app.services.parsing import as_date, as_datetime, as_decimal, as_int
+from app.services.product_sales_costing import present
 
 
 def _action_value(actions: list[dict[str, Any]] | None, action_type: str) -> int:
@@ -688,7 +689,19 @@ def _normalize_opencart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
                     "category": row.get("category"),
                     "quantity": row.get("product_quantity"),
                     "price": row.get("product_price"),
+                    "subtotal": row.get("product_subtotal"),
+                    "discount": row.get("product_discount"),
+                    "tax": row.get("product_tax") or row.get("tax_per_unit"),
                     "total": row.get("product_total"),
+                    "net_total": row.get("product_net_total"),
+                    "gross_total": row.get("product_gross_total"),
+                    "tax_amount": row.get("product_tax_amount"),
+                    "vat_rate": row.get("product_vat_rate", row.get("vat_rate")),
+                    "prices_include_vat": row.get("prices_include_vat", False),
+                    "includes_order_discount": row.get("includes_order_discount", False),
+                    "coupon_share": row.get("product_coupon_share"),
+                    "returned_quantity": row.get("product_returned_quantity"),
+                    "refund_net": row.get("product_refund_net"),
                     "mpn": row.get("product_mpn"),
                     "weight": row.get("product_weight"),
                 }
@@ -805,6 +818,9 @@ def import_product_catalog(db: Session, rows: list[dict[str, Any]]) -> int:
             existing[sku] = product
         product.model = row.get("model")
         product.product_id = row.get("product_id")
+        product.ean = row.get("ean") or row.get("gtin")
+        product.upc = row.get("upc")
+        product.mpn = row.get("mpn")
         product.name = str(row.get("name") or product.name or sku)
         product.brand = row.get("brand") or row.get("manufacturer")
         product.manufacturer = row.get("manufacturer") or row.get("brand")
@@ -828,9 +844,10 @@ def _product_lookup(db: Session) -> dict[str, ProductCatalog]:
             product.sku,
             product.model,
             product.product_id,
+            product.mpn,
+            product.upc,
+            product.ean,
             (product.raw or {}).get("isbn"),
-            (product.raw or {}).get("upc"),
-            (product.raw or {}).get("ean"),
             (product.raw or {}).get("jan"),
         ):
             key = _lookup_key(value)
@@ -916,6 +933,18 @@ def import_opencart_orders(db: Session, rows: list[dict[str, Any]]) -> int:
                     category=product.get("category"),
                     quantity=as_int(product.get("quantity")),
                     price=as_decimal(product.get("price")),
+                    line_subtotal=as_decimal(
+                        present(product, "subtotal", "net_total", "total")
+                    ),
+                    discount=abs(
+                        as_decimal(
+                            present(product, "discount", "discount_amount")
+                        )
+                    ),
+                    tax=as_decimal(present(product, "tax_amount", "tax")),
+                    total=as_decimal(
+                        present(product, "gross_total", "total_with_tax", "total")
+                    ),
                     raw=product,
                 )
             )

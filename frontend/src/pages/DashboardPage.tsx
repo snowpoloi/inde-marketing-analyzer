@@ -9,6 +9,7 @@ import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
+const percent = new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 2 });
 
 function isoDate(daysOffset = 0) {
   const value = new Date();
@@ -291,8 +292,8 @@ export function DashboardPage() {
 
       <section className="panel">
         <div className="panel-title">
-          <h2>Product-level profitability hints</h2>
-          <span>OpenCart sales plus Merchant feed signals</span>
+          <h2>Product profitability</h2>
+          <span>Net sales and historical COGS, excluding supplier freight</span>
         </div>
         <DataTable
           rows={products}
@@ -303,7 +304,21 @@ export function DashboardPage() {
             { key: "qty", header: "Qty", align: "right", render: (row) => number.format(row.quantity) },
             { key: "orders", header: "Orders", align: "right", render: (row) => number.format(row.orders ?? 0) },
             { key: "qpo", header: "Qty/order", align: "right", render: (row) => number.format(row.average_quantity_per_order ?? 0) },
-            { key: "revenue", header: "Revenue", align: "right", render: (row) => currency.format(row.revenue) },
+            { key: "net-sales", header: "Net sales", align: "right", render: (row) => row.net_sales === null ? "Unknown" : currency.format(row.net_sales) },
+            { key: "cogs", header: "COGS", align: "right", render: (row) => (row.cogs === null || row.cogs === undefined ? "-" : currency.format(row.cogs)) },
+            { key: "gross-profit", header: "Gross profit", align: "right", render: (row) => (row.gross_profit === null || row.gross_profit === undefined ? "-" : currency.format(row.gross_profit)) },
+            { key: "margin", header: "Margin", align: "right", render: (row) => (row.margin_percent === null || row.margin_percent === undefined ? "-" : percent.format(row.margin_percent / 100)) },
+            {
+              key: "cogs-source",
+              header: "COGS source",
+              render: (row) => (
+                <div className="stacked-cell">
+                  <span>{row.cogs_source || "Unknown"}</span>
+                  <small>{row.cogs_confidence === null ? "-" : percent.format(row.cogs_confidence)} confidence</small>
+                  <small>{row.cogs_date || `${number.format(row.cost_coverage_percent ?? 0)}% coverage`}</small>
+                </div>
+              )
+            },
             { key: "hint", header: "Hint", render: (row) => <StatusBadge value={row.hint} /> },
             { key: "reason", header: "Reason", render: (row) => row.reason }
           ]}

@@ -7,6 +7,7 @@ import { StatusBadge } from "../components/StatusBadge";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
+const percent = new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 2 });
 
 function isoDate(daysOffset = 0) {
   const value = new Date();
@@ -24,6 +25,16 @@ type ProductRow = {
   quantity: number;
   orders: number;
   revenue: number;
+  net_sales: number | null;
+  cogs: number | null;
+  gross_profit: number | null;
+  margin_percent: number | null;
+  cost_coverage_percent: number;
+  current_unit_cogs: number | null;
+  cogs_source: string | null;
+  cogs_date: string | null;
+  cogs_confidence: number | null;
+  cost_provenance: Array<{ source: string; reference: string | null; date: string; unit_cost: number; confidence: number }>;
   average_unit_price: number;
   average_quantity_per_order: number;
   last_sold_at: string | null;
@@ -43,6 +54,9 @@ type SortKey =
   | "orders"
   | "average_quantity_per_order"
   | "revenue"
+  | "cogs"
+  | "gross_profit"
+  | "margin_percent"
   | "average_unit_price"
   | "feed";
 
@@ -118,7 +132,16 @@ export function ProductsPage() {
           result = compareNumber(a.average_quantity_per_order, b.average_quantity_per_order);
           break;
         case "revenue":
-          result = compareNumber(a.revenue, b.revenue);
+          result = compareNumber(a.net_sales, b.net_sales);
+          break;
+        case "cogs":
+          result = compareNumber(a.cogs, b.cogs);
+          break;
+        case "gross_profit":
+          result = compareNumber(a.gross_profit, b.gross_profit);
+          break;
+        case "margin_percent":
+          result = compareNumber(a.margin_percent, b.margin_percent);
           break;
         case "average_unit_price":
           result = compareNumber(a.average_unit_price, b.average_unit_price);
@@ -199,12 +222,51 @@ export function ProductsPage() {
       },
       {
         key: "revenue",
-        header: "Revenue",
+        header: "Net sales",
         align: "right",
         sortable: true,
         sortDirection: sortDirection("revenue"),
         onSort: () => toggleSort("revenue"),
-        render: (row) => currency.format(row.revenue)
+        render: (row) => row.net_sales === null ? "Unknown" : currency.format(row.net_sales)
+      },
+      {
+        key: "cogs",
+        header: "COGS",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("cogs"),
+        onSort: () => toggleSort("cogs"),
+        render: (row) => (row.cogs === null ? "-" : currency.format(row.cogs))
+      },
+      {
+        key: "gross-profit",
+        header: "Gross profit",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("gross_profit"),
+        onSort: () => toggleSort("gross_profit"),
+        render: (row) => (row.gross_profit === null ? "-" : currency.format(row.gross_profit))
+      },
+      {
+        key: "margin",
+        header: "Margin",
+        align: "right",
+        sortable: true,
+        sortDirection: sortDirection("margin_percent"),
+        onSort: () => toggleSort("margin_percent"),
+        render: (row) => (row.margin_percent === null ? "-" : percent.format(row.margin_percent / 100))
+      },
+      {
+        key: "cogs-source",
+        header: "COGS source",
+        render: (row) => (
+          <div className="stacked-cell">
+            <span>{row.cogs_source || "Unknown"}</span>
+            <small>{row.cogs_confidence === null ? "-" : percent.format(row.cogs_confidence)} confidence · {number.format(row.cost_coverage_percent)}% coverage</small>
+            {row.cost_provenance?.length ? <details><summary>Sources</summary>{row.cost_provenance.map((source, index) => <small key={index}>{source.date} · {source.reference || source.source} · {currency.format(source.unit_cost)}</small>)}</details> : null}
+            <small>{row.cogs_date || `${number.format(row.cost_coverage_percent)}% coverage`}</small>
+          </div>
+        )
       },
       {
         key: "avg",

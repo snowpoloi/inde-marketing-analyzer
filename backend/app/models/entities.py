@@ -275,6 +275,10 @@ class OpenCartOrderProduct(TimestampMixin, Base):
     category: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    line_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    discount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    tax: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     order: Mapped[OpenCartOrder] = relationship(back_populates="products")
 
@@ -287,6 +291,9 @@ class ProductCatalog(TimestampMixin, Base):
     sku: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     product_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    ean: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    upc: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    mpn: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     manufacturer: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -299,6 +306,200 @@ class ProductCatalog(TimestampMixin, Base):
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Supplier(TimestampMixin, Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (UniqueConstraint("code", name="uq_suppliers_code"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    code: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    vat_number: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    aliases: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    default_currency: Mapped[str] = mapped_column(String(8), default="EUR", nullable=False)
+    free_shipping_threshold: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    payment_terms_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierImportBatch(TimestampMixin, Base):
+    __tablename__ = "supplier_import_batches"
+    __table_args__ = (UniqueConstraint("content_hash", name="uq_supplier_import_batches_content_hash"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplier_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False, index=True)
+    imported_documents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierDocument(TimestampMixin, Base):
+    __tablename__ = "supplier_documents"
+    __table_args__ = (UniqueConstraint("identity_key", name="uq_supplier_documents_identity_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplier_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    import_batch_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_import_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    aade_document_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("aade_documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    identity_key: Mapped[str] = mapped_column(String(700), nullable=False, index=True)
+    document_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    document_number: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    document_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    supplier_order_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    currency: Mapped[str] = mapped_column(String(8), default="EUR", nullable=False)
+    net_products_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    net_shipping_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    net_other_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    vat_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    gross_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierProductMap(TimestampMixin, Base):
+    __tablename__ = "supplier_product_maps"
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "identity_key", name="uq_supplier_product_maps_supplier_identity"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplier_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_catalog_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("product_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    identity_key: Mapped[str] = mapped_column(String(700), nullable=False)
+    supplier_code: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    supplier_sku: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    supplier_ean: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    opencart_product_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    opencart_sku: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    opencart_model: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    product_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    purchase_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sales_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pack_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=1, nullable=False)
+    conversion_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=1, nullable=False)
+    match_method: Mapped[str] = mapped_column(String(64), default="unmatched", nullable=False, index=True)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="unmatched", nullable=False, index=True)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    verified_by: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierDocumentLine(TimestampMixin, Base):
+    __tablename__ = "supplier_document_lines"
+    __table_args__ = (UniqueConstraint("document_id", "line_number", name="uq_supplier_document_lines_number"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    document_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_product_map_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_product_maps.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    line_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    line_type: Mapped[str] = mapped_column(String(32), default="product", nullable=False, index=True)
+    supplier_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    supplier_sku: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    supplier_ean: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    unit_price_before_discount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    discount_percent: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=0, nullable=False)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    net_unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    net_line_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    vat_rate: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=0, nullable=False)
+    vat_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    gross_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierProductCost(TimestampMixin, Base):
+    __tablename__ = "supplier_product_costs"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_supplier_product_costs_source_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplier_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    supplier_product_map_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_product_maps.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    product_catalog_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("product_catalog.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    source_line_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_document_lines.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    supplier_sku: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_key: Mapped[str] = mapped_column(String(700), nullable=False, index=True)
+    supplier_order_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    supplier_invoice_number: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    purchase_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    unit_price_before_discount: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    discount_percent: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=0, nullable=False)
+    net_unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    net_line_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    vat: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    gross_total: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="EUR", nullable=False)
+    source_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=1, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierShippingCost(TimestampMixin, Base):
+    __tablename__ = "supplier_shipping_costs"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_supplier_shipping_costs_source_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplier_id: Mapped[PyUUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    document_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_line_id: Mapped[PyUUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("supplier_document_lines.id", ondelete="SET NULL"), nullable=True
+    )
+    source_key: Mapped[str] = mapped_column(String(700), nullable=False, index=True)
+    supplier_order_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    invoice_reference: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    shipping_type: Mapped[str] = mapped_column(String(32), default="INBOUND", nullable=False, index=True)
+    net_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    vat: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    gross_shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    order_net_purchase_value: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    cbm: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    weight: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
 class ShoplySale(TimestampMixin, Base):

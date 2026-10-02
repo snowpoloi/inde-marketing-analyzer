@@ -80,13 +80,15 @@ def brand_category(date_from: date | None = None, date_to: date | None = None, _
 @router.get("/product-profitability", response_model=DashboardResponse)
 def product_profitability(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)
+    if not _.is_admin:
+        return DashboardResponse(data={"rows": []})
     return DashboardResponse(data={"rows": product_profitability_hints(db, start, end)})
 
 
 @router.get("/products", response_model=DashboardResponse)
 def products(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)
-    return DashboardResponse(data={"rows": product_performance(db, start, end)})
+    return DashboardResponse(data={"rows": product_performance(db, start, end, include_costs=_.is_admin)})
 
 
 @router.get("/audit", response_model=DashboardResponse)

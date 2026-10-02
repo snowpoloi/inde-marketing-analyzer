@@ -2,6 +2,8 @@
 
 Separate read-only reporting app for inde.gr. It is designed to run outside OpenCart on a Hetzner server through Coolify Docker Compose.
 
+Supplier cost imports, product matching, historical COGS and separate logistics reporting are documented in [Supplier COGS](docs/supplier-cogs.md).
+
 ## Stack
 
 - Backend: Python FastAPI

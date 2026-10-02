@@ -9,21 +9,24 @@ import {
   SearchCheck,
   Settings,
   ShoppingCart,
-  Store
+  Store,
+  Warehouse
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
   onNavigate,
   onLogout,
+  isAdmin,
   children
 }: {
   active: View;
   onNavigate: (view: View) => void;
   onLogout: () => void;
+  isAdmin: boolean;
   children: ReactNode;
 }) {
   return (
@@ -65,6 +68,10 @@ export function Layout({
             <PackageSearch size={18} />
             Products
           </button>
+          {isAdmin ? <button title="Suppliers & COGS" className={active === "suppliers" ? "active" : ""} onClick={() => onNavigate("suppliers")}>
+            <Warehouse size={18} />
+            Suppliers &amp; COGS
+          </button> : null}
           <button className={active === "settings" ? "active" : ""} onClick={() => onNavigate("settings")}>
             <Settings size={18} />
             Settings

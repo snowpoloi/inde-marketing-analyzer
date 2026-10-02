@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from app.core.config import settings
 from app.db.base import Base
@@ -34,7 +34,10 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
+    with connectable.begin() as connection:
+        # Backend and worker may start migrations concurrently during deployment.
+        if connection.dialect.name == "postgresql":
+            connection.execute(text("SELECT pg_advisory_xact_lock(734829105)")).close()
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
@@ -45,4 +48,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-
