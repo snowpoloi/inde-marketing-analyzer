@@ -44,7 +44,7 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
     for name in REFUND_STATUS_NAMES:
         _add_status_option(statuses_by_key, name)
     saved_defaults = _configured_analytics_defaults(db)
-    for field in ("statuses", "aging_statuses", "completed_statuses", "cancelled_statuses"):
+    for field in ("statuses", "aging_statuses", "processed_statuses", "completed_statuses", "cancelled_statuses"):
         saved_names = saved_defaults.get(field)
         for name in saved_names if isinstance(saved_names, list) else []:
             _add_status_option(statuses_by_key, name)
@@ -69,6 +69,7 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
         saved_defaults,
         statuses=names,
         aging_statuses=fallback_aging,
+        processed_statuses=fallback_aging,
         completed_statuses=completed,
         cancelled_statuses=cancelled,
     )
@@ -76,6 +77,7 @@ def order_analytics_options(db: Session) -> dict[str, Any]:
     return {
         "statuses": statuses,
         "aging_statuses": fallback_aging,
+        "processed_statuses": fallback_aging,
         "completed_statuses": completed,
         "cancelled_statuses": cancelled,
         "defaults": defaults,
@@ -86,6 +88,7 @@ def save_order_analytics_defaults(
     db: Session,
     statuses: list[str],
     aging_statuses: list[str],
+    processed_statuses: list[str],
     completed_statuses: list[str],
     cancelled_statuses: list[str],
     group_by: str,
@@ -105,6 +108,7 @@ def save_order_analytics_defaults(
         {
             "statuses": statuses,
             "aging_statuses": aging_statuses,
+            "processed_statuses": processed_statuses,
             "completed_statuses": completed_statuses,
             "cancelled_statuses": cancelled_statuses,
             "group_by": group_by,
@@ -112,6 +116,7 @@ def save_order_analytics_defaults(
         },
         statuses=[],
         aging_statuses=[],
+        processed_statuses=[],
         completed_statuses=[],
         cancelled_statuses=[],
     )
@@ -127,6 +132,7 @@ def orders_analytics(
     periods: list[dict[str, Any]],
     statuses: list[str],
     aging_statuses: list[str],
+    processed_statuses: list[str],
     completed_statuses: list[str],
     cancelled_statuses: list[str],
     group_by: str,
@@ -134,9 +140,11 @@ def orders_analytics(
 ) -> dict[str, Any]:
     selected_keys = {_status_key(value) for value in statuses if str(value).strip()}
     aging_keys = {_status_key(value) for value in aging_statuses if str(value).strip()}
+    processed_keys = {_status_key(value) for value in processed_statuses if str(value).strip()}
     completed_keys = {_status_key(value) for value in completed_statuses if str(value).strip()}
     cancelled_keys = {_status_key(value) for value in cancelled_statuses if str(value).strip()}
     completed_keys -= cancelled_keys
+    processed_keys -= completed_keys | cancelled_keys
     aging_keys -= completed_keys | cancelled_keys
 
     earliest = min(period["date_from"] for period in periods)
@@ -152,6 +160,7 @@ def orders_analytics(
             period,
             period_orders,
             selected_keys,
+            processed_keys,
             completed_keys,
             cancelled_keys,
             group_by,
@@ -164,10 +173,14 @@ def orders_analytics(
     return {
         "summary": {
             "orders": primary["orders"],
+            "processed": primary["processed"],
             "completed": primary["completed"],
             "cancelled": primary["cancelled"],
             "open": primary["open"],
+            "other_open": primary["other_open"],
+            "processed_rate": primary["processed_rate"],
             "completion_rate": primary["completion_rate"],
+            "stage_totals": primary["stage_totals"],
             "stale_orders": stale_total,
             "primary_period": primary["label"],
         },
@@ -184,6 +197,7 @@ def _period_analytics(
     period: dict[str, Any],
     orders: list[OpenCartOrder],
     selected_keys: set[str],
+    processed_keys: set[str],
     completed_keys: set[str],
     cancelled_keys: set[str],
     group_by: str,
@@ -191,11 +205,15 @@ def _period_analytics(
     start: date = period["date_from"]
     end: date = period["date_to"]
     rows = [order for order in orders if start <= _as_date(order.date_added) <= end]
+    processed_rows: list[OpenCartOrder] = []
+    completed_rows: list[OpenCartOrder] = []
+    cancelled_rows: list[OpenCartOrder] = []
+    processed = 0
     completed = 0
     cancelled = 0
     status_counts: dict[str, int] = defaultdict(int)
     series = {
-        bucket: {"bucket": bucket, "orders": 0, "completed": 0, "cancelled": 0}
+        bucket: {"bucket": bucket, "orders": 0, "processed": 0, "completed": 0, "cancelled": 0}
         for bucket in _period_buckets(start, end, group_by)
     }
 
@@ -207,42 +225,66 @@ def _period_analytics(
         point["orders"] += 1
         if status_key in cancelled_keys:
             cancelled += 1
+            cancelled_rows.append(order)
             point["cancelled"] += 1
         elif status_key in completed_keys:
             completed += 1
+            completed_rows.append(order)
             point["completed"] += 1
+        elif status_key in processed_keys:
+            processed += 1
+            processed_rows.append(order)
+            point["processed"] += 1
         if status_key in selected_keys:
             status_counts[status] += 1
 
-    total = len(rows)
-    sub_total = sum((order.sub_total or Decimal("0") for order in rows), Decimal("0"))
-    shipping = sum((order.shipping or Decimal("0") for order in rows), Decimal("0"))
-    coupon = sum((_coupon_amount(order) for order in rows), Decimal("0"))
-    taxes = sum((order.tax or Decimal("0") for order in rows), Decimal("0"))
-    total_value = sum((order.total or Decimal("0") for order in rows), Decimal("0"))
-    customers = len({_customer_key(order) for order in rows})
+    received_totals = _order_stage_totals(rows)
+    stage_totals = {
+        "received": received_totals,
+        "processed": _order_stage_totals(processed_rows),
+        "completed": _order_stage_totals(completed_rows),
+        "cancelled": _order_stage_totals(cancelled_rows),
+    }
+    total = received_totals["orders"]
+    open_orders = max(total - completed - cancelled, 0)
     return {
         "key": period["key"],
         "label": period["label"],
         "date_from": start.isoformat(),
         "date_to": end.isoformat(),
-        "orders": total,
+        **received_totals,
+        "processed": processed,
         "completed": completed,
         "cancelled": cancelled,
-        "open": max(total - completed - cancelled, 0),
+        "open": open_orders,
+        "other_open": max(open_orders - processed, 0),
+        "processed_rate": round((processed / total * 100) if total else 0, 2),
         "completion_rate": round((completed / total * 100) if total else 0, 2),
-        "customers": customers,
-        "sub_total": dec_to_float(sub_total),
-        "shipping": dec_to_float(shipping),
-        "coupon": dec_to_float(coupon),
-        "taxes": dec_to_float(taxes),
-        "total_value": dec_to_float(total_value),
-        "average_order_value": dec_to_float(total_value / total) if total else 0,
+        "stage_totals": stage_totals,
         "status_counts": [
             {"status": status, "orders": count}
             for status, count in sorted(status_counts.items(), key=lambda item: (-item[1], item[0].casefold()))
         ],
         "series": list(series.values()),
+    }
+
+
+def _order_stage_totals(orders: list[OpenCartOrder]) -> dict[str, Any]:
+    count = len(orders)
+    sub_total = sum((order.sub_total or Decimal("0") for order in orders), Decimal("0"))
+    shipping = sum((order.shipping or Decimal("0") for order in orders), Decimal("0"))
+    coupon = sum((_coupon_amount(order) for order in orders), Decimal("0"))
+    taxes = sum((order.tax or Decimal("0") for order in orders), Decimal("0"))
+    total_value = sum((order.total or Decimal("0") for order in orders), Decimal("0"))
+    return {
+        "orders": count,
+        "customers": len({_customer_key(order) for order in orders}),
+        "sub_total": dec_to_float(sub_total),
+        "shipping": dec_to_float(shipping),
+        "coupon": dec_to_float(coupon),
+        "taxes": dec_to_float(taxes),
+        "total_value": dec_to_float(total_value),
+        "average_order_value": dec_to_float(total_value / count) if count else 0,
     }
 
 
@@ -351,6 +393,7 @@ def _normalize_analytics_defaults(
     *,
     statuses: list[str],
     aging_statuses: list[str],
+    processed_statuses: list[str],
     completed_statuses: list[str],
     cancelled_statuses: list[str],
 ) -> dict[str, Any]:
@@ -363,6 +406,11 @@ def _normalize_analytics_defaults(
         if _status_key(name) not in cancelled_keys
     ]
     terminal_keys = cancelled_keys | {_status_key(name) for name in completed}
+    processed = [
+        name
+        for name in _unique_status_names(values.get("processed_statuses"), processed_statuses)
+        if _status_key(name) not in terminal_keys
+    ]
     aging = [
         name
         for name in _unique_status_names(values.get("aging_statuses"), aging_statuses)
@@ -373,6 +421,7 @@ def _normalize_analytics_defaults(
     return {
         "statuses": displayed,
         "aging_statuses": aging,
+        "processed_statuses": processed,
         "completed_statuses": completed,
         "cancelled_statuses": cancelled,
         "group_by": group_by if group_by in {"day", "month"} else "day",

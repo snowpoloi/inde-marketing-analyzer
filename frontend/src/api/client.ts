@@ -167,6 +167,7 @@ export type OrderAnalyticsPeriodInput = {
 export type OrderAnalyticsDefaults = {
   statuses: string[];
   aging_statuses: string[];
+  processed_statuses: string[];
   completed_statuses: string[];
   cancelled_statuses: string[];
   group_by: "day" | "month";
@@ -176,6 +177,7 @@ export type OrderAnalyticsDefaults = {
 export type OrderAnalyticsOptions = {
   statuses: Array<{ name: string; orders: number }>;
   aging_statuses: string[];
+  processed_statuses: string[];
   completed_statuses: string[];
   cancelled_statuses: string[];
   defaults: OrderAnalyticsDefaults;
@@ -184,16 +186,31 @@ export type OrderAnalyticsOptions = {
 export type OrderAnalyticsPoint = {
   bucket: string;
   orders: number;
+  processed: number;
   completed: number;
   cancelled: number;
+};
+
+export type OrderStageTotals = {
+  orders: number;
+  customers: number;
+  sub_total: number;
+  shipping: number;
+  coupon: number;
+  taxes: number;
+  total_value: number;
+  average_order_value: number;
 };
 
 export type OrderAnalyticsPeriod = OrderAnalyticsPeriodInput & {
   orders: number;
   customers: number;
+  processed: number;
   completed: number;
   cancelled: number;
   open: number;
+  other_open: number;
+  processed_rate: number;
   completion_rate: number;
   sub_total: number;
   shipping: number;
@@ -201,6 +218,12 @@ export type OrderAnalyticsPeriod = OrderAnalyticsPeriodInput & {
   taxes: number;
   total_value: number;
   average_order_value: number;
+  stage_totals: {
+    received: OrderStageTotals;
+    processed: OrderStageTotals;
+    completed: OrderStageTotals;
+    cancelled: OrderStageTotals;
+  };
   status_counts: Array<{ status: string; orders: number }>;
   series: OrderAnalyticsPoint[];
 };
@@ -228,10 +251,14 @@ export type StaleOrder = {
 export type OrderAnalytics = {
   summary: {
     orders: number;
+    processed: number;
     completed: number;
     cancelled: number;
     open: number;
+    other_open: number;
+    processed_rate: number;
     completion_rate: number;
+    stage_totals: OrderAnalyticsPeriod["stage_totals"];
     stale_orders: number;
     primary_period: string;
   };
@@ -247,6 +274,7 @@ export type OrderAnalyticsRequest = {
   periods: OrderAnalyticsPeriodInput[];
   statuses: string[];
   aging_statuses: string[];
+  processed_statuses: string[];
   completed_statuses: string[];
   cancelled_statuses: string[];
   group_by: "day" | "month";

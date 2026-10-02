@@ -31,15 +31,23 @@ const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 1 });
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const dateFormatter = new Intl.DateTimeFormat("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" });
 const periodColors = ["#166b57", "#2f6fba", "#bd6b22", "#a23a55"];
+const orderStages = [
+  { key: "received", label: "Received", detail: "All orders in the period" },
+  { key: "processed", label: "Processing", detail: "Selected processing statuses" },
+  { key: "completed", label: "Completed", detail: "Selected completed statuses" },
+  { key: "cancelled", label: "Cancelled", detail: "Selected cancelled statuses" }
+] as const;
 
 const emptyOptions: OrderAnalyticsOptions = {
   statuses: [],
   aging_statuses: [],
+  processed_statuses: [],
   completed_statuses: [],
   cancelled_statuses: [],
   defaults: {
     statuses: [],
     aging_statuses: [],
+    processed_statuses: [],
     completed_statuses: [],
     cancelled_statuses: [],
     group_by: "day",
@@ -138,7 +146,7 @@ function ComparisonChart({
   periods
 }: {
   title: string;
-  metric: "orders" | "completed";
+  metric: "orders" | "processed" | "completed" | "cancelled";
   periods: OrderAnalyticsPeriod[];
 }) {
   const width = 960;
@@ -147,7 +155,7 @@ function ComparisonChart({
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
   const pointCount = Math.max(...periods.map((period) => period.series.length), 1);
-  const maxValue = Math.max(...periods.flatMap((period) => period.series.map((point) => point[metric])), 1);
+  const maxValue = Math.max(...periods.flatMap((period) => period.series.map((point) => point[metric] ?? 0)), 1);
   const yMax = Math.max(Math.ceil(maxValue / 5) * 5, 5);
   const x = (index: number) => pad.left + (pointCount <= 1 ? plotWidth / 2 : (index / (pointCount - 1)) * plotWidth);
   const y = (value: number) => pad.top + plotHeight - (value / yMax) * plotHeight;
@@ -185,7 +193,7 @@ function ComparisonChart({
             </text>
           ))}
           {periods.map((period, periodIndex) => {
-            const points = period.series.map((point, index) => `${x(index)},${y(point[metric])}`).join(" ");
+            const points = period.series.map((point, index) => `${x(index)},${y(point[metric] ?? 0)}`).join(" ");
             return (
               <g key={period.key}>
                 <polyline
@@ -198,8 +206,8 @@ function ComparisonChart({
                 />
                 {period.series.length <= 62
                   ? period.series.map((point, index) => (
-                      <circle key={point.bucket} cx={x(index)} cy={y(point[metric])} r="3.5" fill={periodColors[periodIndex]}>
-                        <title>{`${period.label} | ${point.bucket}: ${point[metric]}`}</title>
+                      <circle key={point.bucket} cx={x(index)} cy={y(point[metric] ?? 0)} r="3.5" fill={periodColors[periodIndex]}>
+                        <title>{`${period.label} | ${point.bucket}: ${point[metric] ?? 0}`}</title>
                       </circle>
                     ))
                   : null}
@@ -219,6 +227,7 @@ export function OrderAnalyticsPage() {
   const [options, setOptions] = useState<OrderAnalyticsOptions>(emptyOptions);
   const [displayedStatuses, setDisplayedStatuses] = useState<string[]>([]);
   const [agingStatuses, setAgingStatuses] = useState<string[]>([]);
+  const [processedStatuses, setProcessedStatuses] = useState<string[]>([]);
   const [completedStatuses, setCompletedStatuses] = useState<string[]>([]);
   const [cancelledStatuses, setCancelledStatuses] = useState<string[]>([]);
   const [analytics, setAnalytics] = useState<OrderAnalytics | null>(null);
@@ -245,6 +254,7 @@ export function OrderAnalyticsPage() {
       periods,
       statuses: displayedStatuses,
       aging_statuses: agingStatuses,
+      processed_statuses: processedStatuses,
       completed_statuses: completedStatuses,
       cancelled_statuses: cancelledStatuses,
       group_by: groupBy,
@@ -258,10 +268,12 @@ export function OrderAnalyticsPage() {
     setSavedMessage("");
     const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
     const safeAgingStatuses = agingStatuses.filter((status) => !terminalStatuses.has(status));
+    const safeProcessedStatuses = processedStatuses.filter((status) => !terminalStatuses.has(status));
     try {
       const result = await api.saveOrderAnalyticsDefaults({
         statuses: displayedStatuses,
         aging_statuses: safeAgingStatuses,
+        processed_statuses: safeProcessedStatuses,
         completed_statuses: completedStatuses,
         cancelled_statuses: cancelledStatuses,
         group_by: groupBy,
@@ -269,13 +281,26 @@ export function OrderAnalyticsPage() {
       });
       const nextOptions = result.data;
       const defaults = nextOptions.defaults;
+      const nextProcessedStatuses = defaults.processed_statuses ?? nextOptions.processed_statuses ?? [];
       setOptions(nextOptions);
       setDisplayedStatuses(defaults.statuses);
       setAgingStatuses(defaults.aging_statuses);
+      setProcessedStatuses(nextProcessedStatuses);
       setCompletedStatuses(defaults.completed_statuses);
       setCancelledStatuses(defaults.cancelled_statuses);
       setGroupBy(defaults.group_by);
       setStaleDays(defaults.stale_days);
+      const analyticsResult = await api.orderAnalytics({
+        periods,
+        statuses: defaults.statuses,
+        aging_statuses: defaults.aging_statuses,
+        processed_statuses: nextProcessedStatuses,
+        completed_statuses: defaults.completed_statuses,
+        cancelled_statuses: defaults.cancelled_statuses,
+        group_by: defaults.group_by,
+        stale_days: defaults.stale_days
+      });
+      setAnalytics(analyticsResult.data);
       setSavedMessage("Order analytics defaults saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save order analytics defaults");
@@ -297,14 +322,17 @@ export function OrderAnalyticsPage() {
         const defaults = nextOptions.defaults ?? {
           statuses: allStatuses,
           aging_statuses: nextOptions.aging_statuses,
+          processed_statuses: nextOptions.processed_statuses,
           completed_statuses: nextOptions.completed_statuses,
           cancelled_statuses: nextOptions.cancelled_statuses,
           group_by: "day" as const,
           stale_days: 3
         };
+        const nextProcessedStatuses = defaults.processed_statuses ?? nextOptions.processed_statuses ?? [];
         setOptions(nextOptions);
         setDisplayedStatuses(defaults.statuses);
         setAgingStatuses(defaults.aging_statuses);
+        setProcessedStatuses(nextProcessedStatuses);
         setCompletedStatuses(defaults.completed_statuses);
         setCancelledStatuses(defaults.cancelled_statuses);
         setGroupBy(defaults.group_by);
@@ -313,6 +341,7 @@ export function OrderAnalyticsPage() {
           periods,
           statuses: defaults.statuses,
           aging_statuses: defaults.aging_statuses,
+          processed_statuses: nextProcessedStatuses,
           completed_statuses: defaults.completed_statuses,
           cancelled_statuses: defaults.cancelled_statuses,
           group_by: defaults.group_by,
@@ -367,7 +396,7 @@ export function OrderAnalyticsPage() {
       .filter((row) => row.values.some((value) => value > 0));
   }, [analytics, displayedStatuses, options.statuses]);
 
-  const agingOptions = useMemo(() => {
+  const nonTerminalOptions = useMemo(() => {
     const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
     return options.statuses.filter((option) => !terminalStatuses.has(option.name));
   }, [cancelledStatuses, completedStatuses, options.statuses]);
@@ -441,7 +470,7 @@ export function OrderAnalyticsPage() {
         <div className="panel-title">
           <div>
             <h2>Comparison</h2>
-            <span>Choose two to four periods and classify the statuses used as completed or cancelled.</span>
+            <span>Choose two to four periods and classify processing, completed and cancelled statuses.</span>
           </div>
           <div className="preset-tabs" aria-label="Chart interval">
             <button className={`date-preset ${groupBy === "day" ? "active" : ""}`} onClick={() => setGroupBy("day")}>Day</button>
@@ -504,12 +533,12 @@ export function OrderAnalyticsPage() {
         <div className="analytics-status-grid">
           <StatusPicker title="Displayed statuses" options={options.statuses} selected={displayedStatuses} onChange={setDisplayedStatuses} />
           <StatusPicker
-            title="Aging statuses"
-            options={agingOptions}
-            selected={agingStatuses}
+            title="Processing statuses"
+            options={nonTerminalOptions}
+            selected={processedStatuses}
             onChange={(next) => {
               const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
-              setAgingStatuses(next.filter((status) => !terminalStatuses.has(status)));
+              setProcessedStatuses(next.filter((status) => !terminalStatuses.has(status)));
             }}
           />
           <StatusPicker
@@ -519,6 +548,7 @@ export function OrderAnalyticsPage() {
             onChange={(next) => {
               setCompletedStatuses(next);
               setCancelledStatuses((current) => current.filter((status) => !next.includes(status)));
+              setProcessedStatuses((current) => current.filter((status) => !next.includes(status)));
               setAgingStatuses((current) => current.filter((status) => !next.includes(status)));
             }}
           />
@@ -529,17 +559,27 @@ export function OrderAnalyticsPage() {
             onChange={(next) => {
               setCancelledStatuses(next);
               setCompletedStatuses((current) => current.filter((status) => !next.includes(status)));
+              setProcessedStatuses((current) => current.filter((status) => !next.includes(status)));
               setAgingStatuses((current) => current.filter((status) => !next.includes(status)));
+            }}
+          />
+          <StatusPicker
+            title="Aging statuses"
+            options={nonTerminalOptions}
+            selected={agingStatuses}
+            onChange={(next) => {
+              const terminalStatuses = new Set([...completedStatuses, ...cancelledStatuses]);
+              setAgingStatuses(next.filter((status) => !terminalStatuses.has(status)));
             }}
           />
         </div>
       </section>
 
       <section className="stats-grid analytics-stats-grid">
-        <StatCard label="Orders received" value={number.format(primary?.orders ?? 0)} detail={primary?.primary_period ?? "Current period"} icon={ShoppingCart} />
-        <StatCard label="Completed" value={number.format(primary?.completed ?? 0)} detail={`${number.format(primary?.completion_rate ?? 0)}% completion`} icon={CheckCircle2} />
-        <StatCard label="Cancelled" value={number.format(primary?.cancelled ?? 0)} detail="Selected cancelled statuses" icon={XCircle} />
-        <StatCard label="Still open" value={number.format(primary?.open ?? 0)} detail="Neither completed nor cancelled" icon={ListFilter} />
+        <StatCard label="Orders received" value={number.format(primary?.orders ?? 0)} detail={`${currency.format(primary?.stage_totals?.received.total_value ?? 0)} order value`} icon={ShoppingCart} />
+        <StatCard label="Processing" value={number.format(primary?.processed ?? 0)} detail={`${currency.format(primary?.stage_totals?.processed.total_value ?? 0)} expected value`} icon={ListFilter} />
+        <StatCard label="Completed" value={number.format(primary?.completed ?? 0)} detail={`${currency.format(primary?.stage_totals?.completed.total_value ?? 0)} completed value`} icon={CheckCircle2} />
+        <StatCard label="Cancelled" value={number.format(primary?.cancelled ?? 0)} detail={`${currency.format(primary?.stage_totals?.cancelled.total_value ?? 0)} cancelled value`} icon={XCircle} />
         <StatCard label="Stale now" value={number.format(primary?.stale_orders ?? 0)} detail={`At least ${number.format(appliedStaleDays)} days in status`} icon={Clock3} />
       </section>
 
@@ -547,7 +587,9 @@ export function OrderAnalyticsPage() {
         <>
           <div className="analytics-chart-grid">
             <ComparisonChart title="Orders received" metric="orders" periods={analytics.periods} />
+            <ComparisonChart title="Orders processing" metric="processed" periods={analytics.periods} />
             <ComparisonChart title="Orders completed" metric="completed" periods={analytics.periods} />
+            <ComparisonChart title="Orders cancelled" metric="cancelled" periods={analytics.periods} />
           </div>
 
           <section className="panel">
@@ -563,9 +605,10 @@ export function OrderAnalyticsPage() {
                     <th>Date range</th>
                     <th className="align-right">Received</th>
                     <th className="align-right">Customers</th>
+                    <th className="align-right">Processing</th>
                     <th className="align-right">Completed</th>
                     <th className="align-right">Cancelled</th>
-                    <th className="align-right">Open</th>
+                    <th className="align-right">Other open</th>
                     <th className="align-right">Subtotal</th>
                     <th className="align-right">Shipping</th>
                     <th className="align-right">Coupon</th>
@@ -582,9 +625,10 @@ export function OrderAnalyticsPage() {
                       <td>{formatDate(period.date_from)} - {formatDate(period.date_to)}</td>
                       <td className="align-right">{number.format(period.orders)}</td>
                       <td className="align-right">{number.format(period.customers)}</td>
+                      <td className="align-right">{number.format(period.processed)}</td>
                       <td className="align-right">{number.format(period.completed)}</td>
                       <td className="align-right">{number.format(period.cancelled)}</td>
-                      <td className="align-right">{number.format(period.open)}</td>
+                      <td className="align-right">{number.format(period.other_open)}</td>
                       <td className="align-right">{currency.format(period.sub_total)}</td>
                       <td className="align-right">{currency.format(period.shipping)}</td>
                       <td className="align-right">{currency.format(period.coupon)}</td>
@@ -594,6 +638,58 @@ export function OrderAnalyticsPage() {
                       <td className="align-right">{number.format(period.completion_rate)}%</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-title">
+              <div>
+                <h2>Order stage values</h2>
+                <span>Received is the full period; processing, completed and cancelled are current-status subsets.</span>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Stage</th>
+                    <th className="align-right">Orders</th>
+                    <th className="align-right">Customers</th>
+                    <th className="align-right">Subtotal</th>
+                    <th className="align-right">Shipping</th>
+                    <th className="align-right">Coupon</th>
+                    <th className="align-right">Taxes</th>
+                    <th className="align-right">Total value</th>
+                    <th className="align-right">Avg. order value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analytics.periods.flatMap((period) => orderStages.map((stage) => {
+                    const totals = period.stage_totals?.[stage.key];
+                    if (!totals) return null;
+                    return (
+                      <tr key={`${period.key}-${stage.key}`}>
+                        <td><strong>{period.label}</strong></td>
+                        <td>
+                          <div className="audit-title-cell">
+                            <strong>{stage.label}</strong>
+                            <span>{stage.detail}</span>
+                          </div>
+                        </td>
+                        <td className="align-right">{number.format(totals.orders)}</td>
+                        <td className="align-right">{number.format(totals.customers)}</td>
+                        <td className="align-right">{currency.format(totals.sub_total)}</td>
+                        <td className="align-right">{currency.format(totals.shipping)}</td>
+                        <td className="align-right">{currency.format(totals.coupon)}</td>
+                        <td className="align-right">{currency.format(totals.taxes)}</td>
+                        <td className="align-right"><strong>{currency.format(totals.total_value)}</strong></td>
+                        <td className="align-right">{currency.format(totals.average_order_value)}</td>
+                      </tr>
+                    );
+                  }))}
                 </tbody>
               </table>
             </div>
