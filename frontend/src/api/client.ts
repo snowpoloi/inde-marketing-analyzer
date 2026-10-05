@@ -337,6 +337,19 @@ export type UnmatchedSupplierProduct = {
   description: string | null;
   status: string;
   candidates: SupplierMatchCandidate[];
+  reason?: string;
+  documents?: Array<{ number: string | null; date: string; type: string; purchase_cost: number; description: string | null }>;
+};
+
+export type SupplierGmailSource = {
+  id: string; mailbox: string; message_id: string; filename: string | null;
+  status: string; reason: string | null; duplicate_of_id: string | null; created_at: string;
+  payload: { documents?: Array<{
+    document_type: string; document_number: string; document_date: string;
+    net_products_total: string; net_shipping_total: string; vat_total: string; gross_total: string;
+    lines: Array<{ line_number: string; line_type: string; supplier_sku: string | null; supplier_code: string | null;
+      description: string; quantity: string; unit_price_before_discount: string; net_line_total: string }>;
+  }> };
 };
 
 export type SupplierPerformance = {
@@ -431,6 +444,12 @@ export const api = {
     }),
   supplierSummary: (dateFrom: string, dateTo: string) =>
     request<{ data: SupplierSummary }>(`/suppliers/summary?date_from=${dateFrom}&date_to=${dateTo}`),
+  supplierGmailSources: (offset = 0) => request<{ data: { mailbox: string; configured: boolean; rows: SupplierGmailSource[] } }>(`/suppliers/gmail?offset=${offset}`),
+  syncSupplierGmail: (dateFrom: string, dateTo: string, pageToken: string | null) =>
+    request<{ data: { pending: number; duplicate: number; review: number; existing: number; next_page_token: string | null } }>("/suppliers/gmail/sync", {
+      method: "POST", body: JSON.stringify({ date_from: dateFrom, date_to: dateTo, page_token: pageToken }) }),
+  reviewSupplierGmail: (id: string, payload: { action: "approve" | "reject"; confirm_supplier_order?: boolean; shipping_net?: string; shipping_vat?: string }) =>
+    request<{ data: { documents_imported?: number; unmatched_lines?: number; duplicate?: boolean } }>(`/suppliers/gmail/${id}/review`, { method: "PUT", body: JSON.stringify(payload) }),
   supplierProducts: (asOf: string) =>
     request<{ data: { rows: SupplierProduct[] } }>(`/suppliers/products?as_of=${asOf}`),
   unmatchedSupplierProducts: () =>

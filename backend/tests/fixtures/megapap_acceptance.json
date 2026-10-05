@@ -1,0 +1,16 @@
+{
+  "supplier": {"code": "MEGAPAP", "name": "MEGAPAP"},
+  "supplier_internal_code": "0212605",
+  "supplier_sku": "GP041-0025,4",
+  "opencart_model": "GP041-0025,4",
+  "purchase_unit_cost_net": "8.73",
+  "selling_price_gross": "15.90",
+  "vat_rate": "24",
+  "historical_costs": [
+    {"date": "2026-07-01", "cost": "8.20"},
+    {"date": "2026-09-01", "cost": "8.50"},
+    {"date": "2026-10-02", "cost": "8.73"}
+  ],
+  "supplier_order_net_products": "85.68",
+  "supplier_freight_net": "4.90"
+}

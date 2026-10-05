@@ -188,6 +188,10 @@ def exact_catalog_matches(
             matches[catalog.key] = candidate
 
     catalog_rows = list(catalogs)
+    if "megapap" in supplier_name:
+        # MEGAPAP's supplier SKU identifies the OpenCart model, not its internal code.
+        return [MatchCandidate(catalog, "exact_supplier_sku_to_model", Decimal("0.99"))
+                for catalog in catalog_rows if sku and sku == normalize_identifier(catalog.model)]
     if sku:
         for catalog in catalog_rows:
             if sku == normalize_identifier(catalog.sku):

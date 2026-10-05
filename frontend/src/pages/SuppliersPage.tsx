@@ -22,12 +22,13 @@ import {
 import { DataTable, type Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { SupplierGmailPanel } from "../components/SupplierGmailPanel";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2, style: "percent" });
 
-type Tab = "products" | "unmatched" | "performance" | "import";
+type Tab = "products" | "unmatched" | "performance" | "import" | "gmail";
 
 function isoDate(offset = 0) {
   const value = new Date();
@@ -339,6 +340,8 @@ export function SuppliersPage() {
         )
       },
       { key: "description", header: "Description", render: (row) => row.description || "-" },
+      { key: "evidence", header: "Document / cost", render: (row) => <div className="stacked-cell">{row.documents?.map((doc, index) => <span key={index}>{doc.number || "-"} | {doc.date} | {currency.format(doc.purchase_cost)}</span>)}</div> },
+      { key: "reason", header: "Review reason", render: (row) => row.reason || "No verified mapping" },
       {
         key: "candidate",
         header: "OpenCart candidate",
@@ -451,9 +454,11 @@ export function SuppliersPage() {
         <button className={tab === "unmatched" ? "active" : ""} onClick={() => setTab("unmatched")}>Unmatched products</button>
         <button className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>Supplier performance</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>Import</button>
+        <button className={tab === "gmail" ? "active" : ""} onClick={() => setTab("gmail")}>Gmail documents</button>
       </div>
 
-      {tab !== "import" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+      {tab !== "import" && tab !== "gmail" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+      {tab === "gmail" && <SupplierGmailPanel onImported={load} />}
 
       {tab === "products" ? (
         <section className="panel">

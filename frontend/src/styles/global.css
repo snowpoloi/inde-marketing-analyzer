@@ -608,6 +608,17 @@ tr:last-child td {
 }
 
 .supplier-filter { max-width: 440px; width: 100%; }
+.supplier-gmail .panel-title { flex-wrap: wrap; gap: 12px; }
+.supplier-gmail h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; overflow-wrap: anywhere; }
+.supplier-gmail-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin: 16px 0; }
+.supplier-gmail-controls label { display: grid; gap: 6px; min-width: 150px; max-width: 100%; }
+.supplier-gmail-controls input { width: 100%; min-width: 0; }
+.supplier-gmail-pagination { display: flex; align-items: center; justify-content: end; gap: 12px; margin-top: 12px; }
+.supplier-gmail-review { border-top: 1px solid #dce4df; margin-top: 20px; padding-top: 16px; }
+.supplier-gmail-totals { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.supplier-gmail-confirm { display: flex; align-items: center; gap: 8px; }
+.supplier-gmail-confirm input { flex: 0 0 16px; width: 16px; height: 16px; }
+.supplier-gmail p { overflow-wrap: anywhere; }
 .supplier-candidate { width: 330px; display: grid; gap: 8px; }
 .supplier-search { display: flex; align-items: center; gap: 6px; }
 .supplier-search input { min-width: 0; flex: 1; }

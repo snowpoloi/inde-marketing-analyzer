@@ -123,3 +123,22 @@ class ManualSupplierCostRequest(SupplierBase):
         if self.net_unit_cost < 0:
             raise ValueError("Net unit cost cannot be negative.")
         return self
+
+
+class SupplierGmailSyncRequest(SupplierBase):
+    date_from: date
+    date_to: date
+    page_token: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.date_to < self.date_from or (self.date_to - self.date_from).days > 90:
+            raise ValueError("Gmail received-date range must be between 0 and 90 days.")
+        return self
+
+
+class SupplierGmailReviewRequest(SupplierBase):
+    action: Literal["approve", "reject"]
+    confirm_supplier_order: bool = False
+    shipping_net: Decimal | None = Field(default=None, ge=0)
+    shipping_vat: Decimal | None = Field(default=None, ge=0)

@@ -18,7 +18,7 @@ def db():
     with engine.connect() as connection:
         transaction = connection.begin()
         session = Session(connection, autoflush=False, join_transaction_mode="create_savepoint")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0008_supplier_cogs"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0009_supplier_gmail"
         yield session
         session.close()
         transaction.rollback()

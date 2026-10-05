@@ -26,6 +26,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://analyzer.inde.gr,http://localhost:3000,http://localhost:5173}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@inde.gr}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-admin-password}
+      SUPPLIER_GMAIL_ENABLED: ${SUPPLIER_GMAIL_ENABLED:-false}
+      SUPPLIER_GMAIL_CLIENT_ID: ${SUPPLIER_GMAIL_CLIENT_ID:-}
+      SUPPLIER_GMAIL_CLIENT_SECRET: ${SUPPLIER_GMAIL_CLIENT_SECRET:-}
+      SUPPLIER_GMAIL_REFRESH_TOKEN: ${SUPPLIER_GMAIL_REFRESH_TOKEN:-}
       SYNC_DAILY_HOUR: ${SYNC_DAILY_HOUR:-4}
       SYNC_TIMEZONE: ${SYNC_TIMEZONE:-Europe/Athens}
     depends_on:

@@ -16,6 +16,11 @@ async function main() {
       let matched = false;
       let manualSaved = false;
       let threshold = null;
+      let gmailAccepted = false;
+      let gmailRejected = false;
+      const gmailPayload = { documents: [{ document_type: "supplier_order", document_number: "TEST-ORDER-1", document_date: "2026-10-02",
+        net_products_total: "8.73", net_shipping_total: "4.90", vat_total: "2.10", gross_total: "15.73",
+        lines: [{ line_number: "1", line_type: "product", supplier_sku: "GP041-0025,4", supplier_code: "0212605", description: "Test product", quantity: "1", unit_price_before_discount: "8.73", net_line_total: "8.73" }] }] };
       const mapping = { mapping_id: "m1", supplier_id: "s1", supplier: "MEGAPAP", supplier_sku: "GP041-0025,4",
         supplier_code: "0212605", supplier_ean: null, product_catalog_id: "p1", opencart_product_id: "1",
         opencart_sku: "INDE-1", opencart_model: "GP041-0025,4", product_name: "Supplier product example",
@@ -43,6 +48,24 @@ async function main() {
         else if (url.pathname.endsWith("/settings")) { threshold = route.request().postDataJSON().free_shipping_threshold; response = { data: { saved: true } }; }
         else if (url.pathname.endsWith("/shipping-simulation")) response = { data: { threshold: 100, eligible_orders: 0, orders: 1, potential_savings: 0, additional_purchase_to_threshold: 14.32 } };
         else if (url.pathname.endsWith("/imports/json")) response = { data: { batch_id: "b1", duplicate: false, documents_imported: 1, matched_lines: 1, unmatched_lines: 0 } };
+        else if (url.pathname.endsWith("/suppliers/gmail")) response = { data: { mailbox: "info@inde.gr", configured: true, rows: [
+          { id: "g1", mailbox: "info@inde.gr", message_id: "abc123", filename: "Invoice-TEST.pdf", status: gmailAccepted ? "imported" : "pending", reason: gmailAccepted ? null : "Confirm document type and freight tax basis.", payload: gmailPayload },
+          { id: "g2", mailbox: "info@inde.gr", message_id: "def456", filename: "scanned.pdf", status: gmailRejected ? "rejected" : "review", reason: "Unsupported layout; manual review required.", payload: {} }
+        ] } };
+        else if (url.pathname.endsWith("/suppliers/gmail/sync")) {
+          const body = route.request().postDataJSON(); assert(body.date_from && body.date_to);
+          response = { data: { pending: 1, review: 1, duplicate: 0, existing: 0, next_page_token: body.page_token ? null : "next" } };
+        }
+        else if (url.pathname.endsWith("/gmail/g1/review")) {
+          const body = route.request().postDataJSON();
+          assert.equal(body.action, "approve"); assert.equal(body.confirm_supplier_order, true);
+          assert.equal(body.shipping_net, "4.90"); assert.equal(body.shipping_vat, "0");
+          gmailAccepted = true; response = { data: { documents_imported: 1, unmatched_lines: 0 } };
+        }
+        else if (url.pathname.endsWith("/gmail/g2/review")) {
+          assert.equal(route.request().postDataJSON().action, "reject");
+          gmailRejected = true; response = { data: { rejected: true } };
+        }
         else throw new Error(`Unmocked request: ${url.pathname}`);
         await route.fulfill({ json: response });
       });
@@ -82,6 +105,24 @@ async function main() {
       await page.getByRole("button", { name: "Import", exact: true }).last().click();
       await page.getByText("1 documents imported, 1 matched and 0 sent to review.").waitFor();
       assert.equal(await page.locator('input[type="file"]').inputValue(), "");
+      await page.getByRole("button", { name: "Gmail documents", exact: true }).click();
+      await page.getByRole("button", { name: "Read Gmail", exact: true }).click();
+      await page.getByRole("button", { name: "Next Gmail page", exact: true }).click();
+      await page.getByRole("button", { name: "Review document TEST-ORDER-1", exact: true }).click();
+      assert(await page.getByRole("button", { name: "Accept cost evidence" }).isDisabled());
+      await page.getByLabel("Confirmed freight net").fill("4.90");
+      await page.getByLabel("Confirmed freight VAT").fill("0");
+      await page.getByLabel("Supplier order cost evidence, not a fiscal invoice").check();
+      await page.screenshot({ path: `test-results/supplier-gmail-${viewport.width}.png`, fullPage: true });
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Gmail page overflow");
+      await page.getByRole("button", { name: "Accept cost evidence" }).click();
+      await page.getByText("Cost evidence accepted.", { exact: true }).waitFor();
+      assert(gmailAccepted);
+      await page.getByRole("button", { name: "Review document scanned.pdf", exact: true }).click();
+      assert.equal(await page.getByRole("button", { name: "Accept cost evidence" }).count(), 0);
+      await page.getByRole("button", { name: "Reject document" }).click();
+      await page.getByText("Document rejected.", { exact: true }).waitFor();
+      assert(gmailRejected);
       assert.deepEqual(errors, []);
       await context.close();
       console.log(`Supplier workflows passed at ${viewport.width}px`);

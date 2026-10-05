@@ -502,6 +502,31 @@ class SupplierShippingCost(TimestampMixin, Base):
     raw_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class SupplierGmailSource(TimestampMixin, Base):
+    __tablename__ = "supplier_gmail_sources"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_supplier_gmail_sources_source_key"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    mailbox: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    part_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    attachment_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    semantic_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    duplicate_of_id: Mapped[PyUUID | None] = mapped_column(PG_UUID(as_uuid=True),
+        ForeignKey("supplier_gmail_sources.id", ondelete="SET NULL"), nullable=True)
+    import_batch_id: Mapped[PyUUID | None] = mapped_column(PG_UUID(as_uuid=True),
+        ForeignKey("supplier_import_batches.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by: Mapped[PyUUID | None] = mapped_column(PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ShoplySale(TimestampMixin, Base):
     __tablename__ = "shoply_sales"
 

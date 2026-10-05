@@ -25,6 +25,10 @@ from app.services.supplier_service import (
 )
 from app.supplier_parsers import NormalizedJsonParser
 from app.models import Supplier
+from app.core.config import settings
+from app.connectors.supplier_gmail import GmailReadError, MAILBOX
+from app.schemas.suppliers import SupplierGmailSyncRequest, SupplierGmailReviewRequest
+from app.services.supplier_gmail_service import sync_supplier_gmail, gmail_source_rows, review_gmail_source
 
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
@@ -72,6 +76,40 @@ def performance(
 ):
     start, end = _dates(date_from, date_to)
     return {"data": {"rows": supplier_performance(db, start, end)}}
+
+
+@router.get("/gmail")
+def gmail_sources(offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=100),
+                  _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    configured = settings.supplier_gmail_enabled and all((settings.supplier_gmail_client_id,
+        settings.supplier_gmail_client_secret, settings.supplier_gmail_refresh_token))
+    return {"data": {"mailbox": MAILBOX, "configured": bool(configured),
+                     "rows": gmail_source_rows(db, offset=offset, limit=limit)}}
+
+
+@router.post("/gmail/sync")
+def gmail_sync(payload: SupplierGmailSyncRequest, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": sync_supplier_gmail(db, payload)}
+    except GmailReadError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Gmail document could not be staged; review the source.") from None
+
+
+@router.put("/gmail/{source_id}/review")
+def gmail_review(source_id: UUID, payload: SupplierGmailReviewRequest,
+                 user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": review_gmail_source(db, source_id, payload, user)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Document conflicts with existing financial evidence; manual review required.") from None
 
 
 @router.post("/imports")

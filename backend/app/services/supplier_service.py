@@ -317,7 +317,7 @@ def _create_shipping_cost(
     return shipping
 
 
-def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_id: UUID | None = None) -> dict[str, Any]:
+def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_id: UUID | None = None, *, commit: bool = True) -> dict[str, Any]:
     # Serialize imports for one supplier across workers, before checking identities.
     lock_key = int.from_bytes(hashlib.sha256(_supplier_code(payload.supplier.code).encode()).digest()[:8], "big", signed=True)
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
@@ -486,7 +486,10 @@ def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_
 
     batch.status = "completed"
     batch.imported_documents = imported
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {
         "batch_id": str(batch.id),
         "duplicate": False,
@@ -695,6 +698,10 @@ def unmatched_products(db: Session) -> list[dict[str, Any]]:
             description=mapping.product_name,
             manufacturer=(mapping.raw_metadata or {}).get("manufacturer"),
         )
+        evidence = db.execute(select(SupplierDocumentLine, SupplierDocument)
+            .join(SupplierDocument, SupplierDocumentLine.document_id == SupplierDocument.id)
+            .where(SupplierDocumentLine.supplier_product_map_id == mapping.id)
+            .order_by(SupplierDocument.document_date.desc(), SupplierDocumentLine.id).limit(20)).all()
         candidates: list[MatchCandidate] = []
         seen: set[str] = set()
         for candidate in [*exact, *fuzzy]:
@@ -710,6 +717,10 @@ def unmatched_products(db: Session) -> list[dict[str, Any]]:
                 "supplier_ean": mapping.supplier_ean,
                 "description": mapping.product_name,
                 "status": mapping.status,
+                "reason": "Multiple exact products" if mapping.match_method == "ambiguous_exact" else "No unique exact match; name candidates require verification",
+                "documents": [{"number": document.document_number, "date": document.document_date.isoformat(),
+                               "type": document.document_type, "purchase_cost": dec_to_float(line.net_unit_cost),
+                               "description": line.description} for line, document in evidence],
                 "candidates": [
                     {
                         "product_catalog_id": candidate.catalog.key,

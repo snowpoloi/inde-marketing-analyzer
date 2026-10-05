@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     admin_password: str | None = None
     sync_daily_hour: int = 4
     sync_timezone: str = "Europe/Athens"
+    supplier_gmail_enabled: bool = False
+    supplier_gmail_client_id: str | None = None
+    supplier_gmail_client_secret: str | None = None
+    supplier_gmail_refresh_token: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
