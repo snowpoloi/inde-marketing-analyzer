@@ -454,7 +454,7 @@ export const api = {
   syncSupplierGmail: (dateFrom: string, dateTo: string) =>
     request<{ data: { job: SupplierGmailJob } }>("/suppliers/gmail/sync", {
       method: "POST", body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }) }),
-  reviewSupplierGmail: (id: string, payload: { action: "approve" | "reject"; confirm_supplier_order?: boolean; shipping_net?: string; shipping_vat?: string }) =>
+  reviewSupplierGmail: (id: string, payload: { action: "approve" | "reject"; confirm_supplier_order?: boolean; shipping_waived?: boolean; shipping_net?: string; shipping_vat?: string }) =>
     request<{ data: { documents_imported?: number; unmatched_lines?: number; duplicate?: boolean } }>(`/suppliers/gmail/${id}/review`, { method: "PUT", body: JSON.stringify(payload) }),
   supplierProducts: (asOf: string) =>
     request<{ data: { rows: SupplierProduct[] } }>(`/suppliers/products?as_of=${asOf}`),

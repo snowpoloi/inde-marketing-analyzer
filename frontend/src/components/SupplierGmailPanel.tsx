@@ -22,6 +22,7 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
   const [to, setTo] = useState(day(0));
   const [selected, setSelected] = useState<SupplierGmailSource | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [freeShipping, setFreeShipping] = useState(false);
   const [net, setNet] = useState("");
   const [vat, setVat] = useState("");
   function receive(result: Awaited<ReturnType<typeof api.supplierGmailSources>>) {
@@ -56,12 +57,15 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
     } catch (err) { setError(err instanceof Error ? err.message : "Gmail read failed."); }
     finally { setBusy(false); }
   }
-  function open(row: SupplierGmailSource) { setSelected(row); setNet(""); setVat(""); setConfirmed(false); setError(""); }
+  function open(row: SupplierGmailSource) { setSelected(row); setNet(""); setVat(""); setConfirmed(false); setFreeShipping(false); setError(""); }
   async function review(action: "approve" | "reject") {
     if (!selected) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await api.reviewSupplierGmail(selected.id, { action, ...(action === "approve" ? { confirm_supplier_order: confirmed, shipping_net: net, shipping_vat: vat } : {}) });
+      await api.reviewSupplierGmail(selected.id, { action, ...(action === "approve" ? {
+        confirm_supplier_order: confirmed, shipping_waived: freeShipping,
+        shipping_net: freeShipping ? "0" : net, shipping_vat: freeShipping ? "0" : vat
+      } : {}) });
       setSelected(null); setNotice(action === "approve" ? "Cost evidence accepted." : "Document rejected.");
       await load(); await onImported();
     } catch (err) { setError(err instanceof Error ? err.message : "Document review failed."); }
@@ -103,10 +107,10 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
     {selected && <div className="supplier-gmail-review">
       <div className="panel-title"><h2>MEGAPAP / {document?.document_number || selected.filename || "Document review"}</h2><button className="icon-button" title="Close review" aria-label="Close review" disabled={busy} onClick={() => setSelected(null)}><X size={16} /></button></div>
       <p>{document?.document_type || selected.status} | {document?.document_date || "-"} | {selected.reason || "Accepted"}</p>
-      {document && <><div className="supplier-gmail-totals"><span>Products net: <strong>{amount(document.net_products_total)}</strong></span><span>Displayed freight: <strong>{amount(document.net_shipping_total)}</strong></span><span>VAT: <strong>{amount(document.vat_total)}</strong></span><span>Total: <strong>{amount(document.gross_total)}</strong></span></div><DataTable rows={products} columns={productColumns} empty="No product lines." /></>}
+      {document && <><div className="supplier-gmail-totals"><span>Products net: <strong>{amount(document.net_products_total)}</strong></span><span>Displayed freight: <strong>{amount(document.net_shipping_total)}</strong></span><span>Product VAT: <strong>{amount(document.vat_total)}</strong></span><span>Original order total: <strong>{amount(document.gross_total)}</strong></span>{pending && freeShipping && <><span>Freight cost: <strong>{amount("0")}</strong></span><span>Cost total: <strong>{euros.format(Number(document.gross_total) - Number(document.net_shipping_total))}</strong></span></>}</div><DataTable rows={products} columns={productColumns} empty="No product lines." /></>}
       {pending && <form onSubmit={event => { event.preventDefault(); review("approve"); }}>
-        {document && <><div className="supplier-gmail-controls"><label>Confirmed freight net<input type="number" min="0" step="0.01" required value={net} onChange={event => setNet(event.target.value)} /></label><label>Confirmed freight VAT<input type="number" min="0" step="0.01" required value={vat} onChange={event => setVat(event.target.value)} /></label></div><label className="supplier-gmail-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Supplier order cost evidence, not a fiscal invoice</label></>}
-        <div className="supplier-gmail-controls">{document && <button className="primary-action" disabled={busy || !confirmed || net === "" || vat === ""} type="submit"><Check size={16} /> Accept cost evidence</button>}<button className="secondary-action" disabled={busy} type="button" onClick={() => review("reject")}><X size={16} /> Reject document</button></div>
+        {document && <><label className="supplier-gmail-confirm"><input type="checkbox" checked={freeShipping} onChange={event => setFreeShipping(event.target.checked)} />Free shipping - supplier removes freight at invoicing</label>{!freeShipping && <div className="supplier-gmail-controls"><label>Confirmed freight net<input type="number" min="0" step="0.01" required value={net} onChange={event => setNet(event.target.value)} /></label><label>Confirmed freight VAT<input type="number" min="0" step="0.01" required value={vat} onChange={event => setVat(event.target.value)} /></label></div>}<label className="supplier-gmail-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Supplier order cost evidence, not a fiscal invoice</label></>}
+        <div className="supplier-gmail-controls">{document && <button className="primary-action" disabled={busy || !confirmed || (!freeShipping && (net === "" || vat === ""))} type="submit"><Check size={16} /> Accept cost evidence</button>}<button className="secondary-action" disabled={busy} type="button" onClick={() => review("reject")}><X size={16} /> Reject document</button></div>
       </form>}
     </div>}
   </section>;

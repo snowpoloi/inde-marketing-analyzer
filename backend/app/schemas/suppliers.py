@@ -140,5 +140,14 @@ class SupplierGmailSyncRequest(SupplierBase):
 class SupplierGmailReviewRequest(SupplierBase):
     action: Literal["approve", "reject"]
     confirm_supplier_order: bool = False
+    shipping_waived: bool = False
     shipping_net: Decimal | None = Field(default=None, ge=0)
     shipping_vat: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_shipping(self):
+        if self.action == "approve" and self.shipping_waived and any(
+            value not in (None, Decimal("0")) for value in (self.shipping_net, self.shipping_vat)
+        ):
+            raise ValueError("Waived freight must have zero net cost and VAT.")
+        return self

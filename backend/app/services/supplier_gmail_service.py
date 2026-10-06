@@ -157,19 +157,34 @@ def review_gmail_source(db: Session, source_id: UUID, request: SupplierGmailRevi
         return {"rejected": True}
     if not row.normalized_payload:
         raise ValueError("Unsupported/invalid document cannot be approved. Use a corrected normalized import.")
-    if not request.confirm_supplier_order or request.shipping_net is None or request.shipping_vat is None:
+    if not request.confirm_supplier_order or (not request.shipping_waived and (
+        request.shipping_net is None or request.shipping_vat is None
+    )):
         raise ValueError("Explicitly confirm supplier-order cost evidence and freight net/VAT.")
     payload = SupplierImportRequest.model_validate(row.normalized_payload)
     for document in payload.documents:
         freight = next(line for line in document.lines if line.line_type == "shipping")
         displayed = Decimal(freight.raw_metadata["displayed_amount"])
-        if abs(request.shipping_net + request.shipping_vat - displayed) > Decimal("0.02"):
+        shipping_net = Decimal("0") if request.shipping_waived else request.shipping_net
+        shipping_vat = Decimal("0") if request.shipping_waived else request.shipping_vat
+        if not request.shipping_waived and abs(shipping_net + shipping_vat - displayed) > Decimal("0.02"):
             raise ValueError("Confirmed freight net plus VAT must equal the displayed freight amount.")
-        freight.net_line_total, freight.vat_amount = request.shipping_net, request.shipping_vat
-        freight.vat_rate = request.shipping_vat / request.shipping_net * 100 if request.shipping_net else 0
-        freight.raw_metadata = {"displayed_amount": str(displayed), "tax_basis_confirmed": True}
-        document.net_shipping_total = request.shipping_net
-        document.raw_metadata = {"parser": "megapap_order_v1", "supplier_order_confirmed": True}
+        original_gross = document.gross_total
+        freight.net_line_total, freight.vat_amount = shipping_net, shipping_vat
+        freight.gross_total = shipping_net + shipping_vat
+        freight.vat_rate = shipping_vat / shipping_net * 100 if shipping_net else Decimal("0")
+        freight.raw_metadata = {"displayed_amount": str(displayed), "tax_basis_confirmed": True,
+                                "shipping_waived": request.shipping_waived}
+        document.net_shipping_total = shipping_net
+        # The supported order layout shows product VAT separately from freight.
+        document.vat_total += shipping_vat
+        if request.shipping_waived:
+            document.gross_total -= displayed
+        document.raw_metadata = {**document.raw_metadata, "supplier_order_confirmed": True,
+            "shipping_waived": request.shipping_waived, "original_gross_total": str(original_gross),
+            "displayed_freight": str(displayed), "freight_confirmed_by": str(user.id),
+            "freight_confirmed_at": row.reviewed_at.isoformat()}
+        document.raw_metadata.pop("review_required", None)
     payload.source_reference = f"gmail:{MAILBOX}:{row.message_id}:{row.part_id}"
     payload.raw_metadata = {"gmail_source_id": str(row.id), "attachment_id": row.attachment_id,
                             "content_hash": row.content_hash}

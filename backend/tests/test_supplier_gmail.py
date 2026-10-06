@@ -200,6 +200,69 @@ def test_review_reject_and_confirmation_do_not_create_finance(db):
     assert count(db, SupplierProductCost) == 0
 
 
+def test_free_freight_preserves_source_but_imports_zero_shipping(db):
+    from test_supplier_integration import seed
+    seed(db)
+    user = admin(db)
+    row = stage(db)
+    original = row.normalized_payload
+    request = SupplierGmailReviewRequest(action="approve", confirm_supplier_order=True, shipping_waived=True)
+    assert review_gmail_source(db, row.id, request, user)["matched_lines"] == 1
+    document = db.scalar(select(SupplierDocument))
+    shipping = db.scalar(select(SupplierShippingCost))
+    assert document.net_products_total == D("8.73")
+    assert document.net_shipping_total == shipping.net_shipping_cost == 0
+    assert shipping.vat == shipping.gross_shipping_cost == 0
+    assert document.vat_total == D("2.10")
+    assert document.gross_total == D("10.83")
+    assert document.raw_metadata["shipping_waived"] is True
+    assert D(document.raw_metadata["original_gross_total"]) == D("15.73")
+    assert D(document.raw_metadata["displayed_freight"]) == D("4.90")
+    assert document.raw_metadata["freight_confirmed_by"] == str(user.id)
+    assert document.raw_metadata["freight_confirmed_at"]
+    assert "review_required" not in document.raw_metadata
+    assert shipping.raw_metadata["shipping_waived"] is True
+    assert row.normalized_payload == original
+    assert D(row.normalized_payload["documents"][0]["gross_total"]) == D("15.73")
+    assert db.scalar(select(SupplierProductCost)).net_unit_cost == D("8.73")
+    assert review_gmail_source(db, row.id, request, user)["duplicate"] is True
+    assert count(db, SupplierDocument) == 1
+    forwarded = stage(db, message="free-shipping-forward")
+    assert forwarded.status == "duplicate" and forwarded.duplicate_of_id == row.id
+
+
+def test_zero_freight_needs_explicit_waiver_and_order_confirmation(db):
+    user = admin(db)
+    row = stage(db)
+    with pytest.raises(ValueError, match="freight"):
+        review_gmail_source(db, row.id, SupplierGmailReviewRequest(
+            action="approve", confirm_supplier_order=True, shipping_net=0, shipping_vat=0), user)
+    with pytest.raises(ValueError, match="Explicitly confirm"):
+        review_gmail_source(db, row.id, SupplierGmailReviewRequest(action="approve", shipping_waived=True), user)
+    assert count(db, SupplierDocument) == count(db, SupplierShippingCost) == 0
+    assert row.status == "pending"
+
+
+@pytest.mark.parametrize("values", [{"shipping_net": 1}, {"shipping_vat": 1}])
+def test_free_freight_cannot_include_nonzero_cost(values):
+    with pytest.raises(ValueError, match="Waived freight"):
+        SupplierGmailReviewRequest(action="approve", shipping_waived=True, **values)
+
+
+def test_confirmed_freight_vat_reconciles_with_document_total(db):
+    user = admin(db)
+    row = stage(db)
+    review_gmail_source(db, row.id, SupplierGmailReviewRequest(
+        action="approve", confirm_supplier_order=True, shipping_net=D("3.95"), shipping_vat=D("0.95")), user)
+    document = db.scalar(select(SupplierDocument))
+    shipping = db.scalar(select(SupplierShippingCost))
+    assert document.net_shipping_total == shipping.net_shipping_cost == D("3.95")
+    assert shipping.vat == D("0.95")
+    assert document.vat_total == D("3.05")
+    assert document.gross_total == D("15.73")
+    assert document.raw_metadata["shipping_waived"] is False
+
+
 def test_no_numeric_or_name_auto_match_and_verified_mapping_is_reused(db):
     from test_supplier_integration import seed
     product = seed(db)
