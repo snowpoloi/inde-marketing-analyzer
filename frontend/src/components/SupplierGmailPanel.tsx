@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Mail, RefreshCw, Search, X } from "lucide-react";
-import { api, type SupplierGmailSource } from "../api/client";
+import { api, type SupplierGmailSource, type SupplierGmailJob } from "../api/client";
 import { DataTable, type Column } from "./DataTable";
 
 const euros = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -9,7 +9,10 @@ const day = (offset: number) => { const date = new Date(); date.setDate(date.get
 
 export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<void> }) {
   const [rows, setRows] = useState<SupplierGmailSource[]>([]);
-  const [configured, setConfigured] = useState(false);
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [automatic, setAutomatic] = useState(false);
+  const [interval, setIntervalMinutes] = useState(15);
+  const [job, setJob] = useState<SupplierGmailJob | null>(null);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -17,27 +20,38 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
   const [notice, setNotice] = useState("");
   const [from, setFrom] = useState(day(-7));
   const [to, setTo] = useState(day(0));
-  const [cursor, setCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<SupplierGmailSource | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [net, setNet] = useState("");
   const [vat, setVat] = useState("");
+  function receive(result: Awaited<ReturnType<typeof api.supplierGmailSources>>) {
+    setRows(result.data.rows); setConfigured(result.data.configured); setAutomatic(result.data.automatic);
+    setIntervalMinutes(result.data.interval_minutes); setJob(result.data.job); setError("");
+  }
   async function load(nextOffset = offset) {
     setLoading(true);
-    try { const result = await api.supplierGmailSources(nextOffset); setRows(result.data.rows); setConfigured(result.data.configured); }
-    catch (err) { setError(err instanceof Error ? err.message : "Unable to load Gmail documents."); }
+    try { receive(await api.supplierGmailSources(nextOffset)); }
+    catch (err) { setConfigured(null); setError(err instanceof Error ? err.message : "Unable to load Gmail documents."); }
     finally { setLoading(false); }
   }
-  useEffect(() => { let active = true; setLoading(true); api.supplierGmailSources(offset).then(result => {
-    if (active) { setRows(result.data.rows); setConfigured(result.data.configured); }
-  }).catch(err => { if (active) setError(err instanceof Error ? err.message : "Unable to load Gmail documents."); })
-    .finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [offset]);
-  async function sync(nextPage: boolean) {
+  useEffect(() => {
+    let active = true, polling = false;
+    async function poll() {
+      if (polling) return;
+      polling = true;
+      try { const result = await api.supplierGmailSources(offset); if (active) receive(result); }
+      catch (err) { if (active) { setConfigured(null); setError(err instanceof Error ? err.message : "Unable to load Gmail documents."); } }
+      finally { polling = false; if (active) setLoading(false); }
+    }
+    setLoading(true); void poll();
+    const timer = window.setInterval(poll, 15000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [offset]);
+  async function sync() {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await api.syncSupplierGmail(from, to, nextPage ? cursor : null);
-      setCursor(result.data.next_page_token);
-      setNotice(`Pending: ${result.data.pending} | Review: ${result.data.review} | Duplicates: ${result.data.duplicate} | Previously received: ${result.data.existing}`);
+      const result = await api.syncSupplierGmail(from, to);
+      setJob(result.data.job); setNotice("Gmail read queued.");
       setOffset(0); await load(0);
     } catch (err) { setError(err instanceof Error ? err.message : "Gmail read failed."); }
     finally { setBusy(false); }
@@ -73,13 +87,15 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
     { key: "total", header: "Line net", align: "right", render: row => amount(row.net_line_total) }
   ];
   return <section className="panel supplier-gmail">
-    <div className="panel-title"><h2><Mail size={18} /> MEGAPAP documents</h2><span>info@inde.gr | {configured ? "Configured" : "Not connected"}</span></div>
+    <div className="panel-title"><h2><Mail size={18} /> MEGAPAP documents</h2><span>info@inde.gr | {configured === null ? "Connection status unavailable" : configured ? "Configured" : "Not configured"}{configured && automatic ? ` | Auto: ${interval} min` : ""}</span></div>
     <div className="supplier-gmail-controls">
-      <label>Received from<input type="date" value={from} max={to} onChange={event => { setFrom(event.target.value); setCursor(null); }} /></label>
-      <label>Received to<input type="date" value={to} min={from} onChange={event => { setTo(event.target.value); setCursor(null); }} /></label>
-      <button className="primary-action" disabled={!configured || busy || !from || !to || from > to} onClick={() => sync(false)}><RefreshCw size={16} /> Read Gmail</button>
-      {cursor && <button className="secondary-action" disabled={busy} onClick={() => sync(true)}><ChevronRight size={16} /> Next Gmail page</button>}
+      <label>Received from<input type="date" value={from} max={to} onChange={event => setFrom(event.target.value)} /></label>
+      <label>Received to<input type="date" value={to} min={from} onChange={event => setTo(event.target.value)} /></label>
+      <button className="primary-action" disabled={!configured || busy || !from || !to || from > to || job?.status === "queued" || job?.status === "running"} onClick={() => sync()}><RefreshCw size={16} /> Read Gmail</button>
+      <button className="icon-button" title="Refresh Gmail documents" aria-label="Refresh Gmail documents" disabled={busy || loading} onClick={() => load()}><RefreshCw size={16} /></button>
     </div>
+    {job && <p role="status">{job.mode} | {job.status} | {job.date_from} - {job.date_to} | Pages: {job.pages} | Messages: {job.counts.messages || 0} | Pending: {job.counts.pending || 0} | Review: {job.counts.review || 0} | Duplicates: {job.counts.duplicate || 0} | Previously received: {job.counts.existing || 0} | Skipped: {job.counts.skipped || 0}</p>}
+    {job?.error && <p className="error-message" role="alert">{job.error}</p>}
     {error && <p className="error-message" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {loading ? <p role="status">Loading documents...</p> : <DataTable rows={rows} columns={columns} empty="No Gmail documents received." />}

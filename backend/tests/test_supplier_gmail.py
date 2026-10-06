@@ -58,6 +58,7 @@ def test_only_readonly_methods_and_fixed_mailbox(oauth, caplog):
     assert all(r.method == "GET" and "/users/me/" in r.url.path for r in requests if r.url.host == "gmail.googleapis.com")
     assert requests[3].url.params["maxResults"] == "10"
     assert "after:1790801999" in requests[3].url.params["q"]
+    assert "(from:info@inde.gr MEGAPAP)" in requests[3].url.params["q"]
     assert "test-placeholder" not in caplog.text
     with pytest.raises(GmailReadError, match="not allowed"):
         reader._get("messages/abc123/modify")

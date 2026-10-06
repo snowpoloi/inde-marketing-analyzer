@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -18,6 +19,8 @@ class Settings(BaseSettings):
     supplier_gmail_client_id: str | None = None
     supplier_gmail_client_secret: str | None = None
     supplier_gmail_refresh_token: str | None = None
+    supplier_gmail_auto_enabled: bool = True
+    supplier_gmail_interval_minutes: int = Field(default=15, ge=5, le=1440)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
+from collections.abc import Callable
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -65,15 +66,27 @@ def stage_source(db: Session, *, message_id: str, part_id: str, content: bytes,
     return row
 
 
-def sync_supplier_gmail(db: Session, request: SupplierGmailSyncRequest) -> dict:
+def sync_supplier_gmail(db: Session, request: SupplierGmailSyncRequest, *,
+                        completed_message_ids: set[str] | None = None,
+                        on_message: Callable[[str, dict], None] | None = None) -> dict:
     reader = SupplierGmailReader()
-    counts = {"pending": 0, "duplicate": 0, "review": 0, "existing": 0}
+    counts = {"pending": 0, "duplicate": 0, "review": 0, "existing": 0, "messages": 0, "skipped": 0}
+    def checkpoint(message_id: str, before: dict):
+        if on_message:
+            on_message(message_id, {key: value - before[key] for key, value in counts.items()})
+        db.commit()
     try:
         reader.authorize()
         page = reader.list_messages(request.date_from, request.date_to, request.page_token)
         for ref in page.get("messages", [])[:10]:
+            if ref["id"] in (completed_message_ids or set()):
+                continue
+            before = counts.copy()
             message = reader.message(ref["id"])
+            counts["messages"] += 1
             if not eligible_sender(message):
+                counts["skipped"] += 1
+                checkpoint(ref["id"], before)
                 continue
             parts = list(message_parts(message.get("payload", {})))
             files = [p for p in parts if p.get("filename") and not (
@@ -84,7 +97,7 @@ def sync_supplier_gmail(db: Session, request: SupplierGmailSyncRequest) -> dict:
                 row = stage_source(db, message_id=ref["id"], part_id="limit", content=b"",
                     failure="More than 10 attachments; manual document review required.")
                 counts[row.status] = counts.get(row.status, 0) + 1
-                db.commit()
+                checkpoint(ref["id"], before)
                 continue
             selected = files or [p for p in parts if p.get("mimeType") == "text/html"][:1] or [p for p in parts if p.get("mimeType") == "text/plain"][:1]
             for index, part in enumerate(selected):
@@ -104,13 +117,15 @@ def sync_supplier_gmail(db: Session, request: SupplierGmailSyncRequest) -> dict:
                 content = b""
                 if not failure:
                     content = reader.attachment(ref["id"], body["attachmentId"]) if body.get("attachmentId") else decode_body(body.get("data", ""))
-                    if not filename and b"SKU" not in content:
+                    if not filename and b"sku" not in content.lower():
                         continue
                 row = stage_source(db, message_id=ref["id"], part_id=part_id, content=content,
                     filename=filename, attachment_id=body.get("attachmentId"), html=not bool(filename), failure=failure)
                 counts[row.status] = counts.get(row.status, 0) + 1
             # Preserve completed messages on a later timeout; immutable IDs make retries safe.
-            db.commit()
+            if all(counts[key] == before[key] for key in ("pending", "duplicate", "review", "existing")):
+                counts["skipped"] += 1
+            checkpoint(ref["id"], before)
         db.commit()
         return {"mailbox": MAILBOX, "supplier": "MEGAPAP", "next_page_token": page.get("nextPageToken"), **counts}
     finally:

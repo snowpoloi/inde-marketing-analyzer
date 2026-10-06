@@ -341,6 +341,12 @@ export type UnmatchedSupplierProduct = {
   documents?: Array<{ number: string | null; date: string; type: string; purchase_cost: number; description: string | null }>;
 };
 
+export type SupplierGmailJob = {
+  id: string; mode: string; status: string; date_from: string; date_to: string;
+  pages: number; counts: Record<string, number>; error: string | null;
+  created_at: string; finished_at: string | null;
+};
+
 export type SupplierGmailSource = {
   id: string; mailbox: string; message_id: string; filename: string | null;
   status: string; reason: string | null; duplicate_of_id: string | null; created_at: string;
@@ -444,10 +450,10 @@ export const api = {
     }),
   supplierSummary: (dateFrom: string, dateTo: string) =>
     request<{ data: SupplierSummary }>(`/suppliers/summary?date_from=${dateFrom}&date_to=${dateTo}`),
-  supplierGmailSources: (offset = 0) => request<{ data: { mailbox: string; configured: boolean; rows: SupplierGmailSource[] } }>(`/suppliers/gmail?offset=${offset}`),
-  syncSupplierGmail: (dateFrom: string, dateTo: string, pageToken: string | null) =>
-    request<{ data: { pending: number; duplicate: number; review: number; existing: number; next_page_token: string | null } }>("/suppliers/gmail/sync", {
-      method: "POST", body: JSON.stringify({ date_from: dateFrom, date_to: dateTo, page_token: pageToken }) }),
+  supplierGmailSources: (offset = 0) => request<{ data: { mailbox: string; configured: boolean; automatic: boolean; interval_minutes: number; job: SupplierGmailJob | null; rows: SupplierGmailSource[] } }>(`/suppliers/gmail?offset=${offset}`),
+  syncSupplierGmail: (dateFrom: string, dateTo: string) =>
+    request<{ data: { job: SupplierGmailJob } }>("/suppliers/gmail/sync", {
+      method: "POST", body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }) }),
   reviewSupplierGmail: (id: string, payload: { action: "approve" | "reject"; confirm_supplier_order?: boolean; shipping_net?: string; shipping_vat?: string }) =>
     request<{ data: { documents_imported?: number; unmatched_lines?: number; duplicate?: boolean } }>(`/suppliers/gmail/${id}/review`, { method: "PUT", body: JSON.stringify(payload) }),
   supplierProducts: (asOf: string) =>

@@ -28,7 +28,8 @@ from app.models import Supplier
 from app.core.config import settings
 from app.connectors.supplier_gmail import GmailReadError, MAILBOX
 from app.schemas.suppliers import SupplierGmailSyncRequest, SupplierGmailReviewRequest
-from app.services.supplier_gmail_service import sync_supplier_gmail, gmail_source_rows, review_gmail_source
+from app.services.supplier_gmail_service import gmail_source_rows, review_gmail_source
+from app.services.supplier_gmail_jobs import enqueue_gmail, gmail_configured, job_data, latest_job
 
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
@@ -81,16 +82,17 @@ def performance(
 @router.get("/gmail")
 def gmail_sources(offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=100),
                   _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    configured = settings.supplier_gmail_enabled and all((settings.supplier_gmail_client_id,
-        settings.supplier_gmail_client_secret, settings.supplier_gmail_refresh_token))
-    return {"data": {"mailbox": MAILBOX, "configured": bool(configured),
+    return {"data": {"mailbox": MAILBOX, "configured": gmail_configured(),
+                     "automatic": gmail_configured() and settings.supplier_gmail_auto_enabled,
+                     "interval_minutes": settings.supplier_gmail_interval_minutes,
+                     "job": job_data(latest_job(db)),
                      "rows": gmail_source_rows(db, offset=offset, limit=limit)}}
 
 
-@router.post("/gmail/sync")
+@router.post("/gmail/sync", status_code=202)
 def gmail_sync(payload: SupplierGmailSyncRequest, _: User = Depends(require_admin), db: Session = Depends(get_db)):
     try:
-        return {"data": sync_supplier_gmail(db, payload)}
+        return {"data": {"mailbox": MAILBOX, "job": job_data(enqueue_gmail(db, payload))}}
     except GmailReadError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -527,6 +527,24 @@ class SupplierGmailSource(TimestampMixin, Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class SupplierGmailJob(TimestampMixin, Base):
+    __tablename__ = "supplier_gmail_jobs"
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False, index=True)
+    date_from: Mapped[date] = mapped_column(Date, nullable=False)
+    date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    page_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_message_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    counts: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    pages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ShoplySale(TimestampMixin, Base):
     __tablename__ = "shoply_sales"
 

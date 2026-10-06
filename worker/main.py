@@ -7,6 +7,12 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.constants import PROVIDERS
 from app.services.sync_service import run_many
+from app.services.supplier_gmail_jobs import process_gmail_jobs
+
+
+def supplier_gmail_sync() -> None:
+    with SessionLocal() as db:
+        process_gmail_jobs(db)
 
 
 def daily_sync() -> None:
@@ -19,6 +25,8 @@ def daily_sync() -> None:
 def main() -> None:
     scheduler = BlockingScheduler(timezone=settings.sync_timezone)
     scheduler.add_job(daily_sync, "cron", hour=settings.sync_daily_hour, minute=0, id="daily-marketing-sync")
+    scheduler.add_job(supplier_gmail_sync, "interval", seconds=45, id="supplier-gmail-readonly",
+                      max_instances=1, coalesce=True, next_run_time=datetime.now(ZoneInfo(settings.sync_timezone)))
     print(
         f"INDE Marketing Analyzer worker started. Daily sync at {settings.sync_daily_hour}:00 {settings.sync_timezone}.",
         flush=True,
@@ -28,4 +36,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

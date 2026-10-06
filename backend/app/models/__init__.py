@@ -22,6 +22,7 @@ from app.models.entities import (
     SupplierProductMap,
     SupplierShippingCost,
     SupplierGmailSource,
+    SupplierGmailJob,
     SyncRun,
     User,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "SupplierProductMap",
     "SupplierShippingCost",
     "SupplierGmailSource",
+    "SupplierGmailJob",
     "SyncRun",
     "User",
 ]

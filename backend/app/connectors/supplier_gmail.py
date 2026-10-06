@@ -123,7 +123,7 @@ class SupplierGmailReader:
         athens = ZoneInfo("Europe/Athens")
         after = int(datetime.combine(start, day_time.min, athens).timestamp()) - 1
         before = int(datetime.combine(end + timedelta(days=1), day_time.min, athens).timestamp())
-        query = f"after:{after} before:{before} {{from:megapap.com from:{MAILBOX}}} -in:trash -in:spam"
+        query = f"after:{after} before:{before} {{from:megapap.com (from:{MAILBOX} MEGAPAP)}} -in:trash -in:spam"
         return self._get("messages", q=query, maxResults=10, **({"pageToken": page_token} if page_token else {}))
 
     def message(self, message_id: str) -> dict:
