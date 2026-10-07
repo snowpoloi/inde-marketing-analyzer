@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.models import User
 from app.schemas.suppliers import (ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest,
                                   SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest)
-from app.services.supplier_identity import supplier_identities, save_supplier_identity
+from app.services.supplier_identity import supplier_identities, save_supplier_identity, aade_supplier_registry, import_aade_suppliers
 from app.services.supplier_aade_costs import aade_invoices, invoice_preview, accept_invoice
 from app.services.supplier_service import (
     add_manual_cost,
@@ -71,6 +71,24 @@ def fiscal_invoices(supplier_id: UUID, date_from: date, date_to: date,
         return {"data": aade_invoices(db, supplier_id, start, end, offset, limit)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/aade/suppliers")
+def fiscal_suppliers(date_from: date, date_to: date, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    start, end = _dates(date_from, date_to)
+    try:
+        return {"data": aade_supplier_registry(db, start, end)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post("/aade/suppliers/import")
+def import_fiscal_suppliers(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": import_aade_suppliers(db, user)}
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc) if isinstance(exc, ValueError) else "Supplier identities conflict; review their AFM.") from None
 
 
 @router.get("/aade/invoices/{document_id}")

@@ -24,12 +24,13 @@ import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { SupplierGmailPanel } from "../components/SupplierGmailPanel";
 import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
+import { SupplierRegistryPanel } from "../components/SupplierRegistryPanel";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2, style: "percent" });
 
-type Tab = "products" | "unmatched" | "performance" | "import" | "gmail" | "aade";
+type Tab = "registry" | "products" | "unmatched" | "performance" | "import" | "gmail" | "aade";
 
 function isoDate(offset = 0) {
   const value = new Date();
@@ -97,6 +98,7 @@ export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
   const [dateFrom, setDateFrom] = useState(isoDate(-30));
   const [dateTo, setDateTo] = useState(isoDate());
   const [tab, setTab] = useState<Tab>("products");
+  const [aadeSupplier, setAADESupplier] = useState("");
   const [summary, setSummary] = useState<SupplierSummary | null>(null);
   const [products, setProducts] = useState<SupplierProduct[]>([]);
   const [unmatched, setUnmatched] = useState<UnmatchedSupplierProduct[]>([]);
@@ -451,6 +453,7 @@ export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
       </div>
 
       <div className="view-tabs" role="tablist" aria-label="Supplier views">
+        <button className={tab === "registry" ? "active" : ""} onClick={() => setTab("registry")}>Suppliers</button>
         <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}>Supplier products</button>
         <button className={tab === "unmatched" ? "active" : ""} onClick={() => setTab("unmatched")}>Unmatched products</button>
         <button className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>Supplier performance</button>
@@ -459,9 +462,10 @@ export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
         <button className={tab === "aade" ? "active" : ""} onClick={() => setTab("aade")}>AADE costs</button>
       </div>
 
-      {tab !== "import" && tab !== "gmail" && tab !== "aade" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+      {tab !== "import" && tab !== "gmail" && tab !== "aade" && tab !== "registry" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+      {tab === "registry" && <SupplierRegistryPanel start={dateFrom} end={dateTo} onImported={load} onSettings={onSettings} onInvoices={id=>{setAADESupplier(id);setTab("aade");}}/>}
       {tab === "gmail" && <SupplierGmailPanel onImported={load} />}
-      {tab === "aade" && <SupplierAADEPanel start={dateFrom} end={dateTo} onImported={load} onSettings={onSettings} />}
+      {tab === "aade" && <SupplierAADEPanel key={aadeSupplier} initialSupplier={aadeSupplier} start={dateFrom} end={dateTo} onImported={load} onSettings={onSettings} />}
 
       {tab === "products" ? (
         <section className="panel">

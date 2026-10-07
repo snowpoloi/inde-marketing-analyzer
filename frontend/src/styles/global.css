@@ -1329,3 +1329,6 @@ tr:last-child td {
 .supplier-aade-panel .supplier-catalog-actions label { min-width: 0; max-width: 100%; }
 .supplier-aade-panel select { min-width: 0; width: 100%; max-width: 520px; }
 .supplier-aade-panel .panel-title h2 { overflow-wrap: anywhere; }
+.supplier-registry-panel .panel-title { flex-wrap: wrap; }
+.supplier-registry-panel .supplier-filter { min-width: 0; max-width: 100%; }
+.supplier-registry-panel td:first-child { min-width: 180px; max-width: 320px; overflow-wrap: anywhere; }

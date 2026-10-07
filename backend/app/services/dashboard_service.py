@@ -20,6 +20,7 @@ from app.models import (
 from app.services.parsing import as_decimal, dec_to_float
 from app.services.supplier_service import product_profitability
 from app.services.supplier_identity import normalize_vat, registered_supplier_names
+from app.services.supplier_identity import aade_party_name as _aade_party_name
 
 
 PAID_AD_SOURCES = ("meta_ads", "google_ads", "tiktok_ads")
@@ -82,48 +83,6 @@ def _aade_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _aade_party_name(raw: dict[str, Any], party: str) -> str | None:
-    header = _aade_pick(raw, "invoiceHeader", "header") or {}
-    party_data = _aade_pick(raw, party) or _aade_pick(header, party) or {}
-    name_keys = (
-        "name",
-        "legalName",
-        "companyName",
-        "businessName",
-        "fullName",
-        "partyName",
-        "traderName",
-        "description",
-        "denomination",
-        "eponymia",
-    )
-    prefixes = (party,)
-    if party == "counterpart":
-        prefixes = ("counterpart", "counterparty", "counter")
-    direct_keys = tuple(
-        key
-        for prefix in prefixes
-        for key in (
-            f"{prefix}Name",
-            f"{prefix}_name",
-            f"{prefix}LegalName",
-            f"{prefix}CompanyName",
-            f"{prefix}BusinessName",
-            f"{prefix}FullName",
-            f"{prefix}Description",
-        )
-    )
-    for candidate in (
-        _aade_pick(party_data, *name_keys),
-        _aade_pick(raw, *direct_keys),
-        _aade_pick(header, *direct_keys),
-    ):
-        text = _aade_text(candidate)
-        if text:
-            return text
-    return None
 
 
 def _aade_list(value: Any) -> list[Any]:

@@ -446,6 +446,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export type SupplierIdentity = { id: string | null; code: string; name: string; vat_number: string | null };
+export type SupplierRegistryRow = { id: string | null; code: string | null; name: string; vat_number: string;
+  name_pending: boolean; identity_conflict: boolean; source: string; documents: number; period_documents: number;
+  last_document_date: string | null };
 export type SupplierAADEInvoice = { id: string; date: string; mark: string | null; number: string; invoice_type: string;
   net_value: number; gross_value: number; cancelled: boolean; record_type: string };
 export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: string; issuer_vat: string; date: string;
@@ -455,6 +458,10 @@ export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: s
     vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[] }> };
 
 export const api = {
+  supplierAADERegistry: (start: string, end: string) => request<{ data: { rows: SupplierRegistryRow[]; skipped_records: number } }>(
+    `/suppliers/aade/suppliers?${new URLSearchParams({date_from:start, date_to:end})}`),
+  importAADESuppliers: () => request<{ data: { created: number; existing: number; names_updated: number; conflicts: number; skipped_records: number } }>(
+    "/suppliers/aade/suppliers/import", {method:"POST"}),
   supplierIdentities: () => request<{ data: { rows: SupplierIdentity[] } }>("/suppliers/identities"),
   saveSupplierIdentity: (payload: { code: string; name: string; vat_number: string }) =>
     request<{ data: SupplierIdentity }>("/suppliers/identities", { method: "PUT", body: JSON.stringify(payload) }),

@@ -5,7 +5,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import load_only
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed,
@@ -13,7 +13,7 @@ from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Suppli
                         SupplierProductMap)
 from app.schemas.suppliers import SupplierDocumentInput, SupplierDocumentLineInput, SupplierImportRequest, SupplierInput
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
-from app.services.supplier_identity import normalize_vat
+from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 
 
 def pick(row, *keys):
@@ -95,7 +95,18 @@ def aade_invoices(db, supplier_id, start, end, offset, limit):
     if not supplier or not supplier.vat_number:
         raise ValueError("Save the supplier's AFM in Settings first.")
     vat = normalize_vat(supplier.vat_number)
-    filters = [AADEDocument.document_direction == "expense", AADEDocument.issuer_vat.in_([vat, "EL" + vat]),
+    issuer_country = func.upper(func.trim(case((AADEDocument.raw["record_type"].astext == "book_info",
+                         func.coalesce(AADEDocument.raw["counterpart"]["country"].astext,
+                                       AADEDocument.raw["invoiceHeader"]["counterpart"]["country"].astext)),
+                        else_=func.coalesce(AADEDocument.raw["issuer"]["country"].astext,
+                                            AADEDocument.raw["invoiceHeader"]["issuer"]["country"].astext))))
+    vat_filter = AADEDocument.issuer_vat.in_([vat, "EL" + vat])
+    if vat[:2].isalpha():
+        country = vat[:2]
+        vat_filter = or_(vat_filter, (AADEDocument.issuer_vat == vat[2:]) & (issuer_country == country))
+    else:
+        vat_filter = vat_filter & or_(issuer_country.is_(None), issuer_country.in_(["", "GR", "EL"]))
+    filters = [AADEDocument.document_direction == "expense", vat_filter,
                AADEDocument.issue_date.between(start, end)]
     count = db.scalar(select(func.count()).select_from(AADEDocument).where(*filters))
     documents = db.scalars(select(AADEDocument).where(*filters).order_by(AADEDocument.issue_date.desc(), AADEDocument.id)
@@ -115,7 +126,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
     reasons = []
     vat = normalize_vat(supplier.vat_number)
     same_vat = [row for row in db.scalars(select(Supplier)).all() if vat and normalize_vat(row.vat_number) == vat]
-    if not vat or normalize_vat(document.issuer_vat) != vat or len(same_vat) != 1:
+    if not vat or fiscal_supplier_vat(document.issuer_vat, document.raw or {}) != vat or len(same_vat) != 1:
         reasons.append("Issuer AFM does not identify exactly one registered supplier.")
     recipient = own_vat(db)
     if not recipient or normalize_vat(document.counterpart_vat) != recipient:

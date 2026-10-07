@@ -7,9 +7,9 @@ const eur = new Intl.NumberFormat("el-GR", {style:"currency", currency:"EUR"});
 const money = (value: number | null) => value === null ? "-" : eur.format(value);
 type InvoiceReview = { preview: SupplierAADEPreview | null; confirmed: boolean; loading: boolean; accepting: boolean; error: string; notice: string };
 
-export function SupplierAADEPanel({start, end, onImported, onSettings}: {start:string; end:string; onImported:()=>void; onSettings:()=>void}) {
+export function SupplierAADEPanel({start, end, onImported, onSettings, initialSupplier = ""}: {start:string; end:string; onImported:()=>void; onSettings:()=>void; initialSupplier?:string}) {
   const [suppliers, setSuppliers] = useState<SupplierIdentity[]>([]);
-  const [supplier, setSupplier] = useState("");
+  const [supplier, setSupplier] = useState(initialSupplier);
   const [rows, setRows] = useState<SupplierAADEInvoice[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -40,6 +40,7 @@ export function SupplierAADEPanel({start, end, onImported, onSettings}: {start:s
     } catch (err) { if (seq === sequence.current) setError(err instanceof Error ? err.message : "Invoice list failed."); }
     finally { if (seq === sequence.current) setBusy(false); }
   }
+  useEffect(() => { if (initialSupplier) load(); }, [initialSupplier]);
   async function inspect(row: SupplierAADEInvoice) {
     const request = {}; reviewRequests.current.set(row.id, request);
     setReviews(current => ({...current, [row.id]: {preview:null, confirmed:false, loading:true, accepting:false, error:"", notice:""}}));
