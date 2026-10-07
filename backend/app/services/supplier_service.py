@@ -79,8 +79,17 @@ def _catalog_identity(product: ProductCatalog) -> CatalogIdentity:
     )
 
 
-def _catalog_data(db: Session) -> tuple[list[CatalogIdentity], dict[str, ProductCatalog]]:
-    products = list(db.scalars(select(ProductCatalog)).all())
+def _catalog_data(db: Session) -> tuple[list[CatalogIdentity], dict[str, SimpleNamespace]]:
+    # Matching does not need full source payloads, descriptions or image lists.
+    fields = (ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model,
+              ProductCatalog.product_id, ProductCatalog.ean, ProductCatalog.upc,
+              ProductCatalog.mpn, ProductCatalog.name, ProductCatalog.manufacturer,
+              ProductCatalog.brand)
+    identifiers = func.json_build_object(
+        "ean", ProductCatalog.raw["ean"], "gtin", ProductCatalog.raw["gtin"],
+        "upc", ProductCatalog.raw["upc"], "mpn", ProductCatalog.raw["mpn"]
+    ).label("raw")
+    products = [SimpleNamespace(**row) for row in db.execute(select(*fields, identifiers)).mappings()]
     return [_catalog_identity(product) for product in products], {str(product.id): product for product in products}
 
 

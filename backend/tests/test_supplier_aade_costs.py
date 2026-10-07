@@ -16,6 +16,20 @@ from app.services.supplier_service import supplier_summary
 from test_supplier_api import client
 
 
+def test_catalog_matching_projects_only_identifier_metadata(db):
+    from app.services.supplier_service import _catalog_data
+
+    product = ProductCatalog(sku="SKU", name="Chair", raw={
+        "ean": "EAN", "gtin": "GTIN", "upc": "UPC", "mpn": "MPN",
+        "description": "Unneeded large product description", "images": ["image"]})
+    db.add(product); db.flush()
+    identities, products = _catalog_data(db)
+    identity = next(row for row in identities if row.key == str(product.id))
+    assert (identity.ean, identity.upc, identity.mpn) == ("EAN", "UPC", "MPN")
+    assert set(products[str(product.id)].raw) == {"ean", "gtin", "upc", "mpn"}
+    assert products[str(product.id)].sku == "SKU"
+
+
 def seed(db):
     user = User(email=f"aade-{uuid4()}@example.test", hashed_password="fixture", is_admin=True)
     db.add(user); db.flush()
