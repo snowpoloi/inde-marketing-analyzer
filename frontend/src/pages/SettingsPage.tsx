@@ -3,6 +3,7 @@ import { Link2, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { IntegrationSetting } from "../api/client";
 import { SupplierFeedSettings } from "../components/SupplierFeedSettings";
+import { SupplierIdentitySettings } from "../components/SupplierIdentitySettings";
 
 const aadeReadOnlyEndpoints = [
   { value: "RequestTransmittedDocs", label: "Transmitted docs" },
@@ -556,6 +557,7 @@ export function SettingsPage() {
       </header>
       {message ? <div className="notice">{message}</div> : null}
       <SupplierFeedSettings />
+      <SupplierIdentitySettings />
       <section className="settings-grid">
         {items.map((item) => (
           <article className="settings-panel" key={item.provider}>

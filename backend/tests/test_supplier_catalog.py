@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 
 from app.connectors import supplier_catalog as connector
 from app.core.config import settings
-from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierCatalogFeed, SupplierCatalogProduct,
+from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed, SupplierCatalogProduct,
                         SupplierDocument, SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services import supplier_catalog_service as service
@@ -223,11 +223,14 @@ def test_only_verified_aade_purchase_costs_qualify(db):
     mapping = SupplierProductMap(supplier_id=supplier.id, product_catalog_id=own.id, identity_key="test",
                                  status="matched", verified=True)
     fiscal = AADEDocument(source_endpoint="RequestDocs", identity_key="fiscal-pricing", mark="MARK-1",
-                          issuer_vat=supplier.vat_number, issue_date=date(2026, 1, 2), currency="EUR",
+                          issuer_vat=supplier.vat_number, counterpart_vat="802216736", issue_date=date(2026, 1, 2), currency="EUR",
                           document_direction="expense", invoice_type="1.1")
     db.add_all([mapping, fiscal]); db.flush()
     document = SupplierDocument(supplier_id=supplier.id, aade_document_id=fiscal.id, identity_key="cost-pricing",
                                 document_type="invoice", document_date=fiscal.issue_date, currency="EUR")
+    from app.services.supplier_aade_costs import _source_digest
+    document.raw_metadata = {"aade_source_digest": _source_digest(fiscal)}
+    db.add(IntegrationSetting(provider="aade", display_name="AADE", config={"vat_number": "802216736"}))
     db.add(document); db.flush()
     line = SupplierDocumentLine(document_id=document.id, supplier_product_map_id=mapping.id, line_number="1", line_type="product", quantity=2)
     db.add(line); db.flush()

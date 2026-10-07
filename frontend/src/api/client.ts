@@ -445,7 +445,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export type SupplierIdentity = { id: string | null; code: string; name: string; vat_number: string | null };
+export type SupplierAADEInvoice = { id: string; date: string; mark: string | null; number: string; invoice_type: string;
+  net_value: number; gross_value: number; cancelled: boolean; record_type: string };
+export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: string; issuer_vat: string; date: string;
+  mark: string; number: string; net_value: number; vat_amount: number; gross_value: number; reasons: string[];
+  fingerprint: string; imported: boolean; can_import: boolean; lines: Array<{ line_number: string; item_code: string;
+    description: string; line_type: string; quantity: number | null; unit: string; net_value: number | null;
+    vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[] }> };
+
 export const api = {
+  supplierIdentities: () => request<{ data: { rows: SupplierIdentity[] } }>("/suppliers/identities"),
+  saveSupplierIdentity: (payload: { code: string; name: string; vat_number: string }) =>
+    request<{ data: SupplierIdentity }>("/suppliers/identities", { method: "PUT", body: JSON.stringify(payload) }),
+  supplierAADEInvoices: (supplier: string, start: string, end: string, offset: number) =>
+    request<{ data: { rows: SupplierAADEInvoice[]; total: number } }>(`/suppliers/aade/invoices?${new URLSearchParams({supplier_id:supplier, date_from:start, date_to:end, offset:String(offset)})}`),
+  supplierAADEPreview: (id: string, supplier: string) =>
+    request<{ data: SupplierAADEPreview }>(`/suppliers/aade/invoices/${id}?supplier_id=${supplier}`),
+  acceptSupplierAADEInvoice: (preview: SupplierAADEPreview) => request<{ data: { duplicate: boolean; costs_created: number } }>(
+    `/suppliers/aade/invoices/${preview.id}/accept`, { method: "POST", body: JSON.stringify({ supplier_id: preview.supplier_id,
+      fingerprint: preview.fingerprint, confirm_products_and_units: true }) }),
   login: (email: string, password: string) =>
     request<{ access_token: string }>("/auth/login", {
       method: "POST",

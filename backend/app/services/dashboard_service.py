@@ -19,6 +19,7 @@ from app.models import (
 )
 from app.services.parsing import as_decimal, dec_to_float
 from app.services.supplier_service import product_profitability
+from app.services.supplier_identity import normalize_vat, registered_supplier_names
 
 
 PAID_AD_SOURCES = ("meta_ads", "google_ads", "tiktok_ads")
@@ -1523,6 +1524,7 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
 
     rows = []
     categories: dict[tuple[str, str], dict[str, Any]] = {}
+    supplier_names = registered_supplier_names(db)
     for document in documents:
         raw = document.raw if isinstance(document.raw, dict) else {}
         document_count = _aade_document_count(document)
@@ -1532,6 +1534,8 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
         issuer_name = _aade_party_name(raw, "issuer")
         if not issuer_name and record_type == "book_info" and direction == "expense":
             issuer_name = _aade_party_name(raw, "counterpart")
+        if not issuer_name and direction == "expense":
+            issuer_name = supplier_names.get(normalize_vat(document.issuer_vat))
         category_key = (direction, invoice_type)
         category = categories.setdefault(
             category_key,

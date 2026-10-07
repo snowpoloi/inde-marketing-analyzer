@@ -83,7 +83,7 @@ export function App() {
       {view === "order-analytics" ? <OrderAnalyticsPage /> : null}
       {view === "products" ? <ProductsPage /> : null}
       {view === "supplier-catalog" ? (isAdmin ? <SupplierCatalogPage /> : <div className="notice">Admin access required.</div>) : null}
-      {view === "suppliers" ? (isAdmin ? <SuppliersPage /> : <div className="notice">Admin access required.</div>) : null}
+      {view === "suppliers" ? (isAdmin ? <SuppliersPage onSettings={() => navigate("settings")} /> : <div className="notice">Admin access required.</div>) : null}
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}
     </Layout>

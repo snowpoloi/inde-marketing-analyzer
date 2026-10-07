@@ -23,12 +23,13 @@ import { DataTable, type Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { SupplierGmailPanel } from "../components/SupplierGmailPanel";
+import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2, style: "percent" });
 
-type Tab = "products" | "unmatched" | "performance" | "import" | "gmail";
+type Tab = "products" | "unmatched" | "performance" | "import" | "gmail" | "aade";
 
 function isoDate(offset = 0) {
   const value = new Date();
@@ -92,7 +93,7 @@ function downloadTemplate() {
   URL.revokeObjectURL(url);
 }
 
-export function SuppliersPage() {
+export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
   const [dateFrom, setDateFrom] = useState(isoDate(-30));
   const [dateTo, setDateTo] = useState(isoDate());
   const [tab, setTab] = useState<Tab>("products");
@@ -455,10 +456,12 @@ export function SuppliersPage() {
         <button className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>Supplier performance</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>Import</button>
         <button className={tab === "gmail" ? "active" : ""} onClick={() => setTab("gmail")}>Gmail documents</button>
+        <button className={tab === "aade" ? "active" : ""} onClick={() => setTab("aade")}>AADE costs</button>
       </div>
 
-      {tab !== "import" && tab !== "gmail" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+      {tab !== "import" && tab !== "gmail" && tab !== "aade" ? <input className="supplier-filter" aria-label="Filter suppliers and products" placeholder="Supplier, SKU or product" value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
       {tab === "gmail" && <SupplierGmailPanel onImported={load} />}
+      {tab === "aade" && <SupplierAADEPanel start={dateFrom} end={dateTo} onImported={load} onSettings={onSettings} />}
 
       {tab === "products" ? (
         <section className="panel">

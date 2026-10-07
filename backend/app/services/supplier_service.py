@@ -28,6 +28,7 @@ from app.models import (
 from app.schemas.suppliers import ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest
 from app.services.parsing import dec_to_float
 from app.services.product_sales_costing import allocate_coupon, flag, net_product_sale, present
+from app.services.supplier_aade_costs import validated_cost_rows, validated_documents
 from app.services.supplier_costing import (
     CatalogIdentity,
     CostOption,
@@ -633,7 +634,7 @@ def supplier_products(db: Session, as_of: date) -> list[dict[str, Any]]:
         .order_by(Supplier.name, SupplierProductMap.product_name)
     ).all()
     costs_by_map: dict[UUID, list[SupplierProductCost]] = defaultdict(list)
-    for cost in db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= as_of)).all():
+    for cost in validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= as_of)).all()):
         costs_by_map[cost.supplier_product_map_id].append(cost)
 
     results = []
@@ -750,8 +751,11 @@ def supplier_performance(db: Session, date_from: date, date_to: date) -> list[di
             SupplierShippingCost.date.between(date_from, date_to), SupplierDocument.document_type.in_(["invoice", "credit_note"])
         )).all()
     )
+    documents = validated_documents(db, documents)
+    valid_document_ids = {document.id for document in documents}
+    shipping = [row for row in shipping if row.document_id in valid_document_ids]
     costs = list(
-        db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all()
+        validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all())
     )
     docs_by_supplier: dict[UUID, list[SupplierDocument]] = defaultdict(list)
     shipping_by_supplier: dict[UUID, list[SupplierShippingCost]] = defaultdict(list)
@@ -915,9 +919,12 @@ def supplier_cost_history(db: Session, mapping_id: UUID) -> list[dict[str, Any]]
 def supplier_summary(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
     realized = [SupplierDocument.document_date.between(date_from, date_to),
                 SupplierDocument.document_type.in_(["invoice", "credit_note"])]
-    purchases = db.scalar(select(func.coalesce(func.sum(SupplierDocument.net_products_total), 0)).where(*realized))
+    documents = validated_documents(db, db.scalars(select(SupplierDocument).where(*realized)).all())
+    valid_ids = [row.id for row in documents]
+    purchases = sum((row.net_products_total for row in documents), Decimal("0"))
     freight = db.scalar(select(func.coalesce(func.sum(SupplierShippingCost.net_shipping_cost), 0))
-                        .join(SupplierDocument, SupplierShippingCost.document_id == SupplierDocument.id).where(*realized))
+                        .join(SupplierDocument, SupplierShippingCost.document_id == SupplierDocument.id).where(*realized,
+                            SupplierDocument.id.in_(valid_ids)))
     matched = db.scalar(select(func.count()).select_from(SupplierProductMap).where(SupplierProductMap.status == "matched")) or 0
     unmatched = db.scalar(
         select(func.count()).select_from(SupplierProductMap).where(SupplierProductMap.status != "matched")
@@ -1001,7 +1008,7 @@ def product_profitability(
     catalog_products = list(db.scalars(select(ProductCatalog)).all())
     catalog_lookup = _catalog_lookup(catalog_products)
     costs_by_catalog: dict[UUID, list[SupplierProductCost]] = defaultdict(list)
-    for cost in db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all():
+    for cost in validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all()):
         costs_by_catalog[cost.product_catalog_id].append(cost)
 
     lines_by_order: dict[UUID, list[tuple[OpenCartOrder, OpenCartOrderProduct]]] = defaultdict(list)

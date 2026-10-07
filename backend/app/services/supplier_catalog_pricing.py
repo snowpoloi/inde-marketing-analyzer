@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierDocument,
                         SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
 from app.services.supplier_costing import decimal_value, margin_metrics, money
+from app.services.supplier_aade_costs import validated_cost_rows
 
 
 def catalog_sale_price(product: ProductCatalog | None) -> dict:
@@ -83,7 +84,10 @@ def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
         .join(AADEDocument, AADEDocument.id == SupplierDocument.aade_document_id)
         .where(eligible.c.recency == 1).order_by(SupplierProductCost.id)).all()
     grouped = {}
+    valid_ids = {cost.id for cost in validated_cost_rows(db, [cost for cost, _, _ in results])}
     for cost, code, mark in results:
+        if cost.id not in valid_ids:
+            continue
         grouped.setdefault((code, cost.product_catalog_id), []).append((cost, mark))
     return {key: (options[0] if len({cost.net_unit_cost for cost, _ in options}) == 1 else None)
             for key, options in grouped.items()}

@@ -1309,3 +1309,15 @@ tr:last-child td {
     min-height: 200px;
   }
 }
+
+.supplier-aade-review {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #dde5e2;
+  min-width: 0;
+}
+.supplier-aade-review .supplier-feed-toggle { margin: 16px 0; }
+.supplier-aade-review p { overflow-wrap: anywhere; }
+.supplier-aade-panel .supplier-catalog-actions label { min-width: 0; max-width: 100%; }
+.supplier-aade-panel select { min-width: 0; width: 100%; max-width: 520px; }
+.supplier-aade-panel .panel-title h2 { overflow-wrap: anywhere; }

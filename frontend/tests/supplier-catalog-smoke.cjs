@@ -36,6 +36,7 @@ async function main() {
         } else if (url.pathname === "/api/supplier-catalog/products/p1") response = { id: "p1", name: product.name, is_current: true, details: {
           description: "<b>Garden chair</b><br>Polypropylene", availability: "In stock", volume_item: "0.06502222", weight_item: "13.00444444",
           packages_per_item: "1", comb_width_cm: "0", comb_height_cm: "0", comb_length_cm: "0", filters: [{ group: "Material", value: "Polypropylene PP" }] } };
+        else if (url.pathname === "/api/suppliers/identities") response = {data:{rows:[]}};
         else if (url.pathname.endsWith("/settings/integrations") || url.pathname.endsWith("/settings/opencart/order-statuses")) response = [];
         else throw new Error(`Unexpected endpoint: ${url.pathname}`);
         await route.fulfill({ json: response });

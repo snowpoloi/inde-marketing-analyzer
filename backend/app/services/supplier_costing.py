@@ -14,6 +14,7 @@ MONEY = Decimal("0.0001")
 PERCENT = Decimal("0.01")
 
 SOURCE_PRIORITY = {
+    "aade_invoice": -1,
     "invoice": 0,
     "credit_note": 0,
     "supplier_order": 1,

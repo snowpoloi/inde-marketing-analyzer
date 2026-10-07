@@ -25,6 +25,18 @@ class SupplierSettingsRequest(SupplierBase):
     free_shipping_threshold: Decimal | None = Field(default=None, ge=0)
 
 
+class SupplierIdentityRequest(SupplierBase):
+    code: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=255)
+    vat_number: str = Field(min_length=9, max_length=32)
+
+
+class SupplierAADEAcceptRequest(SupplierBase):
+    supplier_id: UUID
+    fingerprint: str = Field(min_length=64, max_length=64)
+    confirm_products_and_units: bool = False
+
+
 class SupplierDocumentLineInput(SupplierBase):
     line_number: str | None = Field(default=None, max_length=64)
     line_type: Literal["product", "shipping", "discount", "fee", "other"] = "product"

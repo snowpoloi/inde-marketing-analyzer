@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_admin
 from app.db.session import get_db
 from app.models import User
-from app.schemas.suppliers import ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest, SupplierSettingsRequest
+from app.schemas.suppliers import (ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest,
+                                  SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest)
+from app.services.supplier_identity import supplier_identities, save_supplier_identity
+from app.services.supplier_aade_costs import aade_invoices, invoice_preview, accept_invoice
 from app.services.supplier_service import (
     add_manual_cost,
     import_supplier_documents,
@@ -41,6 +44,51 @@ def _dates(date_from: date | None, date_to: date | None) -> tuple[date, date]:
     if end < start:
         raise HTTPException(status_code=400, detail="date_to must be on or after date_from")
     return start, end
+
+
+@router.get("/identities")
+def identities(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return {"data": {"rows": supplier_identities(db)}}
+
+
+@router.put("/identities")
+def save_identity(payload: SupplierIdentityRequest, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": save_supplier_identity(db, payload, user)}
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc) if isinstance(exc, ValueError) else "Supplier identity conflicts with existing records.") from None
+
+
+@router.get("/aade/invoices")
+def fiscal_invoices(supplier_id: UUID, date_from: date, date_to: date,
+                    offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=50),
+                    _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    start, end = _dates(date_from, date_to)
+    if (end - start).days > 366:
+        raise HTTPException(status_code=400, detail="Choose a period of at most 366 days.")
+    try:
+        return {"data": aade_invoices(db, supplier_id, start, end, offset, limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/aade/invoices/{document_id}")
+def fiscal_preview(document_id: UUID, supplier_id: UUID, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": invoice_preview(db, document_id, supplier_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post("/aade/invoices/{document_id}/accept")
+def fiscal_accept(document_id: UUID, payload: SupplierAADEAcceptRequest,
+                  user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": accept_invoice(db, document_id, payload, user)}
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc) if isinstance(exc, ValueError) else "Invoice conflicts with existing cost evidence; reload and review.") from None
 
 
 @router.get("/summary")
