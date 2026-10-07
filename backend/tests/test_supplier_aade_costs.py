@@ -55,6 +55,18 @@ def payload(preview):
     return SupplierAADEAcceptRequest(supplier_id=preview["supplier_id"], fingerprint=preview["fingerprint"], confirm_products_and_units=True)
 
 
+def test_reviewed_aade_import_does_not_reload_whole_catalog(db, monkeypatch):
+    import app.services.supplier_service as service
+
+    user,supplier,_,_,fiscal = seed(db)
+    preview = invoice_preview(db,fiscal.id,supplier.id)
+    def forbidden_catalog_read(*args):
+        raise AssertionError("Reviewed exact mappings must not trigger generic catalog matching")
+    monkeypatch.setattr(service,"_catalog_data",forbidden_catalog_read)
+    assert accept_invoice(db,fiscal.id,payload(preview),user)["costs_created"] == 1
+    assert db.scalar(select(SupplierProductCost.net_unit_cost)) == 70
+
+
 def test_identity_registry_uniqueness_and_no_price_changes(db):
     user = SimpleNamespace(id=uuid4())
     save_supplier_identity(db, SupplierIdentityRequest(code="MEGAPAP",name="Legal name",vat_number="EL 012345678"),user)

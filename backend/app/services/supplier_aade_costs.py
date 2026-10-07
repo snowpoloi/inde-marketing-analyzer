@@ -284,7 +284,7 @@ def accept_invoice(db, document_id, payload, user):
         source_reference=f"AADE MARK {preview['mark']}", source_type="xml", documents=[SupplierDocumentInput(
             document_type="invoice", document_number=preview["number"], document_date=preview["date"],
             vat_total=preview["vat_amount"], gross_total=preview["gross_value"], lines=normalized)])
-    result = import_supplier_documents(db, request, user.id, commit=False)
+    result = import_supplier_documents(db, request, user.id, commit=False, require_verified_mappings=True)
     if not result["documents_imported"]:
         raise ValueError("An existing import needs reconciliation; costs were not duplicated.")
     document = db.scalar(select(SupplierDocument).where(SupplierDocument.import_batch_id == result["batch_id"]))

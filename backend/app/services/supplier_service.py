@@ -328,7 +328,8 @@ def _create_shipping_cost(
     return shipping
 
 
-def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_id: UUID | None = None, *, commit: bool = True) -> dict[str, Any]:
+def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_id: UUID | None = None, *, commit: bool = True,
+                              require_verified_mappings: bool = False) -> dict[str, Any]:
     # Serialize imports for one supplier across workers, before checking identities.
     lock_key = int.from_bytes(hashlib.sha256(_supplier_code(payload.supplier.code).encode()).digest()[:8], "big", signed=True)
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
@@ -361,7 +362,8 @@ def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_
     db.add(batch)
     db.flush()
 
-    catalogs, catalog_by_id = _catalog_data(db)
+    # Reviewed AADE imports already established and locked every XML mapping.
+    catalogs, catalog_by_id = ([], {}) if require_verified_mappings else _catalog_data(db)
     imported = skipped = product_lines = matched = unmatched = shipping_lines = 0
     for source_document in payload.documents:
         identity_key = _document_identity(supplier, source_document)
@@ -401,6 +403,8 @@ def import_supplier_documents(db: Session, payload: SupplierImportRequest, user_
                     catalog_by_id=catalog_by_id,
                     identity_context=f"{identity_key}|line:{source_line.line_number or index}",
                 )
+                if require_verified_mappings and (not mapping.verified or not mapping.product_catalog_id):
+                    raise ValueError("Reviewed import requires a verified product mapping for every product line.")
                 conversion_factor = mapping.conversion_factor
                 product_lines += 1
                 if mapping.product_catalog_id:
