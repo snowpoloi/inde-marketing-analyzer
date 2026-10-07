@@ -21,7 +21,8 @@ export function SupplierIdentitySettings() {
     event.preventDefault(); setBusy(true); setError(""); setMessage("");
     try {
       const result = await api.saveSupplierIdentity({code, name, vat_number:vat});
-      const options = (await api.supplierIdentities()).data.rows;
+      const options = [...rows.filter(row => row.code !== result.data.code), result.data]
+        .sort((a, b) => a.name.localeCompare(b.name));
       setRows(options); choose(result.data.code, options); setMessage("Supplier AFM and company name saved.");
     } catch (err) { setError(err instanceof Error ? err.message : "Supplier could not be saved."); }
     finally { setBusy(false); }

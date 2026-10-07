@@ -100,10 +100,12 @@ def aade_supplier_registry(db, start, end):
     own = normalize_vat((integration.config or {}).get("vat_number")) if integration else ""
     if not re.fullmatch(r"[0-9]{9}", own) or own == "000000000":
         raise ValueError("Configure the INDE AFM in AADE settings first.")
-    # Project party identity only: never transfer invoice product payloads to this list.
+    # Expand raw once per invoice: repeated JSON lookups repeatedly decompress TOAST data.
     keys = ("record_type", "issuer", "counterpart", "invoiceHeader", "header", *PARTY_DIRECT_KEYS)
-    identity_json = func.jsonb_build_object(*[part for key in keys for part in (
-        key, func.coalesce(AADEDocument.raw[key], AADEDocument.raw[key.lower()], AADEDocument.raw[key[:1].upper() + key[1:]]))])
+    fields = func.jsonb_each(AADEDocument.raw).table_valued("key", "value").alias("party_fields")
+    identity_json = select(func.jsonb_object_agg(func.lower(fields.c.key), fields.c.value))\
+        .select_from(fields).where(func.lower(fields.c.key).in_({key.lower() for key in keys}))\
+        .correlate(AADEDocument).scalar_subquery()
     query = select(AADEDocument.id, AADEDocument.issuer_vat, AADEDocument.counterpart_vat,
                    AADEDocument.mark, AADEDocument.issue_date, identity_json.label("identity"))\
         .where(AADEDocument.document_direction == "expense").execution_options(yield_per=500)

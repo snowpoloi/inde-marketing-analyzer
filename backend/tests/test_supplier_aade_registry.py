@@ -1,9 +1,10 @@
 from datetime import date
 from types import SimpleNamespace
 from uuid import uuid4
+from hashlib import sha256
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.models import AADEDocument, IntegrationSetting, Supplier, SupplierDocument, SupplierProductCost
 from app.schemas.suppliers import SupplierIdentityRequest
@@ -142,3 +143,24 @@ def test_registry_requires_own_afm_and_admin_access(db):
     with client(db, False) as http:
         assert http.get("/api/suppliers/aade/suppliers?date_from=2026-09-01&date_to=2026-09-30").status_code == 403
         assert http.post("/api/suppliers/aade/suppliers/import").status_code == 403
+
+
+def test_large_invoice_identity_is_expanded_once_without_returning_product_payload(db):
+    own(db)
+    raw = {"record_type": "full_document", "Issuer": {"country": "GR", "legalName": "Large invoice company"},
+           "invoiceDetails": [{"description": sha256(str(i).encode()).hexdigest(), "netValue": i}
+                              for i in range(5000)]}
+    document(db, raw=raw)
+    statements = []
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(db.bind, "before_cursor_execute", capture)
+    try:
+        rows = aade_supplier_registry(db, START, END)["rows"]
+    finally:
+        event.remove(db.bind, "before_cursor_execute", capture)
+    assert rows[0]["name"] == "Large invoice company"
+    discovery = next(sql for sql in statements if "jsonb_each" in sql)
+    assert discovery.count("jsonb_each") == 1
+    assert "jsonb_build_object" not in discovery
+    assert "invoiceDetails" not in str(rows)
