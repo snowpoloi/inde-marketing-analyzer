@@ -1,5 +1,6 @@
 import io
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,9 +11,11 @@ from sqlalchemy import func, select
 
 from app.connectors import supplier_catalog as connector
 from app.core.config import settings
-from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct, SupplierProductCost
+from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierCatalogFeed, SupplierCatalogProduct,
+                        SupplierDocument, SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services import supplier_catalog_service as service
+from app.services.supplier_catalog_pricing import catalog_sale_price, latest_aade_costs, price_comparison
 
 URL = "https://www.megapap.com/?route=feed&token=fixture-private-token"
 
@@ -116,6 +119,9 @@ def test_atomic_catalog_upserts_and_no_financial_or_shop_changes(db, private_key
     assert own.price == 99 and own.quantity == 7 and own.name == "Our chair"
     result = service.catalog_products(db, feed_id=saved.id, q="0268292", match="matched", availability="in_stock", category="", offset=0, limit=50)
     assert result["rows"][0]["opencart_sku"] == "CH-N5080-GR"
+    assert result["rows"][0]["inde_price"] == 99
+    assert result["rows"][0]["aade_cost_net"] is None
+    assert result["rows"][0]["gross_margin_percent"] is None
     assert result["summary"] == {"products": 1, "matched": 1, "unmatched": 0}
     service.apply_catalog(db, saved, rows(code="000NEW", sku="NEW")); db.commit()
     assert db.scalar(select(func.count()).select_from(SupplierCatalogProduct).where(SupplierCatalogProduct.is_current)) == 1
@@ -175,3 +181,80 @@ def test_api_admin_only_and_paginated_without_url_leaks(db, private_key):
         assert client.get("/api/supplier-catalog/products").status_code == 403
         assert client.get("/api/supplier-catalog/feeds").status_code == 403
         assert client.post(f"/api/supplier-catalog/feeds/{saved.id}/sync").status_code == 403
+
+
+def test_net_margin_requires_confirmed_sale_tax_basis_and_aade_cost():
+    own = SimpleNamespace(price=Decimal("124"), raw={"prices_include_vat": True, "vat_rate": 24})
+    cost = SimpleNamespace(net_unit_cost=Decimal("70"), purchase_date=date(2026, 1, 2))
+    result = price_comparison(own, (cost, "MARK-1"))
+    assert result["inde_price"] == 124 and result["inde_price_net"] == 100
+    assert result["gross_profit_per_unit"] == 30 and result["gross_margin_percent"] == 30
+    assert result["aade_mark"] == "MARK-1" and result["margin_status"] == "available"
+    own.raw = {}
+    assert price_comparison(own, (cost, "MARK-1"))["gross_margin_percent"] is None
+    own.raw = {"prices_include_vat": False}
+    own.price = Decimal("50")
+    assert price_comparison(own, (cost, "MARK-1"))["gross_margin_percent"] == -40
+    own.price = Decimal("0")
+    assert price_comparison(own, (cost, "MARK-1"))["margin_status"] == "zero_sale_price"
+    assert price_comparison(own, None)["gross_profit_per_unit"] is None
+    assert price_comparison(None, None)["inde_price"] is None
+    own.raw = {"price": None}
+    assert catalog_sale_price(own)["inde_price"] is None
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ({"prices_include_vat": True}, None),
+    ({"prices_include_vat": True, "vat_rate": "bad"}, None),
+    ({"prices_include_vat": True, "vat_rate": -1}, None),
+    ({"prices_include_vat": True, "vat_rate": 0}, Decimal("124")),
+    ({"price_net": "100"}, Decimal("100")),
+    ({"prices_include_vat": False, "currency": "USD"}, None),
+    ({"raw_fields": {"prices_include_vat": "true", "vat_rate": "24"}}, Decimal("100")),
+])
+def test_catalog_price_never_guesses_vat(raw, expected):
+    assert catalog_sale_price(SimpleNamespace(price=Decimal("124"), raw=raw))["inde_price_net"] == expected
+
+
+def test_only_verified_aade_purchase_costs_qualify(db):
+    own = ProductCatalog(sku="pricing-chair", name="Chair", price=124, raw={"prices_include_vat": True, "vat_rate": 24})
+    supplier = Supplier(code="MEGAPAP", name="MEGAPAP", vat_number="123456789")
+    db.add_all([own, supplier]); db.flush()
+    mapping = SupplierProductMap(supplier_id=supplier.id, product_catalog_id=own.id, identity_key="test",
+                                 status="matched", verified=True)
+    fiscal = AADEDocument(source_endpoint="RequestDocs", identity_key="fiscal-pricing", mark="MARK-1",
+                          issuer_vat=supplier.vat_number, issue_date=date(2026, 1, 2), currency="EUR",
+                          document_direction="expense", invoice_type="1.1")
+    db.add_all([mapping, fiscal]); db.flush()
+    document = SupplierDocument(supplier_id=supplier.id, aade_document_id=fiscal.id, identity_key="cost-pricing",
+                                document_type="invoice", document_date=fiscal.issue_date, currency="EUR")
+    db.add(document); db.flush()
+    line = SupplierDocumentLine(document_id=document.id, supplier_product_map_id=mapping.id, line_number="1", line_type="product", quantity=2)
+    db.add(line); db.flush()
+    cost = SupplierProductCost(supplier_id=supplier.id, supplier_product_map_id=mapping.id, product_catalog_id=own.id,
+                               source_line_id=line.id, source_type="aade_invoice", source_key="pricing", purchase_date=fiscal.issue_date,
+                               net_unit_cost=70, quantity=2, currency="EUR", status="active", source_confidence=1)
+    db.add(cost); db.flush()
+    def lookup():
+        db.flush()
+        return latest_aade_costs(db, {own.id}, {"MEGAPAP"})
+    assert lookup()[("MEGAPAP", own.id)][0].net_unit_cost == 70
+    for field, bad, good in [("source_type", "invoice", "aade_invoice"), ("currency", "USD", "EUR"),
+                             ("quantity", 0, 2), ("source_confidence", Decimal("0.8"), 1), ("status", "void", "active")]:
+        setattr(cost, field, bad)
+        assert not lookup()
+        setattr(cost, field, good)
+    for target, field, bad, good in [(mapping, "verified", False, True), (line, "line_type", "shipping", "product"),
+                                    (fiscal, "is_cancelled", True, False), (fiscal, "cancelled_by_mark", "CANCEL", None),
+                                    (fiscal, "invoice_type", "5.1", "1.1"), (fiscal, "issuer_vat", "other", supplier.vat_number)]:
+        setattr(target, field, bad)
+        assert not lookup()
+        setattr(target, field, good)
+    assert not latest_aade_costs(db, {own.id}, {"OTHER"})
+    another = SupplierProductCost(supplier_id=supplier.id, supplier_product_map_id=mapping.id, product_catalog_id=own.id,
+                                  source_line_id=line.id, source_type="aade_invoice", source_key="pricing-conflict",
+                                  purchase_date=fiscal.issue_date, net_unit_cost=80, quantity=1, currency="EUR", status="active")
+    db.add(another)
+    assert lookup()[("MEGAPAP", own.id)] is None
+    another.net_unit_cost = 70
+    assert lookup()[("MEGAPAP", own.id)] is not None

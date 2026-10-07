@@ -47,3 +47,21 @@ Migration 0011 adds two tables only. The next financial phase will bridge suppli
 codes in full AADE expense invoice lines to this catalog, validate quantities/units,
 reconcile amounts and retain historical net invoice costs without Gmail evidence.
 It is not part of this catalog release.
+## Price Comparison
+
+The catalog shows the matched INDE feed price separately from XML wholesale and
+retail list prices. AADE purchase cost is the latest verified, active EUR product
+unit cost explicitly sourced as `aade_invoice`, linked through an invoice line
+to a non-cancelled AADE expense invoice from the same supplier. A reconciled
+Gmail/imported invoice is not by itself AADE cost evidence. Different unit costs
+on the latest purchase date remain unresolved instead of choosing arbitrarily.
+
+Gross profit per unit and gross margin use net sale price and net purchase cost.
+Margin is `(net sale - net cost) / net sale * 100`, not markup on cost, and excludes
+shipping, advertising and overhead. No XML or Gmail fallback is permitted. The
+AADE cost ingestion/approval bridge remains a separate implementation step.
+
+Net sale price requires explicit `price_net`, or a declared `prices_include_vat`
+and VAT rate for gross prices (also supported in `raw_fields`). Generic XML price
+alone does not establish tax treatment. Missing cost, unknown VAT basis, foreign
+currency and zero sale price never produce a fabricated margin percentage.

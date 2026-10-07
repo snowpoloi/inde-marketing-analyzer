@@ -18,7 +18,9 @@ async function main() {
         last_synced_at: "2026-10-07T10:00:00Z", counts: { products: 56, matched: 40, unmatched: 16 } };
       const product = { id: "p1", supplier: "MEGAPAP", supplier_code: "0268292", supplier_sku: "CH-N5080-GR", ean: "5203266100377",
         name: "Garden chair 56x60x86.5 cm", category: "Garden chairs", image_url: null, quantity: 168,
-        wholesale_price_net: 20.97, retail_price_gross: 26, opencart_sku: "CH-N5080-GR", match_method: "exact_identifiers", last_seen_at: feed.last_synced_at };
+        wholesale_price_net: 20.97, retail_price_gross: 26, inde_price: 124, inde_price_net: 100, inde_price_basis: "gross",
+        aade_cost_net: 70, aade_cost_date: "2026-01-02", aade_mark: "MARK-1", gross_profit_per_unit: 30, gross_margin_percent: 30,
+        margin_status: "available", opencart_sku: "CH-N5080-GR", match_method: "exact_identifiers", last_seen_at: feed.last_synced_at };
       await page.route((url) => url.pathname.startsWith("/api/"), async route => {
         const url = new URL(route.request().url()); let response;
         if (url.pathname.endsWith("/auth/me")) response = { is_admin: true };
@@ -41,6 +43,10 @@ async function main() {
       await page.goto("http://127.0.0.1:5187/#supplier-catalog");
       await page.getByRole("heading", { name: "Supplier catalog", exact: true }).waitFor();
       await page.getByText(product.name, { exact: true }).waitFor();
+      await page.getByRole("columnheader", { name: "INDE price", exact: true }).waitFor();
+      await page.getByRole("columnheader", { name: "AADE cost / unit (net)", exact: true }).waitFor();
+      assert.equal(await page.getByRole("cell", { name: "30%", exact: true }).count(), 1);
+      assert.equal(await page.getByRole("cell", { name: /70,00/ }).count(), 1);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Page overflows");
       await page.screenshot({ path: `test-results/supplier-catalog-${viewport.width}.png`, fullPage: true });
       await page.getByRole("button", { name: "Details 0268292" }).click();

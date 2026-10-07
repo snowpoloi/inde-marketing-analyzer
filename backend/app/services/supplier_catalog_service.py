@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services.supplier_costing import normalize_identifier
+from app.services.supplier_catalog_pricing import latest_aade_costs, price_comparison
 
 
 def _cipher() -> Fernet:
@@ -181,11 +182,12 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
         conditions.append(SupplierCatalogProduct.quantity == 0)
     if category:
         conditions.append(SupplierCatalogProduct.category == category)
-    base = select(SupplierCatalogProduct, SupplierCatalogFeed.name, ProductCatalog.sku).join(
+    base = select(SupplierCatalogProduct, SupplierCatalogFeed.name, SupplierCatalogFeed.code, ProductCatalog).join(
         SupplierCatalogFeed, SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(
         ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(*conditions)
     total = db.scalar(select(func.count()).select_from(base.subquery()))
     results = db.execute(base.order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id).offset(offset).limit(limit)).all()
+    costs = latest_aade_costs(db, {own.id for _, _, _, own in results if own}, {code for _, _, code, _ in results})
     summary = db.execute(select(func.count(), func.sum(case((ProductCatalog.id.is_not(None), 1), else_=0)))
                          .select_from(SupplierCatalogProduct).outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
                          .where(SupplierCatalogProduct.is_current.is_(True), *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))).one()
@@ -197,7 +199,8 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
              "supplier_sku": product.supplier_sku, "ean": product.ean, "name": product.name,
              "category": product.category, "image_url": product.image_url, "quantity": product.quantity,
              "wholesale_price_net": product.wholesale_price_net, "retail_price_gross": product.retail_price_gross,
-             "opencart_sku": sku, "match_method": product.match_method if sku else ("ambiguous" if product.match_method == "ambiguous" else "unmatched"),
-             "last_seen_at": product.last_seen_at} for product, supplier, sku in results]
+             "opencart_sku": own.sku if own else None, "match_method": product.match_method if own else ("ambiguous" if product.match_method == "ambiguous" else "unmatched"),
+             **price_comparison(own, costs.get((code, own.id)) if own else None),
+             "last_seen_at": product.last_seen_at} for product, supplier, code, own in results]
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "categories": categories,
             "summary": {"products": summary[0], "matched": summary[1] or 0, "unmatched": summary[0] - (summary[1] or 0)}}

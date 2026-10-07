@@ -8,6 +8,9 @@ export type SupplierCatalogProduct = {
   id: string; supplier: string; supplier_code: string; supplier_sku: string | null; ean: string | null;
   name: string; category: string | null; image_url: string | null; quantity: number | null;
   wholesale_price_net: number | null; retail_price_gross: number | null;
+  inde_price: number | null; inde_price_net: number | null; inde_price_basis: string;
+  aade_cost_net: number | null; aade_cost_date: string | null; aade_mark: string | null;
+  gross_profit_per_unit: number | null; gross_margin_percent: number | null; margin_status: string;
   opencart_sku: string | null; match_method: string; last_seen_at: string;
 };
 

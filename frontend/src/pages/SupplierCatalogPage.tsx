@@ -8,6 +8,12 @@ import type { Column } from "../components/DataTable";
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const money = (value: number | null) => value == null ? "-" : currency.format(Number(value));
 const timestamp = (value: string | null) => value ? new Date(value).toLocaleString("el-GR") : "-";
+const percent = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
+const marginReason = (row: SupplierCatalogProduct) => row.margin_status === "available"
+  ? "(Net INDE price - net AADE unit cost) / net INDE price. Excludes freight, ads and other expenses."
+  : row.margin_status === "missing_sale_tax_basis" ? "INDE price VAT basis is not confirmed."
+  : row.margin_status === "zero_sale_price" ? "Margin percentage is undefined for a zero sale price."
+  : "No confirmed AADE purchase unit cost. XML and Gmail prices are not used.";
 type Details = Awaited<ReturnType<typeof api.supplierCatalogDetails>>;
 
 export function SupplierCatalogPage() {
@@ -69,6 +75,10 @@ export function SupplierCatalogPage() {
     { key: "sku", header: "Supplier SKU / EAN", render: row => <div className="supplier-catalog-stack">{row.supplier_sku || "-"}<small>{row.ean || "-"}</small></div> },
     { key: "own", header: "INDE SKU", render: row => <div className="supplier-catalog-stack">{row.opencart_sku || "-"}<small>{row.match_method === "ambiguous" ? "Needs review" : row.opencart_sku ? "Matched" : "Not matched"}</small></div> },
     { key: "stock", header: "Supplier stock", align: "right", render: row => row.quantity ?? "-" },
+    { key: "inde-price", header: "INDE price", align: "right", render: row => <div className="supplier-catalog-stack" title={row.inde_price_basis === "unknown" ? "INDE feed price; VAT basis not confirmed." : `INDE feed price (${row.inde_price_basis})`}>{money(row.inde_price)}{row.inde_price_net != null && <small>{money(row.inde_price_net)} net</small>}</div> },
+    { key: "aade-cost", header: "AADE cost / unit (net)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.aade_mark ? `AADE MARK ${row.aade_mark}` : "No confirmed AADE unit cost"}>{money(row.aade_cost_net)}{row.aade_cost_date && <small>{row.aade_cost_date}</small>}</div> },
+    { key: "unit-profit", header: "Gross profit / unit (net)", align: "right", render: row => <span title={marginReason(row)}>{money(row.gross_profit_per_unit)}</span> },
+    { key: "margin", header: "Gross margin %", align: "right", render: row => <span title={marginReason(row)}>{row.gross_margin_percent == null ? "-" : `${percent.format(Number(row.gross_margin_percent))}%`}</span> },
     { key: "wholesale", header: "XML wholesale (net)", align: "right", render: row => money(row.wholesale_price_net) },
     { key: "retail", header: "XML retail (gross)", align: "right", render: row => money(row.retail_price_gross) },
     { key: "inspect", header: "", render: row => <button className="icon-button" title={`Details ${row.supplier_code}`} aria-label={`Details ${row.supplier_code}`} onClick={() => inspect(row)}><Search size={16} /></button> }
@@ -102,7 +112,7 @@ export function SupplierCatalogPage() {
       <span>Not matched <strong>{result?.summary.unmatched ?? 0}</strong></span>
       {selected && <span>{selected.status} · {timestamp(selected.last_synced_at)}</span>}
     </div>
-    <DataTable rows={result?.rows ?? []} columns={columns} empty={loading ? "Loading supplier products..." : "No supplier products found."} />
+    <div className="supplier-catalog-table"><DataTable rows={result?.rows ?? []} columns={columns} empty={loading ? "Loading supplier products..." : "No supplier products found."} /></div>
     <div className="supplier-catalog-pagination">
       <button className="icon-button" title="Previous page" aria-label="Previous page" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}><ChevronLeft size={17} /></button>
       <span>{result?.total ? `${offset + 1}-${Math.min(offset + 50, result.total)} / ${result.total}` : "0"}</span>
