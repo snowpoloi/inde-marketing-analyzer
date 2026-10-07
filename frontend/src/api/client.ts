@@ -452,11 +452,13 @@ export type SupplierRegistryRow = { id: string | null; code: string | null; name
 export type SupplierAADEInvoice = { id: string; date: string; mark: string | null; number: string; invoice_type: string;
   net_value: number; gross_value: number; cancelled: boolean; record_type: string };
 export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: string; issuer_vat: string; date: string;
+  confirm_missing_units?: boolean; needs_unit_confirmation?: boolean;
   provider_detail?: {status: string; reason?: string; host?: string};
   mark: string; number: string; net_value: number; vat_amount: number; gross_value: number; reasons: string[];
   fingerprint: string; imported: boolean; can_import: boolean; lines: Array<{ line_number: string; item_code: string;
     description: string; line_type: string; quantity: number | null; unit: string; net_value: number | null;
     vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[] }> };
+export type SupplierAADEBatchRow = {id:string; number:string; mark:string; status:string; costs_created:number; reasons:string[]};
 
 export const api = {
   supplierAADERegistry: (start: string, end: string) => request<{ data: { rows: SupplierRegistryRow[]; skipped_records: number } }>(
@@ -468,11 +470,15 @@ export const api = {
     request<{ data: SupplierIdentity }>("/suppliers/identities", { method: "PUT", body: JSON.stringify(payload) }),
   supplierAADEInvoices: (supplier: string, start: string, end: string, offset: number) =>
     request<{ data: { rows: SupplierAADEInvoice[]; total: number } }>(`/suppliers/aade/invoices?${new URLSearchParams({supplier_id:supplier, date_from:start, date_to:end, offset:String(offset)})}`),
-  supplierAADEPreview: (id: string, supplier: string) =>
-    request<{ data: SupplierAADEPreview }>(`/suppliers/aade/invoices/${id}?supplier_id=${supplier}`),
+  supplierAADEPreview: (id: string, supplier: string, confirmMissingUnits = false) =>
+    request<{ data: SupplierAADEPreview }>(`/suppliers/aade/invoices/${id}?${new URLSearchParams({supplier_id:supplier, confirm_missing_units:String(confirmMissingUnits)})}`),
+  importSupplierAADEBatch: (supplier: string, start: string, end: string, offset: number, confirmMissingUnits: boolean) =>
+    request<{data:{rows:SupplierAADEBatchRow[];total:number;next_offset:number|null;costs_created:number}}>("/suppliers/aade/costs/batch", {
+      method:"POST", body:JSON.stringify({supplier_id:supplier,date_from:start,date_to:end,offset,
+        confirm_products_and_units:true,confirm_missing_units:confirmMissingUnits})}),
   acceptSupplierAADEInvoice: (preview: SupplierAADEPreview) => request<{ data: { duplicate: boolean; costs_created: number } }>(
     `/suppliers/aade/invoices/${preview.id}/accept`, { method: "POST", body: JSON.stringify({ supplier_id: preview.supplier_id,
-      fingerprint: preview.fingerprint, confirm_products_and_units: true }) }),
+      fingerprint: preview.fingerprint, confirm_products_and_units: true, confirm_missing_units:preview.confirm_missing_units ?? false }) }),
   login: (email: string, password: string) =>
     request<{ access_token: string }>("/auth/login", {
       method: "POST",

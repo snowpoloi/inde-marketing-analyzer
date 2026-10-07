@@ -8,9 +8,9 @@ from sqlalchemy import func, select
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed,
                         SupplierCatalogProduct, SupplierDocument, SupplierProductCost, User)
-from app.schemas.suppliers import SupplierAADEAcceptRequest, SupplierIdentityRequest
+from app.schemas.suppliers import SupplierAADEAcceptRequest, SupplierIdentityRequest, SupplierAADEBatchRequest
 from app.services.supplier_identity import save_supplier_identity, supplier_identities, registered_supplier_names
-from app.services.supplier_aade_costs import accept_invoice, invoice_preview, parse_lines, validated_cost_rows, aade_invoices
+from app.services.supplier_aade_costs import accept_invoice, invoice_preview, parse_lines, validated_cost_rows, aade_invoices, import_cost_batch
 from app.services.supplier_catalog_pricing import latest_aade_costs
 from app.services.supplier_service import supplier_summary
 from test_supplier_api import client
@@ -141,6 +141,18 @@ def test_product_shipping_word_is_not_freight():
     assert line["line_type"] == "product" and line["unit_cost_net"] == Decimal("33.1150")
 
 
+def test_megapap_fiscal_freight_code_is_not_a_product(db):
+    user,supplier,_,_,fiscal = seed(db)
+    fiscal.raw = {**fiscal.raw,"invoiceDetails":[fiscal.raw["invoiceDetails"][0],
+        {**fiscal.raw["invoiceDetails"][1],"itemCode":"ΜΤΦ","itemDescr":"Μεταφορικά πωλήσεων (αξία)","quantity":1,"measurementUnit":1}]}
+    db.commit()
+    preview=invoice_preview(db,fiscal.id,supplier.id)
+    assert preview["can_import"]
+    assert preview["lines"][1]["line_type"] == "shipping"
+    assert accept_invoice(db,fiscal.id,payload(preview),user)["costs_created"] == 1
+    assert db.scalar(select(SupplierDocument.net_shipping_total)) == 5
+
+
 def test_el_prefixed_fiscal_vat_keeps_catalog_cost(db):
     user,supplier,own,_,fiscal = seed(db)
     fiscal.issuer_vat = "EL" + supplier.vat_number; db.flush()
@@ -176,4 +188,90 @@ def test_api_requires_admin_and_explicit_review(db):
     with client(db,False) as http:
         assert http.get("/api/suppliers/identities").status_code == 403
         assert http.get(f"/api/suppliers/aade/invoices?{query}").status_code == 403
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+
+
+def without_unit(fiscal):
+    line = {k:v for k,v in fiscal.raw["invoiceDetails"][0].items() if k != "measurementUnit"}
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [line, fiscal.raw["invoiceDetails"][1]]}
+
+
+def test_missing_unit_requires_explicit_confirmation_and_audit(db):
+    user, supplier, own, _, fiscal = seed(db)
+    without_unit(fiscal); db.flush()
+    unconfirmed = invoice_preview(db, fiscal.id, supplier.id)
+    assert unconfirmed["needs_unit_confirmation"] and not unconfirmed["can_import"]
+    reviewed = invoice_preview(db, fiscal.id, supplier.id, confirm_missing_units=True)
+    assert reviewed["can_import"] and reviewed["lines"][0]["unit_cost_net"] == 70
+    assert reviewed["fingerprint"] != unconfirmed["fingerprint"]
+    with pytest.raises(ValueError, match="changed"):
+        accept_invoice(db, fiscal.id, payload(reviewed), user)
+    request = payload(reviewed).model_copy(update={"confirm_missing_units":True})
+    assert accept_invoice(db, fiscal.id, request, user)["costs_created"] == 1
+    assert own.price == 124
+    doc = db.scalar(select(SupplierDocument))
+    assert doc.raw_metadata["aade_confirm_missing_units"] is True
+    assert str(doc.raw_metadata["aade_reviewed_by"]) == str(user.id)
+    assert fiscal.raw["invoiceDetails"][0].get("measurementUnit") is None
+    assert latest_aade_costs(db, {own.id}, {supplier.code})[(supplier.code,own.id)][0].net_unit_cost == 70
+
+
+@pytest.mark.parametrize("field,value", [("measurementUnit",2), ("itemCode","wrong"), ("quantity",0), ("vatAmount",None)])
+def test_unit_confirmation_does_not_bypass_other_guards(db, field, value):
+    _, supplier, _, _, fiscal = seed(db)
+    without_unit(fiscal)
+    fiscal.raw = {**fiscal.raw, "invoiceDetails":[{**fiscal.raw["invoiceDetails"][0],field:value},fiscal.raw["invoiceDetails"][1]]}
+    db.flush()
+    assert not invoice_preview(db,fiscal.id,supplier.id,confirm_missing_units=True)["can_import"]
+
+
+def batch_payload(supplier, **updates):
+    return SupplierAADEBatchRequest(supplier_id=supplier.id,date_from=date(2026,9,1),date_to=date(2026,9,30),
+                                    confirm_products_and_units=True, **updates)
+
+
+def test_batch_import_is_idempotent_and_excludes_freight(db):
+    user, supplier, own, _, fiscal = seed(db)
+    without_unit(fiscal); db.commit()
+    denied = batch_payload(supplier).model_copy(update={"confirm_products_and_units":False})
+    with pytest.raises(ValueError,match="Confirm"):
+        import_cost_batch(db,denied,user)
+    assert import_cost_batch(db,batch_payload(supplier),user)["costs_created"] == 0
+    result = import_cost_batch(db,batch_payload(supplier,confirm_missing_units=True),user)
+    assert result["costs_created"] == 1 and result["next_offset"] is None
+    assert result["rows"][0]["status"] == "imported"
+    assert import_cost_batch(db,batch_payload(supplier,confirm_missing_units=True),user)["rows"][0]["status"] == "already_imported"
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 1
+    assert db.scalar(select(SupplierProductCost.net_unit_cost)) == 70
+    assert own.price == 124
+
+
+def test_batch_is_bounded_and_skips_non_product_records(db):
+    user,supplier,_,_,fiscal = seed(db)
+    for index in range(6):
+        db.add(AADEDocument(source_endpoint="RequestDocs",identity_key=f"batch-{index}",mark=f"batch-{index}",
+            issuer_vat=fiscal.issuer_vat,counterpart_vat=fiscal.counterpart_vat,issue_date=fiscal.issue_date,
+            aa=str(index),series="B",currency="EUR",document_direction="expense",invoice_type="2.1",
+            net_value=fiscal.net_value,vat_amount=fiscal.vat_amount,gross_value=fiscal.gross_value,raw=fiscal.raw))
+    db.add(AADEDocument(source_endpoint="RequestMyExpenses",identity_key="book",issuer_vat=fiscal.issuer_vat,
+        counterpart_vat=fiscal.counterpart_vat,issue_date=fiscal.issue_date,document_direction="expense",
+        raw={"record_type":"book_info"}))
+    db.commit()
+    first=import_cost_batch(db,batch_payload(supplier),user)
+    assert len(first["rows"]) == 5 and first["total"] == 7 and first["next_offset"] == 5
+    second=import_cost_batch(db,batch_payload(supplier,offset=5),user)
+    assert len(second["rows"]) == 2 and second["next_offset"] is None
+    assert all(row["status"] in {"imported","review"} for row in first["rows"] + second["rows"])
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 1
+
+
+def test_batch_api_requires_admin_confirmation_and_bounded_dates(db):
+    _,supplier,_,_,_=seed(db)
+    body=batch_payload(supplier).model_dump(mode="json")
+    with client(db,False) as http:
+        assert http.post("/api/suppliers/aade/costs/batch",json=body).status_code == 403
+    with client(db,True) as http:
+        assert http.post("/api/suppliers/aade/costs/batch",json={**body,"confirm_products_and_units":False}).status_code == 400
+        assert http.post("/api/suppliers/aade/costs/batch",json={**body,"date_from":"2020-01-01"}).status_code == 400
+        assert http.post("/api/suppliers/aade/costs/batch",json={**body,"offset":-1}).status_code == 422
     assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0

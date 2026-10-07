@@ -11,9 +11,9 @@ from app.api.deps import require_admin
 from app.db.session import get_db
 from app.models import User
 from app.schemas.suppliers import (ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest,
-                                  SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest)
+                                  SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest, SupplierAADEBatchRequest)
 from app.services.supplier_identity import supplier_identities, save_supplier_identity, aade_supplier_registry, import_aade_suppliers
-from app.services.supplier_aade_costs import aade_invoices, invoice_preview, accept_invoice
+from app.services.supplier_aade_costs import aade_invoices, invoice_preview, accept_invoice, import_cost_batch
 from app.services.supplier_service import (
     add_manual_cost,
     import_supplier_documents,
@@ -92,10 +92,24 @@ def import_fiscal_suppliers(user: User = Depends(require_admin), db: Session = D
 
 
 @router.get("/aade/invoices/{document_id}")
-def fiscal_preview(document_id: UUID, supplier_id: UUID, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def fiscal_preview(document_id: UUID, supplier_id: UUID, confirm_missing_units: bool = False,
+                   _: User = Depends(require_admin), db: Session = Depends(get_db)):
     try:
-        return {"data": invoice_preview(db, document_id, supplier_id)}
+        return {"data": invoice_preview(db, document_id, supplier_id, confirm_missing_units=confirm_missing_units)}
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post("/aade/costs/batch")
+def fiscal_cost_batch(payload: SupplierAADEBatchRequest, user: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    start, end = _dates(payload.date_from, payload.date_to)
+    if (end - start).days > 366:
+        raise HTTPException(status_code=400, detail="Choose a period of at most 366 days.")
+    try:
+        return {"data": import_cost_batch(db, payload, user)}
+    except ValueError as exc:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 

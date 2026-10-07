@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, X } from "lucide-react";
 import { api } from "../api/client";
 import type { SupplierCatalogFeed, SupplierCatalogProduct, SupplierCatalogResult } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const money = (value: number | null) => value == null ? "-" : currency.format(Number(value));
@@ -30,6 +31,11 @@ export function SupplierCatalogPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [queuing, setQueuing] = useState(false);
+  const [showCosts, setShowCosts] = useState(false);
+  const [costSupplier, setCostSupplier] = useState("");
+  const [openingCosts, setOpeningCosts] = useState(false);
+  const [costStart, setCostStart] = useState(`${new Date().getFullYear()}-01-01`);
+  const [costEnd, setCostEnd] = useState(new Date().toISOString().slice(0,10));
   const requestId = useRef(0);
   const detailId = useRef(0);
   const selected = feeds.find(feed => feed.id === feedId);
@@ -50,10 +56,10 @@ export function SupplierCatalogPage() {
   useEffect(() => { if (!active) return; const timer = window.setInterval(load, 10000); return () => window.clearInterval(timer); }, [active, feedId, search, match, availability, category, offset]);
   useEffect(() => { const timer = window.setTimeout(() => { setSearch(query); setOffset(0); }, 300); return () => window.clearTimeout(timer); }, [query]);
   useEffect(() => {
-    if (!details) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { detailId.current++; setDetails(null); } };
+    if (!details && !showCosts) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { detailId.current++; setDetails(null); setShowCosts(false); } };
     window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close);
-  }, [details]);
+  }, [details, showCosts]);
 
   async function sync() {
     if (!feedId) return; setQueuing(true);
@@ -65,6 +71,15 @@ export function SupplierCatalogPage() {
     const id = ++detailId.current;
     try { const data = await api.supplierCatalogDetails(row.id); if (id === detailId.current) setDetails(data); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not load product."); }
+  }
+  async function openCosts() {
+    setOpeningCosts(true);
+    try {
+      const identities = await api.supplierIdentities();
+      setCostSupplier(identities.data.rows.find(row=>row.code === selected?.code)?.id ?? "");
+      setShowCosts(true);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not load supplier identities."); }
+    finally { setOpeningCosts(false); }
   }
   const columns: Column<SupplierCatalogProduct>[] = [
     { key: "product", header: "Supplier product", render: row => <div className="supplier-catalog-product">
@@ -88,6 +103,7 @@ export function SupplierCatalogPage() {
   return <div className="page-stack">
     <header className="page-header"><div><h1>Supplier catalog</h1></div>
       <div className="supplier-catalog-actions"><button className="secondary-action compact" disabled={loading} onClick={load}><RefreshCw size={16} />Refresh</button>
+        <button className="primary-action compact" disabled={openingCosts} onClick={openCosts}><Download size={16}/>AADE costs</button>
         <button className="primary-action compact" disabled={!selected || queuing || ["queued", "running"].includes(selected.status)} onClick={sync}><RefreshCw size={16} />Sync XML</button></div>
     </header>
     {error && <div className="notice" role="alert">{error}</div>}
@@ -118,6 +134,14 @@ export function SupplierCatalogPage() {
       <span>{result?.total ? `${offset + 1}-${Math.min(offset + 50, result.total)} / ${result.total}` : "0"}</span>
       <button className="icon-button" title="Next page" aria-label="Next page" disabled={loading || !result || offset + 50 >= result.total} onClick={() => setOffset(offset + 50)}><ChevronRight size={17} /></button>
     </div>
+    {showCosts && <div className="modal-backdrop" onClick={()=>setShowCosts(false)}>
+      <section className="supplier-catalog-dialog supplier-cost-dialog" role="dialog" aria-modal="true" aria-label="Import AADE purchase costs" onClick={event=>event.stopPropagation()}>
+        <div className="panel-title"><h2>AADE purchase costs</h2><button className="icon-button" autoFocus title="Close cost import" aria-label="Close cost import" onClick={()=>setShowCosts(false)}><X size={18}/></button></div>
+        <div className="supplier-catalog-actions"><label>From<input aria-label="Cost invoices from" type="date" value={costStart} onChange={event=>setCostStart(event.target.value)}/></label>
+          <label>To<input aria-label="Cost invoices to" type="date" value={costEnd} onChange={event=>setCostEnd(event.target.value)}/></label></div>
+        <SupplierAADEPanel start={costStart} end={costEnd} initialSupplier={costSupplier} onImported={load} onSettings={()=>{setShowCosts(false);window.location.hash="settings";}}/>
+      </section>
+    </div>}
     {details && <div className="modal-backdrop" onClick={() => { detailId.current++; setDetails(null); }}>
       <section className="supplier-catalog-dialog" role="dialog" aria-modal="true" aria-label={details.name} onClick={event => event.stopPropagation()}>
         <div className="panel-title"><h2>{details.name}</h2><button className="icon-button" autoFocus title="Close product" aria-label="Close product" onClick={() => { detailId.current++; setDetails(null); }}><X size={18} /></button></div>

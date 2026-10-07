@@ -7,11 +7,13 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import load_only
+from sqlalchemy.exc import IntegrityError
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed,
                         SupplierCatalogProduct, SupplierDocument, SupplierDocumentLine, SupplierProductCost,
                         SupplierProductMap)
-from app.schemas.suppliers import SupplierDocumentInput, SupplierDocumentLineInput, SupplierImportRequest, SupplierInput
+from app.schemas.suppliers import (SupplierDocumentInput, SupplierDocumentLineInput, SupplierImportRequest,
+                                  SupplierInput, SupplierAADEAcceptRequest)
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import effective_invoice, detail_info
@@ -44,7 +46,7 @@ def line_rows(raw):
     return rows if isinstance(rows, list) else [rows]
 
 
-def parse_lines(raw):
+def parse_lines(raw, *, confirm_missing_units=False):
     result = []
     for index, row in enumerate(line_rows(raw), 1):
         description = str(pick(row, "itemDescr", "itemDescription", "productDescription", "description", "lineComments", "comments", "name", "title") or "")[:1000]
@@ -54,6 +56,12 @@ def parse_lines(raw):
         vat = numeric(pick(row, "vatAmount", "totalVatAmount", "vat"))
         unit = str(pick(row, "measurementUnit", "unit", "unitCode") or "").strip()
         shipping = not code and any(token in description.lower() for token in ("shipping", "courier", "μεταφορ", "αποστολ"))
+        # MEGAPAP uses an explicit fiscal freight code, not a catalog product.
+        shipping = shipping or (code.upper() == "ΜΤΦ" and description.lower().startswith("μεταφορικά"))
+        source_unit = unit
+        unit_confirmed = bool(not shipping and not unit and confirm_missing_units)
+        if unit_confirmed:
+            unit = "piece"
         reasons = []
         record_type = str(pick(row, "recType") or "")
         if record_type:
@@ -68,7 +76,8 @@ def parse_lines(raw):
             reasons.append("Missing item code; description alone is not an automatic match.")
         result.append({"line_number": str(pick(row, "lineNumber", "lineNo") or index), "item_code": code,
                        "description": description, "line_type": "shipping" if shipping else "product",
-                       "quantity": qty, "unit": unit, "net_value": net, "vat_amount": vat,
+                       "quantity": qty, "unit": unit, "source_unit": source_unit,
+                       "unit_confirmed": unit_confirmed, "net_value": net, "vat_amount": vat,
                        "vat_category": pick(row, "vatCategory"),
                        "unit_cost_net": money(net / qty) if not shipping and not reasons and net is not None and qty and qty > 0 else None,
                        "reasons": reasons})
@@ -120,7 +129,7 @@ def aade_invoices(db, supplier_id, start, end, offset, limit):
         "record_type": (row.raw or {}).get("record_type", "full_document")} for row in documents]}
 
 
-def invoice_preview(db, document_id, supplier_id, *, lock=False):
+def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing_units=False):
     document = db.get(AADEDocument, document_id, with_for_update=lock, populate_existing=lock)
     supplier = db.get(Supplier, supplier_id)
     if document is None or supplier is None:
@@ -145,7 +154,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
     full_copies = [row for row in copies if (row.raw or {}).get("record_type", "full_document") == "full_document"]
     if any(_source_digest(row) != _source_digest(document) for row in full_copies):
         reasons.append("Conflicting copies of the same MARK require review.")
-    lines = parse_lines(document.raw or {})
+    lines = parse_lines(document.raw or {}, confirm_missing_units=confirm_missing_units)
     if not lines or len(lines) > 1000:
         reasons.append("Invoice has no usable product detail or exceeds the review limit.")
         lines = lines[:1000]
@@ -209,12 +218,15 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
     if existing:
         reasons.append("Invoice already imported; no second financial copy will be created.")
     fingerprint = hashlib.sha256(json.dumps({"source": _source_digest(document), "supplier": str(supplier.id),
-        "vat": vat, "recipient": recipient, "lines": lines, "reasons": reasons}, sort_keys=True, default=str).encode()).hexdigest()
+        "vat": vat, "recipient": recipient, "lines": lines, "reasons": reasons,
+        "confirm_missing_units": confirm_missing_units}, sort_keys=True, default=str).encode()).hexdigest()
     return {"id": str(document.id), "supplier_id": str(supplier.id), "supplier": supplier.name,
             "issuer_vat": document.issuer_vat, "date": document.issue_date, "mark": document.mark,
             "number": f"{document.series or ''}/{document.aa or ''}", "net_value": document.net_value,
             "vat_amount": document.vat_amount, "gross_value": document.gross_value, "lines": lines,
             "provider_detail": detail_info(document.raw or {}),
+            "confirm_missing_units": confirm_missing_units,
+            "needs_unit_confirmation": any(line["line_type"] == "product" and not line["source_unit"] for line in lines),
             "reasons": reasons, "fingerprint": fingerprint, "imported": bool(existing),
             "can_import": not reasons and all(not line["reasons"] for line in lines)}
 
@@ -230,7 +242,8 @@ def accept_invoice(db, document_id, payload, user):
         raise ValueError("Supplier not found.")
     lock_key = int.from_bytes(hashlib.sha256(supplier.code.encode()).digest()[:8], "big", signed=True)
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
-    preview = invoice_preview(db, document_id, supplier.id, lock=True)
+    preview = invoice_preview(db, document_id, supplier.id, lock=True,
+                              confirm_missing_units=payload.confirm_missing_units)
     if preview["imported"]:
         return {"duplicate": True, "costs_created": 0}
     if preview["fingerprint"] != payload.fingerprint or not preview["can_import"]:
@@ -265,6 +278,7 @@ def accept_invoice(db, document_id, payload, user):
             description=line["description"], quantity=line["quantity"] or 0, unit=line["unit"],
             net_line_total=line["net_value"], vat_amount=line["vat_amount"], gross_total=line["net_value"] + line["vat_amount"],
             raw_metadata={"aade_item_code": line["item_code"], "aade_vat_category": line["vat_category"],
+                          "aade_source_unit": line["source_unit"], "aade_unit_confirmed": line["unit_confirmed"],
                           "vat_rate_not_supplied": True}))
     request = SupplierImportRequest(supplier=SupplierInput(code=supplier.code, name=supplier.name, vat_number=supplier.vat_number),
         source_reference=f"AADE MARK {preview['mark']}", source_type="xml", documents=[SupplierDocumentInput(
@@ -277,7 +291,8 @@ def accept_invoice(db, document_id, payload, user):
     source = db.get(AADEDocument, document_id)
     document.identity_key, document.aade_document_id = _invoice_key(source), source.id
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
-                             "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"]}
+                             "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
+                             "aade_confirm_missing_units": payload.confirm_missing_units}
     costs = db.scalars(select(SupplierProductCost).join(SupplierDocumentLine,
         SupplierDocumentLine.id == SupplierProductCost.source_line_id).where(SupplierDocumentLine.document_id == document.id)).all()
     for cost in costs:
@@ -293,6 +308,54 @@ def accept_invoice(db, document_id, payload, user):
         raise ValueError("Some product lines were not mapped; no costs saved.")
     db.commit()
     return {"duplicate": False, "costs_created": len(costs), "mark": source.mark}
+
+
+def import_cost_batch(db, payload, user):
+    """Bounded, user-authorized imports; one blocked invoice cannot stop the batch."""
+    if not payload.confirm_products_and_units:
+        raise ValueError("Confirm one purchase unit equals one INDE sales unit before importing costs.")
+    supplier = db.get(Supplier, payload.supplier_id)
+    if supplier is None or not supplier.vat_number:
+        raise ValueError("Save the supplier's AFM first.")
+    vat = normalize_vat(supplier.vat_number)
+    filters = [AADEDocument.document_direction == "expense",
+               AADEDocument.issuer_vat.in_([vat, "EL" + vat]),
+               AADEDocument.issue_date.between(payload.date_from, payload.date_to),
+               func.coalesce(AADEDocument.raw["record_type"].astext, "full_document") == "full_document"]
+    total = db.scalar(select(func.count()).select_from(AADEDocument).where(*filters))
+    ids = db.scalars(select(AADEDocument.id).where(*filters)
+                     .order_by(AADEDocument.issue_date.desc(), AADEDocument.id)
+                     .offset(payload.offset).limit(5)).all()
+    rows = []
+    for document_id in ids:
+        try:
+            preview = invoice_preview(db, document_id, payload.supplier_id,
+                                      confirm_missing_units=payload.confirm_missing_units)
+            result = {"id": str(document_id), "number": preview["number"], "mark": preview["mark"],
+                      "costs_created": 0, "status": "review", "reasons": []}
+            if preview["imported"]:
+                result["status"] = "already_imported"
+            elif preview["can_import"]:
+                accepted = accept_invoice(db, document_id, SupplierAADEAcceptRequest(
+                    supplier_id=payload.supplier_id, fingerprint=preview["fingerprint"],
+                    confirm_products_and_units=True, confirm_missing_units=payload.confirm_missing_units), user)
+                result.update(status="already_imported" if accepted["duplicate"] else "imported",
+                              costs_created=accepted["costs_created"])
+            else:
+                result["reasons"] = preview["reasons"] + list(dict.fromkeys(
+                    reason for line in preview["lines"] for reason in line["reasons"]))
+            rows.append(result)
+        except ValueError as exc:
+            rows.append({"id": str(document_id), "number": "", "mark": "", "status": "review",
+                         "costs_created": 0, "reasons": [str(exc)]})
+        except IntegrityError:
+            rows.append({"id": str(document_id), "number": "", "mark": "", "status": "review",
+                         "costs_created": 0, "reasons": ["Invoice conflicts with existing cost evidence; review required."]})
+        finally:
+            db.rollback()
+    next_offset = payload.offset + len(ids)
+    return {"rows": rows, "total": total, "next_offset": next_offset if ids and next_offset < total else None,
+            "costs_created": sum(row["costs_created"] for row in rows)}
 
 
 def validated_documents(db, documents):

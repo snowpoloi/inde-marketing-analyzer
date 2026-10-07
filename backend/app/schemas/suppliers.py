@@ -35,6 +35,16 @@ class SupplierAADEAcceptRequest(SupplierBase):
     supplier_id: UUID
     fingerprint: str = Field(min_length=64, max_length=64)
     confirm_products_and_units: bool = False
+    confirm_missing_units: bool = False
+
+
+class SupplierAADEBatchRequest(SupplierBase):
+    supplier_id: UUID
+    date_from: date
+    date_to: date
+    offset: int = Field(default=0, ge=0, le=10000)
+    confirm_products_and_units: bool = False
+    confirm_missing_units: bool = False
 
 
 class SupplierDocumentLineInput(SupplierBase):
