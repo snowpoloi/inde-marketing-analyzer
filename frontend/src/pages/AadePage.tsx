@@ -340,7 +340,7 @@ export function AadePage() {
     setError("");
     try {
       const [auditResult, ledgerResult] = await Promise.all([
-        api.dashboard("audit", nextFrom, nextTo),
+        api.dashboard("aade-report", nextFrom, nextTo),
         api.dashboard("aade-documents", nextFrom, nextTo)
       ]);
       setAade({ ...emptyAade, ...(auditResult.data?.aade ?? {}) });

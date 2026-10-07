@@ -1,9 +1,10 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import and_, false, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.models import (
     AADEDocument,
@@ -482,7 +483,9 @@ def product_profitability_hints(db: Session, date_from: date, date_to: date) -> 
     merchant_by_item = {
         row.item_id: row
         for row in db.execute(
-            select(MerchantProductMetric).where(_period_filter(MerchantProductMetric.metric_date, date_from, date_to))
+            select(MerchantProductMetric)
+            .options(load_only(MerchantProductMetric.item_id, MerchantProductMetric.availability, raiseload=True))
+            .where(_period_filter(MerchantProductMetric.metric_date, date_from, date_to))
         ).scalars()
     }
 
@@ -546,7 +549,15 @@ def product_performance(db: Session, date_from: date, date_to: date, include_cos
 
     catalog_lookup = {
         product.sku: product
-        for product in db.scalars(select(ProductCatalog)).all()
+        for product in db.scalars(
+            select(ProductCatalog)
+            .where(ProductCatalog.sku.in_({row.sku for row in rows if row.sku}))
+            .options(load_only(
+                ProductCatalog.sku, ProductCatalog.brand, ProductCatalog.category,
+                ProductCatalog.status, ProductCatalog.quantity, ProductCatalog.price,
+                ProductCatalog.image_url, ProductCatalog.link, raiseload=True,
+            ))
+        ).all()
         if product.sku
     }
     profitability_lookup = {
@@ -1279,9 +1290,19 @@ def _aade_audit(
     date_to: date,
     summary: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    documents = db.scalars(
-        select(AADEDocument).where(_period_filter(AADEDocument.issue_date, date_from, date_to))
-    ).all()
+    # Fiscal totals need metadata and money columns, never invoice line payloads.
+    audit_raw = func.jsonb_build_object(
+        "record_type", AADEDocument.raw["record_type"],
+        "document_count", AADEDocument.raw["document_count"],
+        "count", AADEDocument.raw["count"],
+    ).label("raw")
+    documents = [SimpleNamespace(**row) for row in db.execute(
+        select(
+            AADEDocument.document_direction, AADEDocument.invoice_type,
+            AADEDocument.net_value, AADEDocument.vat_amount, AADEDocument.gross_value,
+            AADEDocument.is_cancelled, audit_raw,
+        ).where(_period_filter(AADEDocument.issue_date, date_from, date_to))
+    ).mappings()]
     fiscal_documents = _aade_documents_for_totals(documents)
 
     rows_by_key: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1441,6 +1462,20 @@ def _aade_audit(
     }
 
     return {"summary": audit_summary, "documents": rows[:80], "mismatches": actions}, actions
+
+
+def aade_report(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
+    summary, summary_failure = _safe_audit_section(
+        db, "Summary", _empty_summary(date_from, date_to),
+        lambda: executive_summary(db, date_from, date_to),
+    )
+    result, failure = _safe_audit_section(
+        db, "AADE", (_empty_aade_audit(), []),
+        lambda: _aade_audit(db, date_from, date_to, summary),
+    )
+    aade, _ = result
+    aade["mismatches"].extend(item for item in (summary_failure, failure) if item)
+    return {"aade": aade}
 
 
 def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[str, Any]:

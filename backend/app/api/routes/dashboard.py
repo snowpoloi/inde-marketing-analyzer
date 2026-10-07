@@ -9,6 +9,7 @@ from app.models import User
 from app.schemas.dashboard import DashboardResponse
 from app.services.dashboard_service import (
     aade_document_ledger,
+    aade_report,
     attribution_comparison,
     brand_category_performance,
     campaign_recommendations,
@@ -101,3 +102,9 @@ def audit(date_from: date | None = None, date_to: date | None = None, _: User = 
 def aade_documents(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)
     return DashboardResponse(data=aade_document_ledger(db, start, end))
+
+
+@router.get("/aade-report", response_model=DashboardResponse)
+def fiscal_report(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _window(date_from, date_to)
+    return DashboardResponse(data=aade_report(db, start, end))

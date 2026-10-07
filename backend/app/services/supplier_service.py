@@ -5,10 +5,11 @@ import json
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -1010,7 +1011,24 @@ def product_profitability(
         .where(and_(*conditions))
         .order_by(OpenCartOrder.date_added)
     ).all()
-    catalog_products = list(db.scalars(select(ProductCatalog)).all())
+    if not pairs:
+        return []
+    # Matching needs all identities (including ambiguous ones), not catalog payloads.
+    catalog_fields = (
+        ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.product_id,
+        ProductCatalog.ean, ProductCatalog.upc, ProductCatalog.name, ProductCatalog.brand,
+        ProductCatalog.manufacturer, ProductCatalog.category,
+    )
+    needs_legacy_barcodes = any((line.raw or {}).get("ean") for _, line in pairs)
+    catalog_raw = (func.jsonb_build_object(
+        "ean", case((and_(ProductCatalog.ean.is_not(None), ProductCatalog.ean != ""), None),
+                    else_=ProductCatalog.raw["ean"]),
+        "upc", case((and_(ProductCatalog.upc.is_not(None), ProductCatalog.upc != ""), None),
+                    else_=ProductCatalog.raw["upc"]),
+    ) if needs_legacy_barcodes else func.jsonb_build_object()).label("raw")
+    catalog_products = [SimpleNamespace(**row) for row in db.execute(
+        select(*catalog_fields, catalog_raw)
+    ).mappings()]
     catalog_lookup = _catalog_lookup(catalog_products)
     costs_by_catalog: dict[UUID, list[SupplierProductCost]] = defaultdict(list)
     for cost in validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all()):
