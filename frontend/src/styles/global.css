@@ -1311,11 +1311,19 @@ tr:last-child td {
 }
 
 .supplier-aade-review {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid #dde5e2;
+  padding: 16px;
   min-width: 0;
 }
+.supplier-aade-panel { container-type: inline-size; }
+.supplier-aade-panel > .table-wrap > table > tbody > .expanded-table-row > td {
+  padding: 0;
+  background: #f5f8f6;
+}
+.supplier-aade-review { width: 100cqi; max-width: 100%; box-sizing: border-box; }
+.supplier-aade-review .table-wrap { background: #fff; }
+.supplier-aade-review .panel-title { gap: 12px; }
+.supplier-aade-review .panel-title h2 { min-width: 0; }
+.supplier-aade-review .panel-title .icon-button { flex-shrink: 0; }
 .supplier-aade-review .supplier-feed-toggle { margin: 16px 0; }
 .supplier-aade-review p { overflow-wrap: anywhere; }
 .supplier-aade-panel .supplier-catalog-actions label { min-width: 0; max-width: 100%; }

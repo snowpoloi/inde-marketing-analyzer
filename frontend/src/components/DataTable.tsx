@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type Key, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 export type Column<T> = {
@@ -11,7 +11,13 @@ export type Column<T> = {
   onSort?: () => void;
 };
 
-export function DataTable<T>({ rows, columns, empty }: { rows: T[]; columns: Column<T>[]; empty: string }) {
+export function DataTable<T>({ rows, columns, empty, rowKey, renderExpandedRow }: {
+  rows: T[];
+  columns: Column<T>[];
+  empty: string;
+  rowKey?: (row: T) => Key;
+  renderExpandedRow?: (row: T) => ReactNode;
+}) {
   return (
     <div className="table-wrap">
       <table>
@@ -50,15 +56,19 @@ export function DataTable<T>({ rows, columns, empty }: { rows: T[]; columns: Col
               </td>
             </tr>
           ) : (
-            rows.map((row, index) => (
-              <tr key={index}>
+            rows.map((row, index) => {
+              const expanded = renderExpandedRow?.(row);
+              return <Fragment key={rowKey ? rowKey(row) : index}>
+              <tr>
                 {columns.map((column) => (
                   <td key={column.key} className={column.align ? `align-${column.align}` : undefined}>
                     {column.render(row)}
                   </td>
                 ))}
               </tr>
-            ))
+              {expanded != null && <tr className="expanded-table-row"><td colSpan={columns.length}>{expanded}</td></tr>}
+              </Fragment>;
+            })
           )}
         </tbody>
       </table>
