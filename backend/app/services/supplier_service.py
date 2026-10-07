@@ -678,13 +678,15 @@ def supplier_products(db: Session, as_of: date) -> list[dict[str, Any]]:
 
 
 def unmatched_products(db: Session) -> list[dict[str, Any]]:
-    catalogs, catalog_by_id = _catalog_data(db)
     rows = db.execute(
         select(SupplierProductMap, Supplier)
         .join(Supplier, SupplierProductMap.supplier_id == Supplier.id)
         .where(or_(SupplierProductMap.product_catalog_id.is_(None), SupplierProductMap.status != "matched"))
         .order_by(Supplier.name, SupplierProductMap.product_name)
     ).all()
+    if not rows:
+        return []
+    catalogs, catalog_by_id = _catalog_data(db)
     results = []
     for mapping, supplier in rows:
         exact = exact_catalog_matches(
@@ -769,7 +771,9 @@ def supplier_performance(db: Session, date_from: date, date_to: date) -> list[di
         costs_by_map[cost.supplier_product_map_id].append(cost)
 
     mappings = list(db.scalars(select(SupplierProductMap)).all())
-    catalog_by_id = {product.id: product for product in db.scalars(select(ProductCatalog)).all()}
+    catalog_ids = {mapping.product_catalog_id for mapping in mappings if mapping.product_catalog_id}
+    catalog_by_id = {product.id: product for product in db.scalars(
+        select(ProductCatalog).where(ProductCatalog.id.in_(catalog_ids))).all()} if catalog_ids else {}
     mappings_by_supplier: dict[UUID, list[SupplierProductMap]] = defaultdict(list)
     for mapping in mappings:
         mappings_by_supplier[mapping.supplier_id].append(mapping)

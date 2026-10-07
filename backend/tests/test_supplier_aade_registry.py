@@ -10,6 +10,7 @@ from app.models import AADEDocument, IntegrationSetting, Supplier, SupplierDocum
 from app.schemas.suppliers import SupplierIdentityRequest
 from app.services.supplier_identity import aade_supplier_registry, import_aade_suppliers, save_supplier_identity
 from app.services.supplier_aade_costs import aade_invoices, invoice_preview
+from app.services.supplier_service import supplier_performance, unmatched_products
 from test_supplier_api import client
 
 START, END = date(2026, 9, 1), date(2026, 9, 30)
@@ -164,3 +165,20 @@ def test_large_invoice_identity_is_expanded_once_without_returning_product_paylo
     assert discovery.count("jsonb_each") == 1
     assert "jsonb_build_object" not in discovery
     assert "invoiceDetails" not in str(rows)
+
+
+def test_supplier_page_does_not_scan_catalog_when_no_mappings_exist(db):
+    db.add_all([Supplier(code=f"SUPPLIER_{i}", name=f"Company {i}") for i in range(54)])
+    db.flush()
+    statements = []
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(db.bind, "before_cursor_execute", capture)
+    try:
+        assert unmatched_products(db) == []
+        rows = supplier_performance(db, START, END)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", capture)
+    assert len(rows) == 54
+    assert all(row["purchases"] == 0 and row["orders"] == 0 for row in rows)
+    assert not any("FROM product_catalog" in statement for statement in statements)
