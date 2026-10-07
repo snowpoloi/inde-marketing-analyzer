@@ -102,6 +102,7 @@ def test_missing_line_fields_are_never_zero_or_assumed(db, field, value):
     preview = invoice_preview(db,fiscal.id,supplier.id)
     assert not preview["can_import"]
     assert preview["lines"][0]["reasons"]
+    assert preview["lines"][0]["unit_cost_net"] is None
 
 
 def test_preview_fingerprint_and_xml_ambiguity(db):

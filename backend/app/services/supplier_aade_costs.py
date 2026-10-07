@@ -68,7 +68,7 @@ def parse_lines(raw):
                        "description": description, "line_type": "shipping" if shipping else "product",
                        "quantity": qty, "unit": unit, "net_value": net, "vat_amount": vat,
                        "vat_category": pick(row, "vatCategory"),
-                       "unit_cost_net": money(net / qty) if not shipping and net is not None and qty and qty > 0 else None,
+                       "unit_cost_net": money(net / qty) if not shipping and not reasons and net is not None and qty and qty > 0 else None,
                        "reasons": reasons})
     return result
 
@@ -179,6 +179,8 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
                 line["reasons"].append("Existing mapping / pack conversion conflicts with this XML product.")
         else:
             line["reasons"].append("Ambiguous supplier XML code." if matches else "No unique INDE product through this supplier XML.")
+        if line["reasons"]:
+            line["unit_cost_net"] = None
     if not any(line["line_type"] == "product" for line in lines):
         reasons.append("No product lines.")
     existing = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(document)))
