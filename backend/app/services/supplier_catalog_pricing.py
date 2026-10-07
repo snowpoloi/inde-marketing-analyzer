@@ -11,7 +11,7 @@ from app.services.supplier_costing import decimal_value, margin_metrics, money
 from app.services.supplier_aade_costs import validated_cost_rows
 
 
-def catalog_sale_price(product: ProductCatalog | None) -> dict:
+def catalog_sale_price(product: ProductCatalog | None, *, confirmed_vat_rate=None) -> dict:
     if product is None:
         return {"inde_price": None, "inde_price_net": None, "inde_price_basis": "unmatched"}
     raw = product.raw or {}
@@ -41,6 +41,12 @@ def catalog_sale_price(product: ProductCatalog | None) -> dict:
                 net = price / (1 + rate / 100)
     if fields.get("currency", "EUR") != "EUR":
         net = None
+    elif confirmed_vat_rate is not None and price is not None:
+        # INDE catalog prices are VAT-inclusive, confirmed by the business owner.
+        rate = decimal_value(fields.get("vat_rate"), None)
+        rate = rate if rate is not None and 0 <= rate <= 100 else Decimal(str(confirmed_vat_rate))
+        price = product.price
+        net, basis = price / (1 + rate / 100), "gross"
     return {"inde_price": price, "inde_price_net": money(net) if net is not None else None,
             "inde_price_basis": basis}
 
@@ -94,8 +100,8 @@ def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
             for key, options in grouped.items()}
 
 
-def price_comparison(product, cost_option) -> dict:
-    sale = catalog_sale_price(product)
+def price_comparison(product, cost_option, *, confirmed_vat_rate=None) -> dict:
+    sale = catalog_sale_price(product, confirmed_vat_rate=confirmed_vat_rate)
     cost, mark = cost_option if cost_option else (None, None)
     metrics = margin_metrics(sale["inde_price_net"], 1, cost.net_unit_cost) if cost and sale["inde_price_net"] is not None else {}
     return {**sale, "aade_cost_net": cost.net_unit_cost if cost else None,

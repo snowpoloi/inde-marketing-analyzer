@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, RefreshCw, Save } from "lucide-react";
 import { api } from "../api/client";
-import type { SupplierCatalogFeed, SupplierIdentity } from "../api/client";
+import type { SupplierCatalogFeed, SupplierIdentity, SupplierCatalogPricing } from "../api/client";
 
 export function SupplierFeedSettings() {
   const [feeds, setFeeds] = useState<SupplierCatalogFeed[]>([]);
@@ -15,11 +15,13 @@ export function SupplierFeedSettings() {
   const [hours, setHours] = useState(24);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pricing, setPricing] = useState<SupplierCatalogPricing | null>(null);
   const current = feeds.find(feed => feed.id === selected);
 
   async function load() { const rows = await api.supplierCatalogFeeds(); setFeeds(rows); return rows; }
   useEffect(() => { load().catch(err => setMessage(err.message)); }, []);
   useEffect(() => { api.supplierIdentities().then(result => setIdentities(result.data.rows)).catch(err => setMessage(err.message)); }, []);
+  useEffect(() => { api.supplierCatalogPricing().then(setPricing).catch(err => setMessage(err.message)); }, []);
 
   function select(id: string, rows = feeds) {
     const feed = rows.find(item => item.id === id);
@@ -83,5 +85,24 @@ export function SupplierFeedSettings() {
       </div>
     </form>
     {current?.error && <div className="notice">{current.error}</div>}
+    {pricing && <form onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setMessage("");
+      try { setPricing(await api.saveSupplierCatalogPricing(pricing)); setMessage("Catalog cost settings saved."); }
+      catch (err) { setMessage(err instanceof Error ? err.message : "Could not save cost settings."); }
+      finally { setBusy(false); }
+    }}>
+      <h2>Catalog costs & packages</h2>
+      <div className="form-grid">
+        <label><span>INDE selling VAT (%)</span><input aria-label="INDE selling VAT (%)" type="number" min={0} max={100} step="0.01" value={pricing.sale_vat_rate ?? ""} onChange={event => setPricing({...pricing, sale_vat_rate: event.target.value === "" ? null : Number(event.target.value)})}/></label>
+        <label><span>Volumetric divisor (cm³/kg)</span><input aria-label="Volumetric divisor" type="number" min={1000} max={10000} required value={pricing.volumetric_divisor} onChange={event => setPricing({...pricing, volumetric_divisor: Number(event.target.value)})}/></label>
+        <label className="supplier-feed-toggle"><input type="checkbox" checked={pricing.automatic_costs} onChange={event => setPricing({...pricing, automatic_costs: event.target.checked})}/>Automatic AADE purchase costs</label>
+      </div>
+      <fieldset><legend>1 purchase unit = 1 sales unit, including invoices without unit codes</legend>
+        {identities.filter(identity => identity.id && feeds.some(feed => feed.code === identity.code)).map(identity => <label className="supplier-feed-toggle" key={identity.id}>
+          <input type="checkbox" checked={pricing.piece_supplier_ids.includes(identity.id!)} onChange={event => setPricing({...pricing, piece_supplier_ids: event.target.checked ? [...pricing.piece_supplier_ids, identity.id!] : pricing.piece_supplier_ids.filter(id => id !== identity.id)})}/>{identity.name}
+        </label>)}
+      </fieldset>
+      <button className="primary-action compact" disabled={busy} type="submit"><Save size={16}/>Save cost settings</button>
+    </form>}
   </section>;
 }

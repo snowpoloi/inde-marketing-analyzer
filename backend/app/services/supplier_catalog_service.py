@@ -17,6 +17,7 @@ from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProdu
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services.supplier_costing import normalize_identifier
 from app.services.supplier_catalog_pricing import latest_aade_costs, price_comparison
+from app.services.supplier_catalog_settings import pricing_settings
 
 
 def _cipher() -> Fernet:
@@ -195,6 +196,7 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
     total = db.scalar(select(func.count()).select_from(base.subquery()))
     results = db.execute(base.order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id).offset(offset).limit(limit)).all()
     costs = latest_aade_costs(db, {own.id for _, _, _, own in results if own}, {code for _, _, code, _ in results})
+    pricing = pricing_settings(db)
     summary = db.execute(select(func.count(), func.sum(case((ProductCatalog.id.is_not(None), 1), else_=0)))
                          .select_from(SupplierCatalogProduct).outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
                          .where(SupplierCatalogProduct.is_current.is_(True), *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))).one()
@@ -207,7 +209,7 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
              "category": product.category, "image_url": product.image_url, "quantity": product.quantity,
              "wholesale_price_net": product.wholesale_price_net, "retail_price_gross": product.retail_price_gross,
              "opencart_sku": own.sku if own else None, "match_method": product.match_method if own else ("ambiguous" if product.match_method == "ambiguous" else "unmatched"),
-             **price_comparison(own, costs.get((code, own.id)) if own else None),
+             **price_comparison(own, costs.get((code, own.id)) if own else None, confirmed_vat_rate=pricing.get("sale_vat_rate")),
              "last_seen_at": product.last_seen_at} for product, supplier, code, own in results]
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "categories": categories,
             "summary": {"products": summary[0], "matched": summary[1] or 0, "unmatched": summary[0] - (summary[1] or 0)}}

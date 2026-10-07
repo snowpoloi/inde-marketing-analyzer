@@ -42,9 +42,13 @@ async function main() {
         else if (url.pathname === "/api/supplier-catalog/products") {
           const offset = Number(url.searchParams.get("offset") || 0), searched = Boolean(url.searchParams.get("q"));
           response = { rows: [product], total: searched ? 1 : 56, offset, limit: 50, categories: ["Garden chairs"], summary: { products: 56, matched: 40, unmatched: 16 } };
-        } else if (url.pathname === "/api/supplier-catalog/products/p1") response = { id: "p1", name: product.name, is_current: true, details: {
+        } else if (url.pathname === "/api/supplier-catalog/pricing-settings") response = { sale_vat_rate:24, volumetric_divisor:5000, automatic_costs:true, piece_supplier_ids:[] };
+        else if (url.pathname === "/api/supplier-catalog/products/p1") response = { id: "p1", name: product.name, is_current: true,
+          packages:[{label:"BOX A",width_cm:"40",length_cm:"100",height_cm:"10",volume_m3:0.04,volumetric_kg:8},
+                    {label:"BOX B",width_cm:"50",length_cm:"90",height_cm:"12",volume_m3:0.054,volumetric_kg:10.8}],
+          volumetric_divisor:5000, volume_total_m3:0.094, volumetric_total_kg:18.8, details: {
           description: "<b>Garden chair</b><br>Polypropylene", availability: "In stock", volume_item: "0.06502222", weight_item: "13.00444444",
-          packages_per_item: "1", comb_width_cm: "0", comb_height_cm: "0", comb_length_cm: "0", filters: [{ group: "Material", value: "Polypropylene PP" }] } };
+          packages_per_item: "2", comb_width_cm: "0", comb_height_cm: "0", comb_length_cm: "0", filters: [{ group: "Material", value: "Polypropylene PP" }] } };
         else if (url.pathname === "/api/suppliers/identities") response = {data:{rows:[{ id: "s2", code: "AADE_800749270", name: "Pakketo AE", vat_number: "800749270" }]}};
         else if (url.pathname.endsWith("/settings/integrations") || url.pathname.endsWith("/settings/opencart/order-statuses")) response = [];
         else throw new Error(`Unexpected endpoint: ${url.pathname}`);
@@ -53,7 +57,7 @@ async function main() {
       await page.goto("http://127.0.0.1:5187/#supplier-catalog");
       await page.getByRole("heading", { name: "Supplier catalog", exact: true }).waitFor();
       await page.getByText(product.name, { exact: true }).waitFor();
-      await page.getByRole("columnheader", { name: "INDE price", exact: true }).waitFor();
+      await page.getByRole("columnheader", { name: "INDE price (VAT incl.)", exact: true }).waitFor();
       await page.getByRole("columnheader", { name: "AADE cost / unit (net)", exact: true }).waitFor();
       assert.equal(await page.getByRole("cell", { name: "30%", exact: true }).count(), 1);
       assert.equal(await page.getByRole("cell", { name: /70,00/ }).count(), 1);
@@ -61,6 +65,9 @@ async function main() {
       await page.screenshot({ path: `test-results/supplier-catalog-${viewport.width}.png`, fullPage: true });
       await page.getByRole("button", { name: "Details 0268292" }).click();
       await page.getByRole("dialog").getByText("Polypropylene PP", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("cell", {name:"BOX A",exact:true}).count(),1);
+      assert.equal(await page.getByRole("cell", {name:"BOX B",exact:true}).count(),1);
+      await page.getByRole("columnheader", {name:"Volumetric (kg) / 5000",exact:true}).waitFor();
       await page.screenshot({ path: `test-results/supplier-catalog-detail-${viewport.width}.png`, fullPage: true });
       await page.getByRole("button", { name: "Close product" }).click();
       await page.getByRole("button", { name: "Next page", exact: true }).click();

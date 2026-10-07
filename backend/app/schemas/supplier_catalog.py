@@ -1,6 +1,15 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.connectors.supplier_catalog import validate_feed_url
+from decimal import Decimal
+from uuid import UUID
+
+
+class SupplierCatalogPricingInput(BaseModel):
+    sale_vat_rate: Decimal | None = Field(default=None, ge=0, le=100)
+    volumetric_divisor: int = Field(default=5000, ge=1000, le=10000)
+    automatic_costs: bool = False
+    piece_supplier_ids: list[UUID] = Field(default_factory=list, max_length=100)
 
 
 class SupplierCatalogFeedInput(BaseModel):

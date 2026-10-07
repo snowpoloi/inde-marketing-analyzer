@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import time
+import re
 from decimal import Decimal, InvalidOperation
 from typing import BinaryIO
 from urllib.parse import urljoin, urlsplit
@@ -54,6 +55,27 @@ def _media_url(value: str | None, hosts: set[str] = ALLOWED_HOSTS) -> str | None
     return None
 
 
+def parse_packages(dimensions: dict, count: str | None) -> list[dict]:
+    """BOX labels are identities, not a list whose order can be assumed."""
+    axes = {}
+    for axis, value in dimensions.items():
+        value = (value or "").strip()
+        number = _number(value)
+        if number is not None:
+            axes[axis] = {"A": number} if count and Decimal(count) == 1 else {}
+            continue
+        pairs = re.findall(r"BOX\s+([A-Z]|\d{1,2})\s*:\s*([0-9]+(?:[.,][0-9]+)?)", value, re.I)
+        # Reject partial/duplicate parses rather than fabricate missing dimensions.
+        rest = re.sub(r"BOX\s+([A-Z]|\d{1,2})\s*:\s*([0-9]+(?:[.,][0-9]+)?)", "", value, flags=re.I)
+        axes[axis] = {label.upper(): _number(size) for label, size in pairs} if not rest.strip() and len({p[0].upper() for p in pairs}) == len(pairs) else {}
+    labels = set(label for values in axes.values() for label in values)
+    declared = int(Decimal(count)) if count and Decimal(count) == int(Decimal(count)) and 0 < Decimal(count) <= 30 else 0
+    if declared and len(labels) <= declared:
+        labels |= {str(i + 1) for i in range(declared)} if labels and all(label.isdigit() for label in labels) else {chr(65 + i) for i in range(declared)}
+    return [{"label": f"BOX {label}", **{axis: values.get(label) for axis, values in axes.items()}}
+            for label in sorted(labels, key=lambda label: (0, int(label)) if label.isdigit() else (1, label))]
+
+
 def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
     hosts = ADAPTER_HOSTS[adapter]
     products: list[dict] = []
@@ -75,6 +97,7 @@ def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
             raise ValueError("Duplicate supplier model in XML; the previous catalog was retained.")
         seen.add(code.casefold())
         quantity = _number(text("quantity"))
+        dimension_text = {axis: text(tag) for axis, tag in (("width_cm", "comb_width_cm"), ("length_cm", "comb_length_cm"), ("height_cm", "comb_height_cm"))}
         products.append({
             "supplier_code": code, "supplier_sku": text("sku", 255), "ean": text("ean", 64),
             "name": name, "category": text("category"), "image_url": _media_url(text("main_image", 2000), hosts),
@@ -87,6 +110,8 @@ def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
                 "weboffer_price_gross": _number(text("weboffer_price_with_vat")),
                 "volume_item": _number(text("volume_item")), "weight_item": _number(text("weight_item")),
                 "packages_per_item": _number(text("packages_per_item")),
+                "package_dimensions_raw": dimension_text,
+                "packages": parse_packages(dimension_text, _number(text("packages_per_item"))),
                 "comb_width_cm": _number(text("comb_width_cm")),
                 "comb_length_cm": _number(text("comb_length_cm")),
                 "comb_height_cm": _number(text("comb_height_cm")),

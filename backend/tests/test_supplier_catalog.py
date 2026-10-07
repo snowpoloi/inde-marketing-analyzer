@@ -52,6 +52,53 @@ def test_parser_identifiers_prices_stock_and_zero_dimensions():
     assert "net_unit_cost" not in product
 
 
+@pytest.mark.parametrize("count", range(1, 11))
+def test_package_dimensions_are_matched_by_label(count):
+    from app.services.supplier_catalog_settings import package_metrics
+    labels = [chr(65 + i) for i in range(count)]
+    dimensions = {"width_cm": " ".join(f"BOX {label}: 40,5" for label in labels),
+                  "length_cm": " ".join(f"BOX {label}: 100" for label in reversed(labels)),
+                  "height_cm": " ".join(f"BOX {label}: 10" for label in labels)}
+    packages = connector.parse_packages(dimensions, str(count))
+    assert len(packages) == count
+    assert packages[0]["width_cm"] == "40.5"
+    metrics = package_metrics({"packages": packages}, 5000)
+    assert metrics["packages"][0]["volume_m3"] == Decimal("0.0405")
+    assert metrics["packages"][0]["volumetric_kg"] == Decimal("8.1")
+    assert metrics["volume_total_m3"] == Decimal("0.0405") * count
+    assert package_metrics({"packages": packages}, 6000)["packages"][0]["volumetric_kg"] == Decimal("6.75")
+
+
+def test_missing_package_dimensions_are_never_invented_or_split():
+    from app.services.supplier_catalog_settings import package_metrics
+    packages = connector.parse_packages({"width_cm": "BOX A: 40 BOX B: 50", "length_cm": "BOX A: 100", "height_cm": "BOX A: 10 BOX B: 12"}, "2")
+    metrics = package_metrics({"packages": packages}, 5000)
+    assert metrics["packages"][1]["volume_m3"] is None
+    assert metrics["volume_total_m3"] is None
+    assert package_metrics({"packages": [metrics["packages"][0]], "packages_per_item":"2"}, 5000)["volume_total_m3"] is None
+    assert connector.parse_packages({"width_cm":"40", "length_cm":"100", "height_cm":"10"}, "2")[1]["width_cm"] is None
+    assert connector.parse_packages({"width_cm":"BOX A: 40 BOX A: 60", "length_cm":"BOX A: 100", "height_cm":"BOX A: 10"}, "1")[0]["width_cm"] is None
+
+
+def test_parser_preserves_box_text_and_extracts_package_dimensions():
+    product = rows(extra="<packages_per_item>2</packages_per_item><comb_length_cm>BOX A: 100 BOX B: 90</comb_length_cm><comb_height_cm>BOX A: 10 BOX B: 12</comb_height_cm>")[0]
+    assert product["details"]["package_dimensions_raw"]["length_cm"] == "BOX A: 100 BOX B: 90"
+    assert product["details"]["packages"][1]["length_cm"] == "90"
+
+
+def test_confirmed_vat_inclusive_inde_price():
+    own = SimpleNamespace(price=Decimal("99"), raw={})
+    cost = SimpleNamespace(net_unit_cost=Decimal("59.36"), purchase_date=date(2026, 9, 25))
+    row = price_comparison(own, (cost, "MARK"), confirmed_vat_rate="24")
+    assert row["inde_price"] == 99 and row["inde_price_net"] == Decimal("79.8387")
+    assert row["gross_profit_per_unit"] == Decimal("20.4787")
+    assert row["gross_margin_percent"] == Decimal("25.65")
+    own.raw = {"vat_rate": 13}
+    assert catalog_sale_price(own, confirmed_vat_rate=24)["inde_price_net"] == Decimal("87.6106")
+    own.raw = {"currency":"USD"}
+    assert catalog_sale_price(own, confirmed_vat_rate=24)["inde_price_net"] is None
+
+
 @pytest.mark.parametrize("url", ["http://megapap.com/", "https://127.0.0.1/", "https://megapap.com.evil.test/", "https://user:secret@megapap.com/", "https://megapap.com:9000/"])
 def test_private_or_unaudited_destinations_are_rejected(url):
     with pytest.raises(ValueError):
@@ -176,10 +223,20 @@ def test_api_admin_only_and_paginated_without_url_leaks(db, private_key):
         assert len(data["rows"]) == 1 and data["total"] == 1
         assert client.get(f'/api/supplier-catalog/products/{data["rows"][0]["id"]}').status_code == 200
         assert client.post(f"/api/supplier-catalog/feeds/{saved.id}/sync").json()["status"] == "queued"
+        assert client.get("/api/supplier-catalog/pricing-settings").json()["automatic_costs"] is False
+        assert client.put("/api/supplier-catalog/pricing-settings", json={"volumetric_divisor":0}).status_code == 422
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(is_admin=True, id=uuid4())
+        assert client.put("/api/supplier-catalog/pricing-settings", json={"piece_supplier_ids":[str(uuid4())]}).status_code == 400
+        pricing = client.put("/api/supplier-catalog/pricing-settings", json={"sale_vat_rate":24,"volumetric_divisor":6000})
+        assert pricing.status_code == 200 and pricing.json()["volumetric_divisor"] == 6000
+        assert "authorized_by" not in pricing.json()
+        assert client.get("/api/supplier-catalog/pricing-settings").json()["sale_vat_rate"] == "24"
         assert client.get("/api/supplier-catalog/products?limit=1001").status_code == 422
         app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(is_admin=False)
         assert client.get("/api/supplier-catalog/products").status_code == 403
         assert client.get("/api/supplier-catalog/feeds").status_code == 403
+        assert client.get("/api/supplier-catalog/pricing-settings").status_code == 403
+        assert client.put("/api/supplier-catalog/pricing-settings", json={}).status_code == 403
         assert client.post(f"/api/supplier-catalog/feeds/{saved.id}/sync").status_code == 403
 
 

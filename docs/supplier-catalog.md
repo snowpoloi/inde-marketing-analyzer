@@ -72,10 +72,11 @@ Margin is `(net sale - net cost) / net sale * 100`, not markup on cost, and excl
 shipping, advertising and overhead. No XML or Gmail fallback is permitted. The
 AADE cost ingestion/approval bridge is described below.
 
-Net sale price requires explicit `price_net`, or a declared `prices_include_vat`
-and VAT rate for gross prices (also supported in `raw_fields`). Generic XML price
-alone does not establish tax treatment. Missing cost, unknown VAT basis, foreign
-currency and zero sale price never produce a fabricated margin percentage.
+INDE catalog prices are VAT-inclusive, confirmed by the owner. Settings > Catalog
+costs & packages stores the confirmed selling VAT rate; explicit per-product VAT
+rates take precedence. Without that setting, the original explicit `price_net` /
+`prices_include_vat` metadata rules still apply. Missing cost, unknown VAT basis,
+foreign currency and zero sale price never produce a fabricated margin percentage.
 
 ## Reviewed AADE Costs
 
@@ -103,3 +104,28 @@ Cancelled, conflicting or subsequently changed fiscal sources invalidate their
 accepted costs and purchase/freight aggregates. The latest invalid evidence can
 leave the catalog cost blank; this does not silently fall back to an XML list price.
 This is verified invoice unit costing, not a stock/FIFO or full net-profit engine.
+
+## Automatic Cost Updates
+
+The administrator can enable automatic AADE purchase costs in Settings. The
+background worker processes at most one stored invoice every 45 seconds. It uses
+the same fiscal, amount, mapping, cancellation and duplicate guards as manual
+acceptance, and records the authorizing administrator plus an automated audit
+flag. No external fiscal writes or OpenCart selling-price changes are made.
+Invoices without unit codes require a saved supplier-specific 1:1 purchase/sales
+unit confirmation. Explicit non-piece units are never overridden. Blocked invoices
+remain for review and retry after six hours; XML list prices never become costs.
+Imported invoices are not duplicated. Corrected/cancelled source evidence remains
+invalid until separately reconciled rather than silently replacing history.
+
+## Per-Package Dimensions
+
+MEGAPAP combines labeled `BOX A`, `BOX B`, etc. in each `comb_*_cm` field. The
+parser preserves source text and joins axes by box label (not source position).
+Every declared package is displayed, including unknown dimensions. Single numeric
+dimensions apply only to a declared single package. Totals require all declared
+packages to have usable dimensions; combined volume is never divided evenly.
+Volume = width * length * height / 1,000,000 m3. Volumetric weight uses the saved
+carrier divisor in cm3/kg (initial editable reference: 5,000), shown in the table.
+This is not measured weight or a freight price. Pakoworld does not currently
+provide these labeled package dimensions; product dimensions are not substituted.

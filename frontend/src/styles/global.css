@@ -659,6 +659,10 @@ tr:last-child td {
 .supplier-catalog-filters label { min-width: 0; display: grid; gap: 6px; }
 .supplier-catalog-filters select, .supplier-catalog-filters input { width: 100%; min-width: 0; }
 .supplier-catalog-summary { display: flex; gap: 24px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid #dce3df; }
+.supplier-package-table { overflow-x: auto; margin: 12px 0; }
+.supplier-package-table table { width: 100%; border-collapse: collapse; }
+.supplier-package-table th, .supplier-package-table td { padding: 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid #dce3df; }
+.supplier-package-table th:first-child, .supplier-package-table td:first-child { text-align: left; }
 .supplier-catalog-summary strong { margin-left: 6px; }
 .supplier-catalog-product { display: flex; align-items: center; gap: 10px; min-width: 270px; max-width: 440px; }
 .supplier-catalog-product strong { display: block; overflow-wrap: anywhere; }

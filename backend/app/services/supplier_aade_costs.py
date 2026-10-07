@@ -231,7 +231,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             "can_import": not reasons and all(not line["reasons"] for line in lines)}
 
 
-def accept_invoice(db, document_id, payload, user):
+def accept_invoice(db, document_id, payload, user, *, automated=False):
     from app.services.supplier_service import import_supplier_documents
 
     if not payload.confirm_products_and_units:
@@ -267,7 +267,7 @@ def accept_invoice(db, document_id, payload, user):
         mapping.verified, mapping.verified_by, mapping.verified_at = True, user.id, datetime.now(timezone.utc)
         mapping.status, mapping.confidence, mapping.match_method = "matched", Decimal("1"), "aade_xml_reviewed"
         audit = list((mapping.raw_metadata or {}).get("verification_audit", []))
-        audit.append({"user_id":str(user.id), "at":mapping.verified_at.isoformat(), "aade_mark":preview["mark"],
+        audit.append({"user_id":str(user.id), "automated": automated, "at":mapping.verified_at.isoformat(), "aade_mark":preview["mark"],
                       "product":str(product.id), "factor":"1", "method":"aade_xml_reviewed"})
         mapping.raw_metadata = {**(mapping.raw_metadata or {}), "verification_audit":audit}
         db.flush()
@@ -293,6 +293,7 @@ def accept_invoice(db, document_id, payload, user):
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
                              "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
                              "aade_confirm_missing_units": payload.confirm_missing_units}
+    document.raw_metadata = {**document.raw_metadata, "aade_automated": automated}
     costs = db.scalars(select(SupplierProductCost).join(SupplierDocumentLine,
         SupplierDocumentLine.id == SupplierProductCost.source_line_id).where(SupplierDocumentLine.document_id == document.id)).all()
     for cost in costs:

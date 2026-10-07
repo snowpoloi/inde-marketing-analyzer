@@ -51,6 +51,76 @@ def seed(db):
     return user, supplier, own, item, fiscal
 
 
+def auto_policy(db, user, supplier, *, confirm_units=True):
+    from app.schemas.supplier_catalog import SupplierCatalogPricingInput
+    from app.services.supplier_catalog_settings import save_pricing_settings
+    save_pricing_settings(db, SupplierCatalogPricingInput(sale_vat_rate=24, automatic_costs=True,
+        piece_supplier_ids=[supplier.id] if confirm_units else []), user)
+
+
+def test_automatic_new_invoice_costs_and_idempotence(db):
+    from app.services.supplier_aade_jobs import process_aade_costs
+    user, supplier, own, _, fiscal = seed(db)
+    assert process_aade_costs(db) == {"processed": 0}
+    auto_policy(db, user, supplier)
+    assert process_aade_costs(db)["costs_created"] == 1
+    assert process_aade_costs(db) == {"processed": 0}
+    assert db.scalar(select(SupplierDocument)).raw_metadata["aade_automated"] is True
+    copy = AADEDocument(source_endpoint="RequestTransmittedDocs", identity_key="copy-of-invoice",
+        mark=fiscal.mark, issuer_vat=fiscal.issuer_vat, counterpart_vat=fiscal.counterpart_vat,
+        issue_date=fiscal.issue_date, currency=fiscal.currency, document_direction=fiscal.document_direction,
+        invoice_type=fiscal.invoice_type, aa=fiscal.aa, series=fiscal.series, net_value=fiscal.net_value,
+        vat_amount=fiscal.vat_amount, gross_value=fiscal.gross_value, raw=fiscal.raw)
+    db.add(copy); db.commit()
+    assert process_aade_costs(db) == {"processed": 0}
+    assert db.scalar(select(SupplierProductCost.net_unit_cost)) == 70
+    latest = AADEDocument(source_endpoint="RequestDocs", identity_key="invoice-new", mark="NEW-MARK",
+        issuer_vat=supplier.vat_number, counterpart_vat="802216736", issue_date=date.today(), aa="NEW",
+        currency="EUR", document_direction="expense", invoice_type="1.1", net_value=160, vat_amount=38.4, gross_value=198.4,
+        raw={"record_type":"full_document", "invoiceDetails":[{"lineNumber":1, "itemCode":"0268292",
+            "quantity":2, "measurementUnit":1, "netValue":160, "vatAmount":38.4}]})
+    db.add(latest); db.commit()
+    assert process_aade_costs(db)["costs_created"] == 1
+    assert latest_aade_costs(db, {own.id}, {supplier.code})[(supplier.code, own.id)][0].net_unit_cost == 80
+    db.refresh(own)
+    assert own.price == 124
+
+
+def test_automatic_costs_require_supplier_unit_authorization(db):
+    from app.services.supplier_aade_jobs import process_aade_costs
+    user, supplier, _, _, fiscal = seed(db)
+    fiscal.raw = {**fiscal.raw, "invoiceDetails":[{k:v for k,v in row.items() if k != "measurementUnit"} for row in fiscal.raw["invoiceDetails"]]}
+    db.commit()
+    auto_policy(db, user, supplier, confirm_units=False)
+    assert process_aade_costs(db)["status"] == "review"
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+    assert process_aade_costs(db) == {"processed": 0}
+    # A reviewed invoice can be reattempted after its review backoff expires.
+    fiscal.raw = {**fiscal.raw, "_catalog_cost": {}}
+    auto_policy(db, user, supplier)
+    assert process_aade_costs(db)["costs_created"] == 1
+
+
+@pytest.mark.parametrize("problem", ["ambiguous", "cancelled", "totals", "kilograms", "inactive_actor"])
+def test_automatic_costs_preserve_review_guards(db, problem):
+    from app.services.supplier_aade_jobs import process_aade_costs
+    user, supplier, _, item, fiscal = seed(db)
+    auto_policy(db, user, supplier)
+    if problem == "ambiguous":
+        item.product_catalog_id = None
+    elif problem == "cancelled":
+        fiscal.is_cancelled = True
+    elif problem == "totals":
+        fiscal.net_value = 1000
+    elif problem == "inactive_actor":
+        user.is_active = False
+    else:
+        fiscal.raw = {**fiscal.raw, "invoiceDetails":[{**fiscal.raw["invoiceDetails"][0], "measurementUnit":2}, fiscal.raw["invoiceDetails"][1]]}
+    db.commit()
+    process_aade_costs(db)
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+
+
 def payload(preview):
     return SupplierAADEAcceptRequest(supplier_id=preview["supplier_id"], fingerprint=preview["fingerprint"], confirm_products_and_units=True)
 

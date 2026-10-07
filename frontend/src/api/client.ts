@@ -4,6 +4,11 @@ export type SupplierCatalogFeed = {
   last_synced_at: string | null; counts: { products?: number; matched?: number; ambiguous?: number; unmatched?: number };
 };
 
+export type SupplierCatalogPricing = {
+  sale_vat_rate: number | string | null; volumetric_divisor: number;
+  automatic_costs: boolean; piece_supplier_ids: string[];
+};
+
 export type SupplierCatalogProduct = {
   id: string; supplier: string; supplier_code: string; supplier_sku: string | null; ean: string | null;
   name: string; category: string | null; image_url: string | null; quantity: number | null;
@@ -560,12 +565,16 @@ export const api = {
     });
   },
   integrations: () => request<IntegrationSetting[]>("/settings/integrations"),
+  supplierCatalogPricing: () => request<SupplierCatalogPricing>("/supplier-catalog/pricing-settings"),
+  saveSupplierCatalogPricing: (payload: SupplierCatalogPricing) => request<SupplierCatalogPricing>("/supplier-catalog/pricing-settings", { method: "PUT", body: JSON.stringify(payload) }),
   supplierCatalogFeeds: () => request<SupplierCatalogFeed[]>("/supplier-catalog/feeds"),
   saveSupplierCatalogFeed: (id: string | null, payload: { code: string; name: string; adapter: string; url?: string; is_enabled: boolean; refresh_hours: number }) =>
     request<SupplierCatalogFeed>(`/supplier-catalog/feeds${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) }),
   syncSupplierCatalog: (id: string) => request<SupplierCatalogFeed>(`/supplier-catalog/feeds/${id}/sync`, { method: "POST" }),
   supplierCatalogProducts: (filters: Record<string, string>) => request<SupplierCatalogResult>(`/supplier-catalog/products?${new URLSearchParams(filters)}`),
-  supplierCatalogDetails: (id: string) => request<{ id: string; name: string; is_current: boolean; details: {
+  supplierCatalogDetails: (id: string) => request<{ id: string; name: string; is_current: boolean;
+    packages: Array<{label: string; width_cm: string | null; length_cm: string | null; height_cm: string | null; volume_m3: number | null; volumetric_kg: number | null}>;
+    volumetric_divisor: number; volume_total_m3: number | null; volumetric_total_kg: number | null; details: {
     description: string | null; availability: string | null; manufacturer: string | null;
     volume_item: string | null; weight_item: string | null; packages_per_item: string | null;
     comb_width_cm: string | null; comb_length_cm: string | null; comb_height_cm: string | null;

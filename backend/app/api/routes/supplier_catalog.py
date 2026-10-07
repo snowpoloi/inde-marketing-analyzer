@@ -7,10 +7,25 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_admin
 from app.db.session import get_db
 from app.models import SupplierCatalogFeed, SupplierCatalogProduct, User
-from app.schemas.supplier_catalog import SupplierCatalogFeedInput
+from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatalogPricingInput
+from app.services.supplier_catalog_settings import public_pricing_settings, save_pricing_settings, package_metrics
 from app.services.supplier_catalog_service import catalog_products, feed_response, queue_feed, save_feed
 
 router = APIRouter(prefix="/supplier-catalog", tags=["supplier-catalog"])
+
+
+@router.get("/pricing-settings")
+def pricing(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return public_pricing_settings(db)
+
+
+@router.put("/pricing-settings")
+def save_pricing(payload: SupplierCatalogPricingInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return save_pricing_settings(db, payload, user)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/feeds")
@@ -52,4 +67,5 @@ def product(product_id: UUID, _: User = Depends(require_admin), db: Session = De
     row = db.get(SupplierCatalogProduct, product_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Supplier product not found.")
-    return {"id": str(row.id), "name": row.name, "details": row.details, "is_current": row.is_current}
+    return {"id": str(row.id), "name": row.name, "details": row.details, "is_current": row.is_current,
+            **package_metrics(row.details or {}, public_pricing_settings(db)["volumetric_divisor"])}

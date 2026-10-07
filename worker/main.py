@@ -10,6 +10,7 @@ from app.services.sync_service import run_many
 from app.services.supplier_gmail_jobs import process_gmail_jobs
 from app.services.supplier_catalog_service import process_supplier_catalog
 from app.services.aade_detail_jobs import process_aade_details
+from app.services.supplier_aade_jobs import process_aade_costs
 
 
 def supplier_gmail_sync() -> None:
@@ -34,6 +35,11 @@ def aade_detail_sync() -> None:
         process_aade_details(db)
 
 
+def aade_cost_sync() -> None:
+    with SessionLocal() as db:
+        process_aade_costs(db)
+
+
 def main() -> None:
     scheduler = BlockingScheduler(timezone=settings.sync_timezone)
     scheduler.add_job(daily_sync, "cron", hour=settings.sync_daily_hour, minute=0, id="daily-marketing-sync")
@@ -42,6 +48,8 @@ def main() -> None:
     scheduler.add_job(supplier_catalog_sync, "interval", seconds=45, id="supplier-catalog-readonly",
                       max_instances=1, coalesce=True, next_run_time=datetime.now(ZoneInfo(settings.sync_timezone)))
     scheduler.add_job(aade_detail_sync, "interval", seconds=45, id="aade-provider-detail-readonly",
+                      max_instances=1, coalesce=True, next_run_time=datetime.now(ZoneInfo(settings.sync_timezone)))
+    scheduler.add_job(aade_cost_sync, "interval", seconds=45, id="supplier-aade-costs",
                       max_instances=1, coalesce=True, next_run_time=datetime.now(ZoneInfo(settings.sync_timezone)))
     print(
         f"INDE Marketing Analyzer worker started. Daily sync at {settings.sync_daily_hour}:00 {settings.sync_timezone}.",

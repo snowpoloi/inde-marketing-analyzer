@@ -90,7 +90,7 @@ export function SupplierCatalogPage() {
     { key: "sku", header: "Supplier SKU / EAN", render: row => <div className="supplier-catalog-stack">{row.supplier_sku || "-"}<small>{row.ean || "-"}</small></div> },
     { key: "own", header: "INDE SKU", render: row => <div className="supplier-catalog-stack">{row.opencart_sku || "-"}<small>{row.match_method === "ambiguous" ? "Needs review" : row.opencart_sku ? "Matched" : "Not matched"}</small></div> },
     { key: "stock", header: "Supplier stock", align: "right", render: row => row.quantity ?? "-" },
-    { key: "inde-price", header: "INDE price", align: "right", render: row => <div className="supplier-catalog-stack" title={row.inde_price_basis === "unknown" ? "INDE feed price; VAT basis not confirmed." : `INDE feed price (${row.inde_price_basis})`}>{money(row.inde_price)}{row.inde_price_net != null && <small>{money(row.inde_price_net)} net</small>}</div> },
+    { key: "inde-price", header: "INDE price (VAT incl.)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.inde_price_basis === "unknown" ? "Selling VAT rate not confirmed." : `INDE feed price (${row.inde_price_basis})`}>{money(row.inde_price)}{row.inde_price_net != null && <small>{money(row.inde_price_net)} net</small>}</div> },
     { key: "aade-cost", header: "AADE cost / unit (net)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.aade_mark ? `AADE MARK ${row.aade_mark}` : "No confirmed AADE unit cost"}>{money(row.aade_cost_net)}{row.aade_cost_date && <small>{row.aade_cost_date}</small>}</div> },
     { key: "unit-profit", header: "Gross profit / unit (net)", align: "right", render: row => <span title={marginReason(row)}>{money(row.gross_profit_per_unit)}</span> },
     { key: "margin", header: "Gross margin %", align: "right", render: row => <span title={marginReason(row)}>{row.gross_margin_percent == null ? "-" : `${percent.format(Number(row.gross_margin_percent))}%`}</span> },
@@ -146,6 +146,11 @@ export function SupplierCatalogPage() {
       <section className="supplier-catalog-dialog" role="dialog" aria-modal="true" aria-label={details.name} onClick={event => event.stopPropagation()}>
         <div className="panel-title"><h2>{details.name}</h2><button className="icon-button" autoFocus title="Close product" aria-label="Close product" onClick={() => { detailId.current++; setDetails(null); }}><X size={18} /></button></div>
         <p>{details.details.availability || "-"}</p>
+        <div className="supplier-package-table"><table className="data-table">
+          <thead><tr><th>Package</th><th>Width (cm)</th><th>Length (cm)</th><th>Height (cm)</th><th>Volume (m³)</th><th>Volumetric (kg) / {details.volumetric_divisor}</th></tr></thead>
+          <tbody>{(details.packages ?? []).map(row => <tr key={row.label}><td>{row.label}</td><td>{row.width_cm ?? "-"}</td><td>{row.length_cm ?? "-"}</td><td>{row.height_cm ?? "-"}</td><td>{row.volume_m3 == null ? "-" : Number(row.volume_m3).toLocaleString("el-GR", {maximumFractionDigits: 6})}</td><td>{row.volumetric_kg == null ? "-" : Number(row.volumetric_kg).toLocaleString("el-GR", {maximumFractionDigits: 2})}</td></tr>)}{!details.packages?.length && <tr><td colSpan={6}>No package dimensions in supplier XML.</td></tr>}</tbody>
+          {details.volume_total_m3 != null && <tfoot><tr><th>Total</th><td colSpan={3}/><td>{Number(details.volume_total_m3).toLocaleString("el-GR", {maximumFractionDigits: 6})}</td><td>{Number(details.volumetric_total_kg).toLocaleString("el-GR", {maximumFractionDigits: 2})}</td></tr></tfoot>}
+        </table></div>
         <dl className="supplier-catalog-detail-grid">
           <div><dt>Supplier volume (raw)</dt><dd>{details.details.volume_item ?? details.details.volume ?? "-"}</dd></div>
           <div><dt>Supplier weight (raw)</dt><dd>{details.details.weight_item ?? details.details.weight ?? "-"}</dd></div>
