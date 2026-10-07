@@ -7,9 +7,11 @@ import socket
 import time
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin, urlsplit, urlunsplit
+from xml.etree.ElementTree import ParseError
 
 import httpx
 from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 
 from app.connectors.aade import AADEConnector
 
@@ -119,16 +121,21 @@ def parse_detail(data):
         raise DetailError("Provider detail exceeded the size limit.")
     try:
         root = ElementTree.fromstring(data, forbid_dtd=True)
-        if len(list(root.iter())) > 20000:
-            raise ValueError()
-        connector = AADEConnector({})
-        payload = {connector._clean_tag(root.tag): connector._xml_to_data(root)}
-        invoices = connector._collect_documents(payload)
-        if len(invoices) != 1:
-            raise ValueError()
-        return invoices[0]
-    except Exception:
+    except DefusedXmlException:
         raise DetailError("Provider response is not a single safe myDATA invoice.") from None
+    except ParseError:
+        raise DetailError("Provider returned invalid XML; retrieval will be retried.", retryable=True) from None
+    if len(list(root.iter())) > 20000:
+        raise DetailError("Provider detail exceeded the XML node limit.")
+    connector = AADEConnector({})
+    payload = {connector._clean_tag(root.tag): connector._xml_to_data(root)}
+    invoices = connector._collect_documents(payload)
+    if not invoices:
+        # Some providers return an HTML error with HTTP 200 during an outage.
+        raise DetailError("Provider returned no myDATA invoice; retrieval will be retried.", retryable=True)
+    if len(invoices) != 1:
+        raise DetailError("Provider response is not a single safe myDATA invoice.")
+    return invoices[0]
 
 
 def _amount(value):

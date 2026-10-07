@@ -83,6 +83,19 @@ def test_untrusted_xml_blocked(data):
         detail.parse_detail(data)
 
 
+@pytest.mark.parametrize("data", [b'<html>temporarily unavailable</html>', b'<InvoicesDoc', b''])
+def test_transient_invalid_responses_are_retryable(data):
+    with pytest.raises(detail.DetailError) as error:
+        detail.parse_detail(data)
+    assert error.value.retryable
+
+
+def test_unsafe_xml_is_not_retryable():
+    with pytest.raises(detail.DetailError) as error:
+        detail.parse_detail(b'<!DOCTYPE a [<!ENTITY x SYSTEM "file:///etc/passwd">]><a>&x;</a>')
+    assert not error.value.retryable
+
+
 def test_get_without_credentials_and_no_unsafe_redirect(monkeypatch):
     real_client = httpx.Client
     requests = []
