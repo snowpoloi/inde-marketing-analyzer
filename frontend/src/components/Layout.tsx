@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -68,6 +68,10 @@ export function Layout({
             <PackageSearch size={18} />
             Products
           </button>
+          {isAdmin ? <button className={active === "supplier-catalog" ? "active" : ""} onClick={() => onNavigate("supplier-catalog")}>
+            <Warehouse size={18} />
+            Supplier catalog
+          </button> : null}
           {isAdmin ? <button title="Suppliers & COGS" className={active === "suppliers" ? "active" : ""} onClick={() => onNavigate("suppliers")}>
             <Warehouse size={18} />
             Suppliers &amp; COGS

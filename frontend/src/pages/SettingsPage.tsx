@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link2, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { IntegrationSetting } from "../api/client";
+import { SupplierFeedSettings } from "../components/SupplierFeedSettings";
 
 const aadeReadOnlyEndpoints = [
   { value: "RequestTransmittedDocs", label: "Transmitted docs" },
@@ -554,6 +555,7 @@ export function SettingsPage() {
         </div>
       </header>
       {message ? <div className="notice">{message}</div> : null}
+      <SupplierFeedSettings />
       <section className="settings-grid">
         {items.map((item) => (
           <article className="settings-panel" key={item.provider}>

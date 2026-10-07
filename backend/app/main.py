@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.routes import auth, banks, dashboard, orders, settings, suppliers, sync
+from app.api.routes import auth, banks, dashboard, orders, settings, supplier_catalog, suppliers, sync
 from app.core.config import settings as app_settings
 from app.db.session import SessionLocal
 from app.services.seed import ensure_admin_user, ensure_default_integrations
@@ -30,6 +30,7 @@ app.include_router(dashboard.router, prefix="/api")
 app.include_router(banks.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(suppliers.router, prefix="/api")
+app.include_router(supplier_catalog.router, prefix="/api")
 
 
 @app.on_event("startup")

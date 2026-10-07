@@ -18,3 +18,4 @@ google-analytics-data>=0.18,<1.0
 google-auth>=2.30,<3.0
 pdfplumber>=0.11,<1.0
 tzdata>=2024.1
+defusedxml>=0.7.1,<1.0

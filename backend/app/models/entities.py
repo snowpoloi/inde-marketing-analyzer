@@ -308,6 +308,47 @@ class ProductCatalog(TimestampMixin, Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class SupplierCatalogFeed(TimestampMixin, Base):
+    __tablename__ = "supplier_catalog_feeds"
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    code: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    adapter: Mapped[str] = mapped_column(String(32), nullable=False)
+    encrypted_url: Mapped[str] = mapped_column(Text, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    refresh_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="idle", nullable=False)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    counts: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class SupplierCatalogProduct(TimestampMixin, Base):
+    __tablename__ = "supplier_catalog_products"
+    __table_args__ = (UniqueConstraint("feed_id", "supplier_code", name="uq_supplier_catalog_product_identity"),)
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    feed_id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("supplier_catalog_feeds.id", ondelete="CASCADE"), nullable=False, index=True)
+    supplier_code: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    supplier_sku: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    ean: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wholesale_price_net: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    retail_price_gross: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    product_catalog_id: Mapped[PyUUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("product_catalog.id", ondelete="SET NULL"), nullable=True, index=True)
+    match_method: Mapped[str] = mapped_column(String(64), default="unmatched", nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class Supplier(TimestampMixin, Base):
     __tablename__ = "suppliers"
     __table_args__ = (UniqueConstraint("code", name="uq_suppliers_code"),)

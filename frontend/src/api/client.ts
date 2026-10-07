@@ -1,3 +1,21 @@
+export type SupplierCatalogFeed = {
+  id: string; code: string; name: string; adapter: string; configured: boolean;
+  is_enabled: boolean; refresh_hours: number; status: string; error: string | null;
+  last_synced_at: string | null; counts: { products?: number; matched?: number; ambiguous?: number; unmatched?: number };
+};
+
+export type SupplierCatalogProduct = {
+  id: string; supplier: string; supplier_code: string; supplier_sku: string | null; ean: string | null;
+  name: string; category: string | null; image_url: string | null; quantity: number | null;
+  wholesale_price_net: number | null; retail_price_gross: number | null;
+  opencart_sku: string | null; match_method: string; last_seen_at: string;
+};
+
+export type SupplierCatalogResult = {
+  rows: SupplierCatalogProduct[]; total: number; offset: number; limit: number; categories: string[];
+  summary: { products: number; matched: number; unmatched: number };
+};
+
 export type IntegrationSetting = {
   provider: string;
   display_name: string;
@@ -506,6 +524,17 @@ export const api = {
     });
   },
   integrations: () => request<IntegrationSetting[]>("/settings/integrations"),
+  supplierCatalogFeeds: () => request<SupplierCatalogFeed[]>("/supplier-catalog/feeds"),
+  saveSupplierCatalogFeed: (id: string | null, payload: { code: string; name: string; adapter: string; url?: string; is_enabled: boolean; refresh_hours: number }) =>
+    request<SupplierCatalogFeed>(`/supplier-catalog/feeds${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) }),
+  syncSupplierCatalog: (id: string) => request<SupplierCatalogFeed>(`/supplier-catalog/feeds/${id}/sync`, { method: "POST" }),
+  supplierCatalogProducts: (filters: Record<string, string>) => request<SupplierCatalogResult>(`/supplier-catalog/products?${new URLSearchParams(filters)}`),
+  supplierCatalogDetails: (id: string) => request<{ id: string; name: string; is_current: boolean; details: {
+    description: string | null; availability: string | null; manufacturer: string | null;
+    volume_item: string | null; weight_item: string | null; packages_per_item: string | null;
+    comb_width_cm: string | null; comb_length_cm: string | null; comb_height_cm: string | null;
+    filters: Array<{ group: string; value: string }>;
+  } }>(`/supplier-catalog/products/${id}`),
   opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),
   saveIntegration: (provider: string, payload: Pick<IntegrationSetting, "is_enabled" | "config">) =>
     request<IntegrationSetting>(`/settings/integrations/${provider}`, {
