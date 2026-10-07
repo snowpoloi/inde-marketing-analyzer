@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select, text
+from sqlalchemy.orm import load_only
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed,
                         SupplierCatalogProduct, SupplierDocument, SupplierDocumentLine, SupplierProductCost,
@@ -33,7 +34,7 @@ def numeric(value):
 
 
 def line_rows(raw):
-    rows = pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "lineItems", "lines")
+    rows = pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "invoice_rows", "lineItems", "line_items", "lines")
     if isinstance(rows, dict):
         rows = pick(rows, "invoiceDetails", "invoiceDetail", "invoiceRow", "row", "line") or rows
     if rows is None:
@@ -44,8 +45,8 @@ def line_rows(raw):
 def parse_lines(raw):
     result = []
     for index, row in enumerate(line_rows(raw), 1):
-        description = str(pick(row, "itemDescr", "itemDescription", "productDescription", "description", "lineComments", "name") or "")[:1000]
-        code = str(pick(row, "itemCode", "productCode", "code") or "").strip()
+        description = str(pick(row, "itemDescr", "itemDescription", "productDescription", "description", "lineComments", "comments", "name", "title") or "")[:1000]
+        code = str(pick(row, "itemCode", "item_code", "productCode", "product_code", "code") or "").strip()
         qty = numeric(pick(row, "quantity", "qty"))
         net = numeric(pick(row, "netValue", "totalNetValue", "net"))
         vat = numeric(pick(row, "vatAmount", "totalVatAmount", "vat"))
@@ -142,7 +143,12 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
         tax = sum((line["vat_amount"] for line in lines), Decimal("0"))
         if abs(net - document.net_value) > Decimal("0.02") or abs(tax - document.vat_amount) > Decimal("0.02") or abs(net + tax - document.gross_value) > Decimal("0.02"):
             reasons.append("Invoice totals do not reconcile to the stored lines; fees / discounts require review.")
-    catalog_query = select(SupplierCatalogProduct, ProductCatalog).join(SupplierCatalogFeed,
+    # Matching needs identifiers only, not thousands of descriptions/raw XML rows.
+    catalog_query = select(SupplierCatalogProduct, ProductCatalog).options(
+        load_only(SupplierCatalogProduct.id, SupplierCatalogProduct.supplier_code,
+                  SupplierCatalogProduct.supplier_sku, SupplierCatalogProduct.ean),
+        load_only(ProductCatalog.id, ProductCatalog.sku)
+    ).join(SupplierCatalogFeed,
         SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(ProductCatalog,
         ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(SupplierCatalogFeed.code == supplier.code,
         SupplierCatalogProduct.is_current.is_(True))
@@ -151,7 +157,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
     catalogs = db.execute(catalog_query).all()
     if lock:
         product_ids = {product.id for _, product in catalogs if product is not None}
-        db.scalars(select(ProductCatalog).where(ProductCatalog.id.in_(product_ids)).with_for_update()).all()
+        db.scalars(select(ProductCatalog.id).where(ProductCatalog.id.in_(product_ids)).with_for_update()).all()
     index = {}
     for item, product in catalogs:
         for identifier in (item.supplier_code, item.supplier_sku, item.ean):
