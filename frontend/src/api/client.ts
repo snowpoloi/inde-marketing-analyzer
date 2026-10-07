@@ -563,6 +563,10 @@ export const api = {
     volume_item: string | null; weight_item: string | null; packages_per_item: string | null;
     comb_width_cm: string | null; comb_length_cm: string | null; comb_height_cm: string | null;
     filters: Array<{ group: string; value: string }>;
+    volume?: string | null; weight?: string | null;
+    net_price?: string | null; stock_price?: string | null;
+    sell_step?: string | null; date_expected?: string | null;
+    attributes?: Array<{ id: string; value: string }>;
   } }>(`/supplier-catalog/products/${id}`),
   opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),
   saveIntegration: (provider: string, payload: Pick<IntegrationSetting, "is_enabled" | "config">) =>

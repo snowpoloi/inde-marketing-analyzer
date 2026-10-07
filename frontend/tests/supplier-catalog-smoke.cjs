@@ -13,6 +13,7 @@ async function main() {
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
       let synced = false, saved = false;
+      let pakoworldFeed = null, pakoworldSynced = false;
       const feed = { id: "f1", code: "MEGAPAP", name: "MEGAPAP", adapter: "megapap", configured: true,
         is_enabled: true, refresh_hours: 24, status: "success", error: null,
         last_synced_at: "2026-10-07T10:00:00Z", counts: { products: 56, matched: 40, unmatched: 16 } };
@@ -25,18 +26,26 @@ async function main() {
         const url = new URL(route.request().url()); let response;
         if (url.pathname.endsWith("/auth/me")) response = { is_admin: true };
         else if (url.pathname === "/api/supplier-catalog/feeds" || url.pathname === "/api/supplier-catalog/feeds/f1") {
-          if (route.request().method() === "PUT") {
+          if (route.request().method() === "POST") {
+            const body = route.request().postDataJSON();
+            assert.equal(body.adapter, "pakoworld"); assert.equal(body.code, "AADE_800749270");
+            assert.equal(body.name, "Pakketo AE"); assert(body.url.includes("fixture-private-token"));
+            pakoworldFeed = { ...feed, id: "f2", code: body.code, name: body.name, adapter: body.adapter, status: "idle" };
+            response = pakoworldFeed;
+          } else if (route.request().method() === "PUT") {
             const body = route.request().postDataJSON(); assert(!("url" in body)); assert.equal(body.refresh_hours, 48); saved = true;
             response = { ...feed, refresh_hours: 48 };
-          } else response = [feed];
-        } else if (url.pathname.endsWith("/sync")) { synced = true; response = { ...feed, status: "queued" }; }
+          } else response = [feed, ...(pakoworldFeed ? [pakoworldFeed] : [])];
+        } else if (url.pathname.endsWith("/sync")) {
+          synced = true; pakoworldSynced ||= url.pathname.includes("/f2/"); response = { ...(pakoworldSynced ? pakoworldFeed : feed), status: "queued" };
+        }
         else if (url.pathname === "/api/supplier-catalog/products") {
           const offset = Number(url.searchParams.get("offset") || 0), searched = Boolean(url.searchParams.get("q"));
           response = { rows: [product], total: searched ? 1 : 56, offset, limit: 50, categories: ["Garden chairs"], summary: { products: 56, matched: 40, unmatched: 16 } };
         } else if (url.pathname === "/api/supplier-catalog/products/p1") response = { id: "p1", name: product.name, is_current: true, details: {
           description: "<b>Garden chair</b><br>Polypropylene", availability: "In stock", volume_item: "0.06502222", weight_item: "13.00444444",
           packages_per_item: "1", comb_width_cm: "0", comb_height_cm: "0", comb_length_cm: "0", filters: [{ group: "Material", value: "Polypropylene PP" }] } };
-        else if (url.pathname === "/api/suppliers/identities") response = {data:{rows:[]}};
+        else if (url.pathname === "/api/suppliers/identities") response = {data:{rows:[{ id: "s2", code: "AADE_800749270", name: "Pakketo AE", vat_number: "800749270" }]}};
         else if (url.pathname.endsWith("/settings/integrations") || url.pathname.endsWith("/settings/opencart/order-statuses")) response = [];
         else throw new Error(`Unexpected endpoint: ${url.pathname}`);
         await route.fulfill({ json: response });
@@ -71,6 +80,20 @@ async function main() {
       assert(saved);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Settings overflows");
       await page.screenshot({ path: `test-results/supplier-feed-settings-${viewport.width}.png`, fullPage: true });
+      await page.getByRole("button", { name: "Add supplier feed", exact: true }).click();
+      await page.getByLabel("XML format", { exact: true }).selectOption("pakoworld");
+      await page.getByLabel("Registered supplier / AFM", { exact: true }).selectOption("AADE_800749270");
+      await page.getByLabel("Private XML URL").fill("https://www.pakoworld.com/?route=feed&token=fixture-private-token");
+      await page.getByRole("button", { name: "Save XML", exact: true }).click();
+      await page.getByText("Supplier XML saved.", { exact: true }).waitFor();
+      assert(pakoworldFeed);
+      assert.equal(await page.getByLabel("XML format", { exact: true }).inputValue(), "pakoworld");
+      assert.equal(await page.getByLabel("Private XML URL").inputValue(), "");
+      await page.getByRole("button", { name: "Sync XML", exact: true }).click();
+      await page.getByText("Supplier sync queued.", { exact: true }).waitFor();
+      assert(pakoworldSynced);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Pakoworld settings overflows");
+      await page.screenshot({ path: `test-results/pakoworld-feed-settings-${viewport.width}.png`, fullPage: true });
       assert.deepEqual(errors, []);
       await context.close();
     }

@@ -8,9 +8,11 @@ It does not modify OpenCart products, orders, AADE documents, supplier costs or 
 ## Settings And Synchronization
 
 Settings > Supplier XML feeds accepts a private URL, code, name, automatic-sync
-toggle and refresh interval (6-168 hours, default 24). The first adapter supports
-the audited MEGAPAP XML format only. More supplier formats require an explicit
-adapter; an arbitrary XML must not be interpreted as a MEGAPAP catalog.
+toggle and refresh interval (6-168 hours, default 24). Explicit adapters support
+the audited MEGAPAP and Pakoworld XML formats. Select the registered supplier/AFM
+to reuse its existing identity code; the feed code must agree with the AADE supplier
+code, including identities discovered as `AADE_<AFM>`. More formats require an
+explicit adapter; arbitrary XML must not be interpreted as either catalog.
 
 URLs are encrypted using a domain-separated key derived from the existing
 application SECRET_KEY, never returned by the API or placed in sync errors.
@@ -21,6 +23,7 @@ are allowed, including redirects. No feed URL or token is seeded or committed.
 The worker claims one feed every 45 seconds. Manual sync queues work and returns
 immediately; automatic sync observes the configured interval. A 30-minute lease
 recovers interrupted work. Requests are GET-only, downloads are limited to 50 MB
+for MEGAPAP and 75 MB for Pakoworld (the audited feed is approximately 54 MiB)
 and 120 seconds, product count to 20,000, and XML DTDs/entities are rejected.
 A failed/empty/duplicate-model snapshot retains the complete previous catalog.
 The catalog is atomically replaced via bounded PostgreSQL upserts. Missing products
@@ -32,7 +35,9 @@ timestamp; an error is shown until the next successful sync.
 Supplier model (including leading zeros), SKU and EAN remain separate identifiers.
 An indexed-in-memory comparison to shop SKU/model/EAN/UPC/MPN links only a single
 exact candidate. Conflicting identifiers or multiple candidates remain ambiguous;
-names do not establish financial mappings. Links are refreshed with each XML sync.
+names do not establish financial mappings. Pakoworld has no separate SKU: its
+model also checks the shop SKU, with EAN conflicts still requiring review.
+MEGAPAP matching is unchanged. Links are refreshed with each XML sync.
 The AADE cost review establishes verified SupplierProductMap links through these
 exact XML identifiers; catalog synchronization alone does not approve costs.
 
@@ -41,6 +46,13 @@ Retail prices are VAT-inclusive; wholesale prices are VAT-exclusive as labeled b
 MEGAPAP. No price or stock overwrites the shop catalog. Filters and descriptions
 retain supplier provenance; AI does not generate any values. Supplier volume and
 weight fields are raw values until units and business meanings are confirmed.
+Pakoworld's `net_price`, `stock_price` and `has_net_price` are retained as supplier
+fields, but their tax basis is not confirmed; they do not populate the tax-labelled
+XML wholesale column or purchase costs. `retail_price_with_vat` remains gross.
+Attributes, categories, sale step, expected availability and component identifiers
+are retained. Components are not exploded into purchase units. Pakoworld dimensions
+and weights remain supplier raw data, not calculated shipping parcel dimensions.
+Each adapter permits only its own HTTPS host for downloads, redirects and media.
 Zero combined dimensions are unknown, not zero-size parcels. Product dimensions
 must never automatically become packaging dimensions.
 

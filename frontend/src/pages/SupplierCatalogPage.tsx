@@ -123,11 +123,16 @@ export function SupplierCatalogPage() {
         <div className="panel-title"><h2>{details.name}</h2><button className="icon-button" autoFocus title="Close product" aria-label="Close product" onClick={() => { detailId.current++; setDetails(null); }}><X size={18} /></button></div>
         <p>{details.details.availability || "-"}</p>
         <dl className="supplier-catalog-detail-grid">
-          <div><dt>Supplier volume (raw)</dt><dd>{details.details.volume_item ?? "-"}</dd></div>
-          <div><dt>Supplier weight (raw)</dt><dd>{details.details.weight_item ?? "-"}</dd></div>
+          <div><dt>Supplier volume (raw)</dt><dd>{details.details.volume_item ?? details.details.volume ?? "-"}</dd></div>
+          <div><dt>Supplier weight (raw)</dt><dd>{details.details.weight_item ?? details.details.weight ?? "-"}</dd></div>
           <div><dt>Packages / item</dt><dd>{details.details.packages_per_item ?? "-"}</dd></div>
           <div><dt>Supplier combined dimensions (cm)</dt><dd>{[details.details.comb_width_cm, details.details.comb_length_cm, details.details.comb_height_cm].every(value => value && Number(value) > 0) ? `${details.details.comb_width_cm} × ${details.details.comb_length_cm} × ${details.details.comb_height_cm}` : "-"}</dd></div>
           {details.details.filters.map((filter, index) => <div key={index}><dt>{filter.group}</dt><dd>{filter.value}</dd></div>)}
+          {details.details.net_price != null && <div><dt>XML net_price (tax basis unconfirmed)</dt><dd>{money(Number(details.details.net_price))}</dd></div>}
+          {details.details.stock_price != null && <div><dt>XML stock_price (tax basis unconfirmed)</dt><dd>{money(Number(details.details.stock_price))}</dd></div>}
+          {details.details.sell_step != null && <div><dt>Supplier sell step</dt><dd>{details.details.sell_step}</dd></div>}
+          {details.details.date_expected && <div><dt>Expected availability</dt><dd>{details.details.date_expected}</dd></div>}
+          {details.details.attributes?.map((attribute, index) => <div key={`attribute-${index}`}><dt>Supplier attribute {attribute.id}</dt><dd>{attribute.value}</dd></div>)}
         </dl>
         <p className="supplier-catalog-description">{description}</p>
       </section>

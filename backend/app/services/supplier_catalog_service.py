@@ -11,7 +11,7 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.connectors.supplier_catalog import fetch_megapap_catalog
+from app.connectors.supplier_catalog import fetch_megapap_catalog, fetch_pakoworld_catalog, validate_feed_url
 from app.core.config import settings
 from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
@@ -39,6 +39,8 @@ def save_feed(db: Session, payload: SupplierCatalogFeedInput, feed_id: UUID | No
         raise LookupError("Supplier feed not found.")
     if feed and feed.status == "running":
         raise ValueError("Wait for the supplier sync to finish before editing its settings.")
+    if feed and feed.adapter != payload.adapter and not payload.url:
+        validate_feed_url(_cipher().decrypt(feed.encrypted_url.encode()).decode(), payload.adapter)
     code = payload.code.upper()
     existing = db.scalar(select(SupplierCatalogFeed.id).where(SupplierCatalogFeed.code == code))
     if existing and existing != feed_id:
@@ -49,7 +51,7 @@ def save_feed(db: Session, payload: SupplierCatalogFeedInput, feed_id: UUID | No
         feed = SupplierCatalogFeed(code=code, name=payload.name, adapter=payload.adapter,
                                    encrypted_url=_cipher().encrypt(payload.url.encode()).decode())
         db.add(feed)
-    changed = bool(payload.url)
+    changed = bool(payload.url) or feed.adapter != payload.adapter
     if payload.url:
         feed.encrypted_url = _cipher().encrypt(payload.url.encode()).decode()
     feed.code, feed.name, feed.adapter = code, payload.name, payload.adapter
@@ -86,7 +88,7 @@ def build_catalog_index(catalogs) -> dict[str, dict[str, set]]:
     return index
 
 
-def match_supplier_product(row: dict, index: dict) -> tuple[UUID | None, str]:
+def match_supplier_product(row: dict, index: dict, adapter: str = "megapap") -> tuple[UUID | None, str]:
     candidates = set()
     sku, ean, code = (normalize_identifier(row.get(field)) for field in ("supplier_sku", "ean", "supplier_code"))
     if sku:
@@ -95,6 +97,8 @@ def match_supplier_product(row: dict, index: dict) -> tuple[UUID | None, str]:
         candidates |= index["ean"].get(ean, set())
     if code:
         candidates |= index["mpn"].get(code, set()) | index["model"].get(code, set())
+        if adapter == "pakoworld":
+            candidates |= index["sku"].get(code, set())
     if len(candidates) == 1:
         return next(iter(candidates)), "exact_identifiers"
     return None, "ambiguous" if candidates else "unmatched"
@@ -110,7 +114,7 @@ def apply_catalog(db: Session, feed: SupplierCatalogFeed, rows: list[dict]) -> d
     matched = ambiguous = 0
     values = []
     for row in rows:
-        product_id, method = match_supplier_product(row, index)
+        product_id, method = match_supplier_product(row, index, feed.adapter)
         matched += product_id is not None
         ambiguous += method == "ambiguous"
         values.append({**row, "id": uuid4(), "feed_id": feed.id, "product_catalog_id": product_id,
@@ -142,7 +146,10 @@ def process_supplier_catalog(db: Session) -> dict | None:
     db.commit()
     feed_id = feed.id
     try:
-        rows = fetch_megapap_catalog(_cipher().decrypt(feed.encrypted_url.encode()).decode())
+        fetch_catalog = {"megapap": fetch_megapap_catalog, "pakoworld": fetch_pakoworld_catalog}.get(feed.adapter)
+        if fetch_catalog is None:
+            raise ValueError("Supplier XML format is not yet supported.")
+        rows = fetch_catalog(_cipher().decrypt(feed.encrypted_url.encode()).decode())
         counts = apply_catalog(db, feed, rows)
         feed.status, feed.error, feed.counts = "success", None, counts
         feed.last_synced_at = datetime.now(timezone.utc)

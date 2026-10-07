@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.connectors.supplier_catalog import validate_feed_url
 
@@ -15,14 +15,14 @@ class SupplierCatalogFeedInput(BaseModel):
     @field_validator("adapter")
     @classmethod
     def supported_adapter(cls, value: str) -> str:
-        if value != "megapap":
+        if value not in {"megapap", "pakoworld"}:
             raise ValueError("This supplier XML format is not yet supported.")
         return value
 
-    @field_validator("url")
-    @classmethod
-    def safe_url(cls, value: str | None) -> str | None:
-        return validate_feed_url(value) if value and value.strip() else None
+    @model_validator(mode="after")
+    def safe_url(self):
+        self.url = validate_feed_url(self.url, self.adapter) if self.url and self.url.strip() else None
+        return self
 
     @field_validator("name")
     @classmethod
