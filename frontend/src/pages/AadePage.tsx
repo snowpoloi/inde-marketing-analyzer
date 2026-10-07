@@ -141,6 +141,7 @@ type AadeLedgerRow = {
   cancelled_by_mark: string | null;
   identity_key: string;
   line_items: AadeLineItem[];
+  provider_detail?: { status: string; reason?: string; host?: string } | null;
   opencart_order: OpenCartOrderMatch | null;
 };
 
@@ -702,6 +703,13 @@ export function AadePage() {
               <span>Counterpart: {selectedLedgerRow.counterpart_vat || "-"}</span>
               <span>MARK: {selectedLedgerRow.mark || "-"}</span>
               <span>Total: {currency.format(selectedLedgerRow.gross_value)}</span>
+              {selectedLedgerRow.provider_detail && <span>
+                Product detail: {selectedLedgerRow.provider_detail.status === "verified"
+                  ? `Verified | ${selectedLedgerRow.provider_detail.host}`
+                  : selectedLedgerRow.provider_detail.status === "no_link" ? "No provider link"
+                  : selectedLedgerRow.provider_detail.status === "unavailable" ? selectedLedgerRow.provider_detail.reason
+                  : "Pending automatic retrieval"}
+              </span>}
             </div>
 
             <div className="detail-grid">

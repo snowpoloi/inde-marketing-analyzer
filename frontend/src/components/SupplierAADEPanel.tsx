@@ -79,6 +79,11 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
       {!preview && !review.loading && <button className="icon-button" aria-label={`Retry invoice ${row.number}`} title="Retry invoice" onClick={()=>inspect(row)}><RefreshCw size={17}/></button>}
       {preview && <>
         <p>{preview.date} · AFM {preview.issuer_vat} · MARK {preview.mark} · Net {money(preview.net_value)} · VAT {money(preview.vat_amount)} · Total {money(preview.gross_value)}</p>
+        {preview.provider_detail && <p role="status">Product detail: {preview.provider_detail.status === "verified"
+          ? `Verified | ${preview.provider_detail.host}`
+          : preview.provider_detail.status === "no_link" ? "No provider link"
+          : preview.provider_detail.status === "unavailable" ? preview.provider_detail.reason
+          : "Pending automatic retrieval"}</p>}
         {preview.reasons.map(reason=><div className="notice" key={reason}>{reason}</div>)}
         <DataTable rows={preview.lines} empty="No invoice lines." columns={[
           {key:"line", header:"Line", render:line=>line.line_number}, {key:"code", header:"Invoice code", render:line=>line.item_code || "-"},

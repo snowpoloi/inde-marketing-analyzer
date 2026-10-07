@@ -22,6 +22,7 @@ from app.services.parsing import as_decimal, dec_to_float
 from app.services.supplier_service import product_profitability
 from app.services.supplier_identity import normalize_vat, registered_supplier_names
 from app.services.supplier_identity import aade_party_name as _aade_party_name
+from app.connectors.aade_detail import effective_invoice, detail_info
 
 
 PAID_AD_SOURCES = ("meta_ads", "google_ads", "tiktok_ads")
@@ -121,6 +122,8 @@ def _aade_line_type(description: str | None, row: dict[str, Any]) -> str:
 
 
 def _aade_line_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    source = "Provider via AADE" if detail_info(raw)["status"] == "verified" else "AADE"
+    raw = effective_invoice(raw)
     details = (
         _aade_pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "invoice_rows")
         or _aade_pick(raw, "lineItems", "line_items", "lines", "rows")
@@ -162,7 +165,7 @@ def _aade_line_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
         rows.append(
             {
-                "source": "AADE",
+                "source": source,
                 "line_number": _aade_text(_aade_pick(item, "lineNumber", "lineNo", "number")) or str(index),
                 "description": description,
                 "item_code": _aade_text(
@@ -1571,6 +1574,7 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
                 "cancelled_by_mark": document.cancelled_by_mark,
                 "identity_key": document.identity_key,
                 "line_items": _aade_line_items(raw) if record_type == "full_document" else [],
+                "provider_detail": detail_info(raw) if record_type == "full_document" and direction == "expense" else None,
                 "opencart_order": _opencart_match(document, orders_by_id, orders_by_date_total),
             }
         )

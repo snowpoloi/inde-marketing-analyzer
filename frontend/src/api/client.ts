@@ -452,6 +452,7 @@ export type SupplierRegistryRow = { id: string | null; code: string | null; name
 export type SupplierAADEInvoice = { id: string; date: string; mark: string | null; number: string; invoice_type: string;
   net_value: number; gross_value: number; cancelled: boolean; record_type: string };
 export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: string; issuer_vat: string; date: string;
+  provider_detail?: {status: string; reason?: string; host?: string};
   mark: string; number: string; net_value: number; vat_amount: number; gross_value: number; reasons: string[];
   fingerprint: string; imported: boolean; can_import: boolean; lines: Array<{ line_number: string; item_code: string;
     description: string; line_type: string; quantity: number | null; unit: string; net_value: number | null;

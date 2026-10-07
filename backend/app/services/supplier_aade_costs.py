@@ -14,6 +14,7 @@ from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Suppli
 from app.schemas.suppliers import SupplierDocumentInput, SupplierDocumentLineInput, SupplierImportRequest, SupplierInput
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
+from app.connectors.aade_detail import effective_invoice, detail_info
 
 
 def pick(row, *keys):
@@ -34,6 +35,7 @@ def numeric(value):
 
 
 def line_rows(raw):
+    raw = effective_invoice(raw)
     rows = pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "invoice_rows", "lineItems", "line_items", "lines")
     if isinstance(rows, dict):
         rows = pick(rows, "invoiceDetails", "invoiceDetail", "invoiceRow", "row", "line") or rows
@@ -212,6 +214,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False):
             "issuer_vat": document.issuer_vat, "date": document.issue_date, "mark": document.mark,
             "number": f"{document.series or ''}/{document.aa or ''}", "net_value": document.net_value,
             "vat_amount": document.vat_amount, "gross_value": document.gross_value, "lines": lines,
+            "provider_detail": detail_info(document.raw or {}),
             "reasons": reasons, "fingerprint": fingerprint, "imported": bool(existing),
             "can_import": not reasons and all(not line["reasons"] for line in lines)}
 

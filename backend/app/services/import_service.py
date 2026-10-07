@@ -633,10 +633,20 @@ def import_aade_payload(db: Session, payload: dict[str, Any], fallback_date: dat
         }
         existing = db.scalar(select(AADEDocument).where(AADEDocument.identity_key == identity_key))
         if existing:
+            from app.connectors.aade_detail import META_KEY, source_fingerprint
+            metadata = (existing.raw or {}).get(META_KEY)
+            # Only local, previously verified metadata may survive a resync.
+            # Never accept provider-detail metadata supplied by a remote payload.
+            values["raw"] = {key: value for key, value in values["raw"].items() if key != META_KEY}
+            unchanged = all(getattr(existing, key) == value for key, value in values.items() if key != "raw")
+            if metadata and unchanged and source_fingerprint(existing.raw) == source_fingerprint(values["raw"]):
+                values["raw"] = {**values["raw"], META_KEY: metadata}
             for key, value in values.items():
                 setattr(existing, key, value)
             db.add(existing)
         else:
+            from app.connectors.aade_detail import META_KEY
+            values["raw"] = {key: value for key, value in values["raw"].items() if key != META_KEY}
             db.add(AADEDocument(**values))
         count += document_count
 
