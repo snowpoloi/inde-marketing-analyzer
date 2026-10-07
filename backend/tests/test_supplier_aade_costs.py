@@ -140,6 +140,15 @@ def test_product_shipping_word_is_not_freight():
     assert line["line_type"] == "product" and line["unit_cost_net"] == Decimal("33.1150")
 
 
+def test_el_prefixed_fiscal_vat_keeps_catalog_cost(db):
+    user,supplier,own,_,fiscal = seed(db)
+    fiscal.issuer_vat = "EL" + supplier.vat_number; db.flush()
+    preview = invoice_preview(db,fiscal.id,supplier.id)
+    assert preview["can_import"]
+    accept_invoice(db,fiscal.id,payload(preview),user)
+    assert latest_aade_costs(db,{own.id},{"MEGAPAP"})[("MEGAPAP",own.id)][0].net_unit_cost == 70
+
+
 def test_legacy_invoice_number_blocks_second_import(db):
     _,supplier,_,_,fiscal = seed(db)
     from app.schemas.suppliers import SupplierImportRequest

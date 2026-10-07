@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierDocument,
                         SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
@@ -72,8 +72,9 @@ def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
         SupplierDocument.document_type == "invoice", SupplierDocument.currency == "EUR",
         SupplierDocument.document_date == SupplierProductCost.purchase_date,
         AADEDocument.issue_date == SupplierProductCost.purchase_date, AADEDocument.currency == "EUR",
-        AADEDocument.issuer_vat == Supplier.vat_number, AADEDocument.document_direction == "expense",
-        AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3", "2.1", "2.2", "2.3"]),
+        or_(AADEDocument.issuer_vat == Supplier.vat_number,
+            AADEDocument.issuer_vat == func.concat("EL", Supplier.vat_number)), AADEDocument.document_direction == "expense",
+        AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3"]),
         AADEDocument.is_cancelled.is_(False), AADEDocument.cancelled_by_mark.is_(None),
     ).subquery()
     results = db.execute(select(SupplierProductCost, Supplier.code, AADEDocument.mark)

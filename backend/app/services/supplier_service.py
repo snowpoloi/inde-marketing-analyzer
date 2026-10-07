@@ -887,6 +887,7 @@ def supplier_shipping_simulation(db: Session, supplier_id: UUID, date_from: date
         SupplierDocument.supplier_id == supplier_id, SupplierDocument.document_type == "invoice",
         SupplierDocument.document_date.between(date_from, date_to)
     )).all()
+    documents = validated_documents(db, documents)
     order_values: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     order_keys = {}
     for document in documents:
