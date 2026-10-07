@@ -272,10 +272,14 @@ def test_batch_is_bounded_and_skips_non_product_records(db):
         raw={"record_type":"book_info"}))
     db.commit()
     first=import_cost_batch(db,batch_payload(supplier),user)
-    assert len(first["rows"]) == 5 and first["total"] == 7 and first["next_offset"] == 5
-    second=import_cost_batch(db,batch_payload(supplier,offset=5),user)
-    assert len(second["rows"]) == 2 and second["next_offset"] is None
-    assert all(row["status"] in {"imported","review"} for row in first["rows"] + second["rows"])
+    assert len(first["rows"]) == 1 and first["total"] == 7 and first["next_offset"] == 1
+    results = first["rows"]
+    for offset in range(1,7):
+        page=import_cost_batch(db,batch_payload(supplier,offset=offset),user)
+        assert len(page["rows"]) == 1
+        assert page["next_offset"] == (offset+1 if offset<6 else None)
+        results += page["rows"]
+    assert all(row["status"] in {"imported","review"} for row in results)
     assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 1
 
 

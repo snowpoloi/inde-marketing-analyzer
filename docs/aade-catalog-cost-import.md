@@ -1,7 +1,8 @@
 # AADE catalog purchase costs
 
 Supplier catalog exposes AADE costs with period and supplier selection. Imports
-are admin-only, user initiated and bounded to five full invoices per request.
+are admin-only, user initiated and bounded to one full invoice per request,
+so several costly invoice imports cannot exhaust a single proxy timeout.
 The browser processes requests sequentially and can stop after the in-flight
 batch. Closing the dialog stops subsequent requests, not a committed import.
 

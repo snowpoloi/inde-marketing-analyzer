@@ -325,7 +325,7 @@ def import_cost_batch(db, payload, user):
     total = db.scalar(select(func.count()).select_from(AADEDocument).where(*filters))
     ids = db.scalars(select(AADEDocument.id).where(*filters)
                      .order_by(AADEDocument.issue_date.desc(), AADEDocument.id)
-                     .offset(payload.offset).limit(5)).all()
+                     .offset(payload.offset).limit(1)).all()
     rows = []
     for document_id in ids:
         try:
