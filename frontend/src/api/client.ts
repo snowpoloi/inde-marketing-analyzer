@@ -24,6 +24,14 @@ export type SupplierCatalogResult = {
   summary: { products: number; matched: number; unmatched: number };
 };
 
+export type SupplierCatalogPeriod = {
+  rows: { feed_id: string; supplier: string; vat_number: string | null; invoices: number; credit_notes: number;
+    purchases_net: number; credits_net: number; net_purchases: number; costed_products_net: number;
+    costed_units: number; priced_units: number; average_profit_per_unit: number | null;
+    average_margin_percent: number | null; catalog_profit_net: number | null; excluded_conflicts: number }[];
+  date_from: string; date_to: string; margin_basis: string;
+};
+
 export type IntegrationSetting = {
   provider: string;
   display_name: string;
@@ -572,6 +580,7 @@ export const api = {
     request<SupplierCatalogFeed>(`/supplier-catalog/feeds${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) }),
   syncSupplierCatalog: (id: string) => request<SupplierCatalogFeed>(`/supplier-catalog/feeds/${id}/sync`, { method: "POST" }),
   supplierCatalogProducts: (filters: Record<string, string>) => request<SupplierCatalogResult>(`/supplier-catalog/products?${new URLSearchParams(filters)}`),
+  supplierCatalogPeriod: (filters: Record<string, string>) => request<SupplierCatalogPeriod>(`/supplier-catalog/period-summary?${new URLSearchParams(filters)}`),
   supplierCatalogDetails: (id: string) => request<{ id: string; name: string; is_current: boolean;
     packages: Array<{label: string; width_cm: string | null; length_cm: string | null; height_cm: string | null; volume_m3: number | null; volumetric_kg: number | null}>;
     volumetric_divisor: number; volume_total_m3: number | null; volumetric_total_kg: number | null; details: {

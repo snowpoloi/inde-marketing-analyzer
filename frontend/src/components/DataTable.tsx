@@ -24,7 +24,8 @@ export function DataTable<T>({ rows, columns, empty, rowKey, renderExpandedRow }
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className={column.align ? `align-${column.align}` : undefined}>
+              <th key={column.key} className={column.align ? `align-${column.align}` : undefined}
+                aria-sort={column.sortable ? column.sortDirection === "asc" ? "ascending" : column.sortDirection === "desc" ? "descending" : "none" : undefined}>
                 {column.sortable ? (
                   <button
                     type="button"

@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.models import SupplierCatalogFeed, SupplierCatalogProduct, User
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatalogPricingInput
 from app.services.supplier_catalog_settings import public_pricing_settings, save_pricing_settings, package_metrics
 from app.services.supplier_catalog_service import catalog_products, feed_response, queue_feed, save_feed
+from app.services.supplier_catalog_summary import period_summary
 
 router = APIRouter(prefix="/supplier-catalog", tags=["supplier-catalog"])
 
@@ -56,10 +58,25 @@ def sync(feed_id: UUID, _: User = Depends(require_admin), db: Session = Depends(
 def products(feed_id: UUID | None = None, q: str = Query(default="", max_length=200),
              match: str = Query(default="all", pattern="^(all|matched|unmatched)$"),
              availability: str = Query(default="all", pattern="^(all|in_stock|out_of_stock)$"),
+             has_margin: bool = False,
+             sort_by: str = Query(default="name", pattern="^(name|supplier_code|supplier_sku|opencart_sku|quantity|inde_price|aade_cost_net|gross_profit_per_unit|gross_margin_percent|wholesale_price_net|retail_price_gross)$"),
+             sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
              category: str = Query(default="", max_length=1000), offset: int = Query(default=0, ge=0),
              limit: int = Query(default=50, ge=1, le=100), _: User = Depends(require_admin), db: Session = Depends(get_db)):
     return catalog_products(db, feed_id=feed_id, q=q.strip(), match=match, availability=availability,
-                            category=category, offset=offset, limit=limit)
+                            category=category, offset=offset, limit=limit, has_margin=has_margin,
+                            sort_by=sort_by, sort_direction=sort_direction)
+
+
+@router.get("/period-summary")
+def summary(date_from: date, date_to: date, feed_id: UUID | None = None,
+            _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if date_from > date_to:
+        raise HTTPException(status_code=422, detail="From date must be before or equal to To date.")
+    try:
+        return period_summary(db, date_from, date_to, feed_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/products/{product_id}")

@@ -78,6 +78,31 @@ rates take precedence. Without that setting, the original explicit `price_net` /
 `prices_include_vat` metadata rules still apply. Missing cost, unknown VAT basis,
 foreign currency and zero sale price never produce a fabricated margin percentage.
 
+## Catalog Analysis
+
+The margin filter includes every computable margin, including zero and negative
+values. Column headers sort across the entire filtered catalog before pagination,
+not just the visible page. Missing values remain last in both directions. Financial
+sorts project identifiers and pricing metadata; full XML details are not loaded
+for the entire catalog.
+
+The From/To period controls a separate per-feed supplier summary, independent of
+product search, stock and margin filters. Purchases are full EUR goods invoices
+(1.1/1.2/1.3) addressed to the configured INDE AFM, including fiscal freight/other
+charges. Credit notes (5.1/5.2) are shown separately and deducted from net purchases.
+Book/VAT summaries, cancelled records and duplicate MARKs are excluded. Conflicting
+copies are counted for review, never selected arbitrarily.
+
+Costed products use validated AADE product lines only. Average gross profit per
+unit is the total potential gross profit divided by priced purchased units.
+Weighted margin is total potential gross profit divided by their current net INDE
+catalog selling value, not an unweighted average of product percentages. Coverage
+shows priced units versus all validated costed units. Unknown prices/tax basis do
+not become zero margins. Credits reduce purchase totals but do not fabricate product
+return quantities. These estimates use gross invoice purchase quantities and
+current selling prices, excluding freight, ads and overhead; they are not realized
+order profit or inventory valuation.
+
 ## Reviewed AADE Costs
 
 Settings > Supplier identities stores a supplier code, official company name and

@@ -2,6 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import func, or_, select
 
@@ -51,21 +52,15 @@ def catalog_sale_price(product: ProductCatalog | None, *, confirmed_vat_rate=Non
             "inde_price_basis": basis}
 
 
-def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
-    if not product_ids:
-        return {}
+def aade_cost_query(supplier_codes):
     # Only costs explicitly sourced from AADE lines qualify, not Gmail/imported
     # invoices that happen to reconcile to the same AADE document total.
-    eligible = select(
-        SupplierProductCost.id.label("cost_id"),
-        func.dense_rank().over(partition_by=(SupplierProductCost.supplier_id, SupplierProductCost.product_catalog_id),
-                               order_by=SupplierProductCost.purchase_date.desc()).label("recency"),
-    ).join(Supplier, Supplier.id == SupplierProductCost.supplier_id).join(
+    return select(SupplierProductCost, Supplier.code, AADEDocument.mark).join(Supplier, Supplier.id == SupplierProductCost.supplier_id).join(
         SupplierProductMap, SupplierProductMap.id == SupplierProductCost.supplier_product_map_id).join(
         SupplierDocumentLine, SupplierDocumentLine.id == SupplierProductCost.source_line_id).join(
         SupplierDocument, SupplierDocument.id == SupplierDocumentLine.document_id).join(
         AADEDocument, AADEDocument.id == SupplierDocument.aade_document_id).where(
-        SupplierProductCost.product_catalog_id.in_(product_ids), Supplier.code.in_(supplier_codes),
+        Supplier.code.in_(supplier_codes),
         SupplierProductCost.source_type == "aade_invoice", SupplierProductCost.status == "active",
         SupplierProductCost.currency == "EUR", SupplierProductCost.net_unit_cost >= 0,
         SupplierProductCost.quantity > 0, SupplierProductCost.source_confidence >= Decimal("0.99"),
@@ -82,7 +77,30 @@ def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
             AADEDocument.issuer_vat == func.concat("EL", Supplier.vat_number)), AADEDocument.document_direction == "expense",
         AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3"]),
         AADEDocument.is_cancelled.is_(False), AADEDocument.cancelled_by_mark.is_(None),
-    ).subquery()
+    )
+
+
+def catalog_prices(db, product_ids) -> dict:
+    if not product_ids:
+        return {}
+    # Project only pricing metadata, not large product descriptions/images.
+    keys = {"price", "price_net", "price_gross", "prices_include_vat", "vat_rate", "currency", "raw_fields"}
+    fields = func.jsonb_each(ProductCatalog.raw).table_valued("key", "value").alias("price_fields")
+    metadata = select(func.jsonb_object_agg(fields.c.key, fields.c.value)).select_from(fields)\
+        .where(fields.c.key.in_(keys)).correlate(ProductCatalog).scalar_subquery()
+    return {row.id: SimpleNamespace(id=row.id, price=row.price, raw=row.metadata or {})
+            for row in db.execute(select(ProductCatalog.id, ProductCatalog.price, metadata.label("metadata"))
+                                  .where(ProductCatalog.id.in_(product_ids)))}
+
+
+def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
+    if not product_ids:
+        return {}
+    eligible = aade_cost_query(supplier_codes).where(SupplierProductCost.product_catalog_id.in_(product_ids))\
+        .with_only_columns(SupplierProductCost.id.label("cost_id"),
+            func.dense_rank().over(partition_by=(SupplierProductCost.supplier_id, SupplierProductCost.product_catalog_id),
+                                  order_by=SupplierProductCost.purchase_date.desc()).label("recency"),
+            maintain_column_froms=True).subquery()
     results = db.execute(select(SupplierProductCost, Supplier.code, AADEDocument.mark)
         .join(eligible, eligible.c.cost_id == SupplierProductCost.id)
         .join(Supplier, Supplier.id == SupplierProductCost.supplier_id)

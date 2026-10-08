@@ -658,6 +658,10 @@ tr:last-child td {
 .supplier-catalog-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .supplier-catalog-filters label { min-width: 0; display: grid; gap: 6px; }
 .supplier-catalog-filters select, .supplier-catalog-filters input { width: 100%; min-width: 0; }
+.supplier-catalog-filters label.supplier-margin-filter { display: flex; align-items: center; gap: 8px; align-self: end; min-height: 38px; }
+.supplier-catalog-filters .supplier-margin-filter input { width: 16px; min-width: 16px; height: 16px; }
+.supplier-catalog-period { min-width: 0; }
+.supplier-catalog-period h2 { font-size: 16px; margin: 0 0 10px; }
 .supplier-catalog-summary { display: flex; gap: 24px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid #dce3df; }
 .supplier-package-table { overflow-x: auto; margin: 12px 0; }
 .supplier-package-table table { width: 100%; border-collapse: collapse; }

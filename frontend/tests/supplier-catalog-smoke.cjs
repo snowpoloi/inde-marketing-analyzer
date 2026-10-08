@@ -12,7 +12,7 @@ async function main() {
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
-      let synced = false, saved = false;
+      let synced = false, saved = false, catalogQuery = null, periodQuery = null;
       let pakoworldFeed = null, pakoworldSynced = false;
       const feed = { id: "f1", code: "MEGAPAP", name: "MEGAPAP", adapter: "megapap", configured: true,
         is_enabled: true, refresh_hours: 24, status: "success", error: null,
@@ -40,8 +40,14 @@ async function main() {
           synced = true; pakoworldSynced ||= url.pathname.includes("/f2/"); response = { ...(pakoworldSynced ? pakoworldFeed : feed), status: "queued" };
         }
         else if (url.pathname === "/api/supplier-catalog/products") {
+          catalogQuery = url.searchParams;
           const offset = Number(url.searchParams.get("offset") || 0), searched = Boolean(url.searchParams.get("q"));
           response = { rows: [product], total: searched ? 1 : 56, offset, limit: 50, categories: ["Garden chairs"], summary: { products: 56, matched: 40, unmatched: 16 } };
+        } else if (url.pathname === "/api/supplier-catalog/period-summary") {
+          periodQuery = url.searchParams;
+          response = {rows:[{feed_id:"f1",supplier:"MEGAPAP",vat_number:"123456789",invoices:1,credit_notes:0,
+            purchases_net:140,credits_net:0,net_purchases:140,costed_products_net:140,priced_units:2,costed_units:2,
+            average_profit_per_unit:20,average_margin_percent:25,excluded_conflicts:0}]};
         } else if (url.pathname === "/api/supplier-catalog/pricing-settings") response = { sale_vat_rate:24, volumetric_divisor:5000, automatic_costs:true, piece_supplier_ids:[] };
         else if (url.pathname === "/api/supplier-catalog/products/p1") response = { id: "p1", name: product.name, is_current: true,
           packages:[{label:"BOX A",width_cm:"40",length_cm:"100",height_cm:"10",volume_m3:0.04,volumetric_kg:8},
@@ -57,8 +63,24 @@ async function main() {
       await page.goto("http://127.0.0.1:5187/#supplier-catalog");
       await page.getByRole("heading", { name: "Supplier catalog", exact: true }).waitFor();
       await page.getByText(product.name, { exact: true }).waitFor();
-      await page.getByRole("columnheader", { name: "INDE price (VAT incl.)", exact: true }).waitFor();
-      await page.getByRole("columnheader", { name: "AADE cost / unit (net)", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Sort by INDE price (VAT incl.)", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Sort by AADE cost / unit (net)", exact: true }).waitFor();
+      await page.getByRole("heading", {name:"Supplier purchases & margins",exact:true}).waitFor();
+      await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
+      await page.getByLabel("Only with gross margin").check();
+      await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
+      await page.getByRole("columnheader").filter({hasText:"Gross margin %"}).waitFor();
+      assert.equal(catalogQuery.get("has_margin"), "true");
+      assert.equal(catalogQuery.get("sort_by"), "gross_margin_percent");
+      assert.equal(catalogQuery.get("sort_direction"), "asc");
+      await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
+      await page.getByRole("columnheader").filter({hasText:"Gross margin %"}).waitFor();
+      assert.equal(catalogQuery.get("sort_direction"), "desc");
+      await page.getByLabel("Period from").fill("2026-09-01");
+      await page.getByLabel("Period to").fill("2026-09-30");
+      await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
+      assert.equal(periodQuery.get("date_from"), "2026-09-01");
+      assert.equal(periodQuery.get("date_to"), "2026-09-30");
       assert.equal(await page.getByRole("cell", { name: "30%", exact: true }).count(), 1);
       assert.equal(await page.getByRole("cell", { name: /70,00/ }).count(), 1);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Page overflows");

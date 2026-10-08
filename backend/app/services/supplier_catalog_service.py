@@ -9,14 +9,14 @@ from uuid import UUID, uuid4
 from cryptography.fernet import Fernet
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.connectors.supplier_catalog import fetch_megapap_catalog, fetch_pakoworld_catalog, validate_feed_url
 from app.core.config import settings
 from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services.supplier_costing import normalize_identifier
-from app.services.supplier_catalog_pricing import latest_aade_costs, price_comparison
+from app.services.supplier_catalog_pricing import catalog_prices, latest_aade_costs, price_comparison
 from app.services.supplier_catalog_settings import pricing_settings
 
 
@@ -172,7 +172,8 @@ def process_supplier_catalog(db: Session) -> dict | None:
 
 
 def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, availability: str,
-                     category: str, offset: int, limit: int) -> dict:
+                     category: str, offset: int, limit: int, has_margin: bool = False,
+                     sort_by: str = "name", sort_direction: str = "asc") -> dict:
     conditions = [SupplierCatalogProduct.is_current.is_(True)]
     if feed_id:
         conditions.append(SupplierCatalogProduct.feed_id == feed_id)
@@ -193,10 +194,49 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
     base = select(SupplierCatalogProduct, SupplierCatalogFeed.name, SupplierCatalogFeed.code, ProductCatalog).join(
         SupplierCatalogFeed, SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(
         ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(*conditions)
-    total = db.scalar(select(func.count()).select_from(base.subquery()))
-    results = db.execute(base.order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id).offset(offset).limit(limit)).all()
-    costs = latest_aade_costs(db, {own.id for _, _, _, own in results if own}, {code for _, _, code, _ in results})
     pricing = pricing_settings(db)
+    financial_fields = {"inde_price", "aade_cost_net", "gross_profit_per_unit", "gross_margin_percent"}
+    sort_fields = {"name": SupplierCatalogProduct.name, "supplier_code": SupplierCatalogProduct.supplier_code,
+                   "supplier_sku": func.coalesce(SupplierCatalogProduct.supplier_sku, SupplierCatalogProduct.ean),
+                   "opencart_sku": ProductCatalog.sku, "quantity": SupplierCatalogProduct.quantity,
+                   "wholesale_price_net": SupplierCatalogProduct.wholesale_price_net,
+                   "retail_price_gross": SupplierCatalogProduct.retail_price_gross}
+    if sort_by not in financial_fields | sort_fields.keys() or sort_direction not in {"asc", "desc"}:
+        raise ValueError("Invalid catalog sort.")
+    costs = None
+    ordered_ids = None
+    if has_margin or sort_by in financial_fields:
+        candidates = db.execute(base.with_only_columns(SupplierCatalogProduct.id, SupplierCatalogFeed.code,
+            ProductCatalog.id.label("own_id"), sort_fields.get(sort_by, SupplierCatalogProduct.name).label("sort_value"),
+            maintain_column_froms=True).order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id)).all()
+        costs = latest_aade_costs(db, {row.own_id for row in candidates if row.own_id}, {row.code for row in candidates})
+        price_ids = {row.own_id for row in candidates if row.own_id and (sort_by == "inde_price" or costs.get((row.code, row.own_id)))}
+        prices = catalog_prices(db, price_ids)
+        comparisons = {row.id: price_comparison(prices.get(row.own_id), costs.get((row.code, row.own_id)),
+                       confirmed_vat_rate=pricing.get("sale_vat_rate")) for row in candidates}
+        candidates = [row for row in candidates if not has_margin or comparisons[row.id]["gross_margin_percent"] is not None]
+        value = lambda row: comparisons[row.id][sort_by] if sort_by in financial_fields else row.sort_value
+        present = [row for row in candidates if value(row) is not None]
+        missing = [row for row in candidates if value(row) is None]
+        present.sort(key=value, reverse=sort_direction == "desc")
+        total = len(candidates)
+        ordered_ids = [row.id for row in (present + missing)[offset:offset + limit]]
+        page = base.where(SupplierCatalogProduct.id.in_(ordered_ids))
+    else:
+        field = sort_fields[sort_by]
+        order = field.desc() if sort_direction == "desc" else field.asc()
+        total = db.scalar(select(func.count()).select_from(base.with_only_columns(SupplierCatalogProduct.id).subquery()))
+        page = base.order_by(order.nullslast(), SupplierCatalogFeed.name, SupplierCatalogProduct.id).offset(offset).limit(limit)
+    results = db.execute(page.options(load_only(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.price, ProductCatalog.raw),
+        load_only(SupplierCatalogProduct.id, SupplierCatalogProduct.supplier_code, SupplierCatalogProduct.supplier_sku,
+                  SupplierCatalogProduct.ean, SupplierCatalogProduct.name, SupplierCatalogProduct.category,
+                  SupplierCatalogProduct.image_url, SupplierCatalogProduct.quantity, SupplierCatalogProduct.wholesale_price_net,
+                  SupplierCatalogProduct.retail_price_gross, SupplierCatalogProduct.match_method, SupplierCatalogProduct.last_seen_at))).all()
+    if ordered_ids is not None:
+        positions = {value: index for index, value in enumerate(ordered_ids)}
+        results.sort(key=lambda row: positions[row[0].id])
+    if costs is None:
+        costs = latest_aade_costs(db, {own.id for _, _, _, own in results if own}, {code for _, _, code, _ in results})
     summary = db.execute(select(func.count(), func.sum(case((ProductCatalog.id.is_not(None), 1), else_=0)))
                          .select_from(SupplierCatalogProduct).outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
                          .where(SupplierCatalogProduct.is_current.is_(True), *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))).one()
