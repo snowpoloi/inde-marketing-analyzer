@@ -2,6 +2,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from app.models import AADEDocument, ProductCatalog, SupplierCatalogProduct
 from app.services.supplier_aade_costs import accept_invoice, invoice_preview
 from app.services.supplier_catalog_service import catalog_products
@@ -145,3 +147,53 @@ def test_catalog_analysis_api_validation_and_admin_access(db):
             assert http.get("/api/supplier-catalog/products?" + query).status_code == 422
     with client(db, admin=False) as http:
         assert http.get("/api/supplier-catalog/period-summary?date_from=2026-09-01&date_to=2026-09-30").status_code == 403
+
+
+@pytest.mark.parametrize("adapter,field", [("megapap", "minimum"), ("pakoworld", "sell_step")])
+def test_set_prices_costs_global_sort_and_period_profit(db, adapter, field):
+    from app.models import SupplierCatalogFeed, SupplierProductCost
+    from sqlalchemy import select
+    user, supplier, _, first, _ = seed(db)
+    db.get(SupplierCatalogFeed, first.feed_id).adapter = adapter
+    product, item, _ = purchase(db, user, supplier, first.feed_id, "SET4", 248, 30, 8, "Set of four")
+    item.details = {field: "4", "packages_per_item": "6"}
+    item.wholesale_price_net = 30; item.retail_price_gross = 62
+    db.commit(); db.expire_all()
+    row = catalog(db, has_margin=True)["rows"][0]
+    assert row["sale_quantity"] == 4
+    assert row["inde_price"] == 248 and row["inde_price_net"] == 200
+    assert row["aade_cost_net"] == 30 and row["aade_cost_sale_net"] == 120
+    assert row["gross_profit_per_sale"] == 80 and row["gross_profit_per_unit"] == 20
+    assert row["gross_margin_percent"] == 40
+    assert row["wholesale_price_net"] == 120 and row["retail_price_gross"] == 248
+    assert row["wholesale_price_per_piece_net"] == 30 and row["retail_price_per_piece_gross"] == 62
+    assert catalog(db, sort_by="sale_quantity", sort_direction="desc")["rows"][0]["id"] == str(item.id)
+    assert catalog(db, sort_by="wholesale_price_net", sort_direction="desc")["rows"][0]["wholesale_price_net"] == 120
+    assert catalog(db, sort_by="aade_cost_sale_net")["rows"][0]["aade_cost_sale_net"] == 120
+    period = period_summary(db, date(2026, 9, 1), date(2026, 9, 30))["rows"][0]
+    assert period["costed_products_net"] == 240 and period["priced_units"] == 8
+    assert period["catalog_sales_net"] == 400 and period["catalog_profit_net"] == 160
+    assert period["average_profit_per_unit"] == 20 and period["average_margin_percent"] == 40
+    assert db.scalar(select(SupplierProductCost.net_unit_cost)) == 30
+    db.refresh(product); assert product.price == 248
+    item.details = {field: "0"}; db.commit()
+    assert catalog(db, has_margin=True)["total"] == 0
+    assert period_summary(db, date(2026, 9, 1), date(2026, 9, 30))["rows"][0]["priced_units"] == 0
+
+
+@pytest.mark.parametrize("adapter,field", [("megapap", "minimum"), ("pakoworld", "sell_step")])
+@pytest.mark.parametrize("quantity", ["1", "2", "4", "6"])
+def test_sale_quantity_and_invoice_piece_cost_are_separate(adapter, field, quantity):
+    from types import SimpleNamespace
+    from app.services.supplier_catalog_pricing import sale_quantity, price_comparison
+    step = sale_quantity(adapter, quantity)
+    cost = SimpleNamespace(net_unit_cost=Decimal("6.90"), purchase_date=date(2026, 9, 1))
+    own = SimpleNamespace(price=Decimal("49.60"), raw={})
+    row = price_comparison(own, (cost,"MARK"), sale_quantity=step, confirmed_vat_rate=24)
+    assert row["inde_price"] == Decimal("49.60")
+    assert row["aade_cost_sale_net"] == Decimal("6.90") * Decimal(quantity)
+    assert row["gross_profit_per_sale"] == 40 - Decimal("6.90") * Decimal(quantity)
+    assert sale_quantity(adapter, "0") is None
+    assert sale_quantity(adapter, "1.5") is None
+    assert sale_quantity(adapter, "NaN") is None
+    assert sale_quantity(adapter, None) == 1

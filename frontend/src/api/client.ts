@@ -13,8 +13,10 @@ export type SupplierCatalogProduct = {
   id: string; supplier: string; supplier_code: string; supplier_sku: string | null; ean: string | null;
   name: string; category: string | null; image_url: string | null; quantity: number | null;
   wholesale_price_net: number | null; retail_price_gross: number | null;
+  sale_quantity: number | null; wholesale_price_per_piece_net: number | null; retail_price_per_piece_gross: number | null;
   inde_price: number | null; inde_price_net: number | null; inde_price_basis: string;
   aade_cost_net: number | null; aade_cost_date: string | null; aade_mark: string | null;
+  aade_cost_sale_net: number | null; gross_profit_per_sale: number | null;
   gross_profit_per_unit: number | null; gross_margin_percent: number | null; margin_status: string;
   opencart_sku: string | null; match_method: string; last_seen_at: string;
 };
@@ -590,7 +592,7 @@ export const api = {
     filters: Array<{ group: string; value: string }>;
     volume?: string | null; weight?: string | null;
     net_price?: string | null; stock_price?: string | null;
-    sell_step?: string | null; date_expected?: string | null;
+    sell_step?: string | null; minimum?: string | null; date_expected?: string | null;
     attributes?: Array<{ id: string; value: string }>;
   } }>(`/supplier-catalog/products/${id}`),
   opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),

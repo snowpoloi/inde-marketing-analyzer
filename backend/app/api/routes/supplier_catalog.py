@@ -59,7 +59,7 @@ def products(feed_id: UUID | None = None, q: str = Query(default="", max_length=
              match: str = Query(default="all", pattern="^(all|matched|unmatched)$"),
              availability: str = Query(default="all", pattern="^(all|in_stock|out_of_stock)$"),
              has_margin: bool = False,
-             sort_by: str = Query(default="name", pattern="^(name|supplier_code|supplier_sku|opencart_sku|quantity|inde_price|aade_cost_net|gross_profit_per_unit|gross_margin_percent|wholesale_price_net|retail_price_gross)$"),
+             sort_by: str = Query(default="name", pattern="^(name|supplier_code|supplier_sku|opencart_sku|quantity|sale_quantity|inde_price|aade_cost_net|aade_cost_sale_net|gross_profit_per_unit|gross_profit_per_sale|gross_margin_percent|wholesale_price_net|retail_price_gross)$"),
              sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
              category: str = Query(default="", max_length=1000), offset: int = Query(default=0, ge=0),
              limit: int = Query(default=50, ge=1, le=100), _: User = Depends(require_admin), db: Session = Depends(get_db)):

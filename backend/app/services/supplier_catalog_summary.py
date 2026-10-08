@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 
 from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierProductCost
 from app.services.supplier_aade_costs import own_vat, validated_cost_rows
-from app.services.supplier_catalog_pricing import aade_cost_query, catalog_prices, catalog_sale_price
+from app.services.supplier_catalog_pricing import aade_cost_query, catalog_prices, catalog_sale_price, catalog_sale_quantities
 from app.services.supplier_catalog_settings import pricing_settings
 from app.services.supplier_costing import money
 from app.services.supplier_identity import normalize_vat
@@ -64,6 +64,7 @@ def period_summary(db, start, end, feed_id=None):
         if len({(row.product_catalog_id, row.net_unit_cost, row.quantity, row.net_line_total) for row in copies}) == 1:
             costs.append((code, copies[0]))
     prices = catalog_prices(db, {cost.product_catalog_id for _, cost in costs})
+    quantities = catalog_sale_quantities(db, set(prices), codes)
     rate = pricing_settings(db).get("sale_vat_rate")
     estimates = defaultdict(lambda: {"costed_units": Decimal(0), "priced_units": Decimal(0),
         "costed_products_net": Decimal(0), "priced_cost_net": Decimal(0), "catalog_sales_net": Decimal(0)})
@@ -72,10 +73,11 @@ def period_summary(db, start, end, feed_id=None):
         value["costed_units"] += cost.quantity
         value["costed_products_net"] += cost.net_line_total
         sale = catalog_sale_price(prices.get(cost.product_catalog_id), confirmed_vat_rate=rate)["inde_price_net"]
-        if sale is not None and sale > 0:
+        step = quantities.get((code, cost.product_catalog_id))
+        if sale is not None and sale > 0 and step is not None:
             value["priced_units"] += cost.quantity
             value["priced_cost_net"] += cost.net_line_total
-            value["catalog_sales_net"] += sale * cost.quantity
+            value["catalog_sales_net"] += sale / step * cost.quantity
     rows = []
     for feed, supplier in feeds:
         actual = totals[normalize_vat(supplier.vat_number)] if supplier else totals[""]

@@ -20,7 +20,8 @@ async function main() {
       const product = { id: "p1", supplier: "MEGAPAP", supplier_code: "0268292", supplier_sku: "CH-N5080-GR", ean: "5203266100377",
         name: "Garden chair 56x60x86.5 cm", category: "Garden chairs", image_url: null, quantity: 168,
         wholesale_price_net: 20.97, retail_price_gross: 26, inde_price: 124, inde_price_net: 100, inde_price_basis: "gross",
-        aade_cost_net: 70, aade_cost_date: "2026-01-02", aade_mark: "MARK-1", gross_profit_per_unit: 30, gross_margin_percent: 30,
+        sale_quantity: 1, wholesale_price_per_piece_net:20.97, retail_price_per_piece_gross:26,
+        aade_cost_net: 70, aade_cost_sale_net:70, aade_cost_date: "2026-01-02", aade_mark: "MARK-1", gross_profit_per_unit: 30, gross_profit_per_sale:30, gross_margin_percent: 30,
         margin_status: "available", opencart_sku: "CH-N5080-GR", match_method: "exact_identifiers", last_seen_at: feed.last_synced_at };
       await page.route((url) => url.pathname.startsWith("/api/"), async route => {
         const url = new URL(route.request().url()); let response;
@@ -64,7 +65,7 @@ async function main() {
       await page.getByRole("heading", { name: "Supplier catalog", exact: true }).waitFor();
       await page.getByText(product.name, { exact: true }).waitFor();
       await page.getByRole("button", { name: "Sort by INDE price (VAT incl.)", exact: true }).waitFor();
-      await page.getByRole("button", { name: "Sort by AADE cost / unit (net)", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Sort by AADE cost / sale (net)", exact: true }).waitFor();
       await page.getByRole("heading", {name:"Supplier purchases & margins",exact:true}).waitFor();
       await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
       await page.getByLabel("Only with gross margin").check();

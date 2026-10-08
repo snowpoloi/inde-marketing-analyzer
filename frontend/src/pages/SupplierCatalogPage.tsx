@@ -11,13 +11,14 @@ const money = (value: number | null) => value == null ? "-" : currency.format(Nu
 const timestamp = (value: string | null) => value ? new Date(value).toLocaleString("el-GR") : "-";
 const percent = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const marginReason = (row: SupplierCatalogProduct) => row.margin_status === "available"
-  ? "(Net INDE price - net AADE unit cost) / net INDE price. Excludes freight, ads and other expenses."
+  ? "(Net INDE set price - AADE piece cost multiplied by pieces per sale) / net INDE set price. Excludes freight, ads and other expenses."
+  : row.margin_status === "missing_sale_quantity" ? "Supplier sell_step / minimum is invalid or unknown."
   : row.margin_status === "missing_sale_tax_basis" ? "INDE price VAT basis is not confirmed."
   : row.margin_status === "zero_sale_price" ? "Margin percentage is undefined for a zero sale price."
   : "No confirmed AADE purchase unit cost. XML and Gmail prices are not used.";
 type Details = Awaited<ReturnType<typeof api.supplierCatalogDetails>>;
 const sortKeys: Record<string, string> = { product: "name", code: "supplier_code", sku: "supplier_sku", own: "opencart_sku",
-  stock: "quantity", "inde-price": "inde_price", "aade-cost": "aade_cost_net", "unit-profit": "gross_profit_per_unit",
+  stock: "quantity", pieces: "sale_quantity", "inde-price": "inde_price", "aade-cost": "aade_cost_sale_net", "unit-profit": "gross_profit_per_sale",
   margin: "gross_margin_percent", wholesale: "wholesale_price_net", retail: "retail_price_gross" };
 
 export function SupplierCatalogPage() {
@@ -114,12 +115,13 @@ export function SupplierCatalogPage() {
     { key: "sku", header: "Supplier SKU / EAN", render: row => <div className="supplier-catalog-stack">{row.supplier_sku || "-"}<small>{row.ean || "-"}</small></div> },
     { key: "own", header: "INDE SKU", render: row => <div className="supplier-catalog-stack">{row.opencart_sku || "-"}<small>{row.match_method === "ambiguous" ? "Needs review" : row.opencart_sku ? "Matched" : "Not matched"}</small></div> },
     { key: "stock", header: "Supplier stock", align: "right", render: row => row.quantity ?? "-" },
+    { key: "pieces", header: "Pieces / sale", align: "right", render: row => <span title="Pakketo sell_step / MEGAPAP minimum. Not shipping packages.">{row.sale_quantity ?? "-"}</span> },
     { key: "inde-price", header: "INDE price (VAT incl.)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.inde_price_basis === "unknown" ? "Selling VAT rate not confirmed." : `INDE feed price (${row.inde_price_basis})`}>{money(row.inde_price)}{row.inde_price_net != null && <small>{money(row.inde_price_net)} net</small>}</div> },
-    { key: "aade-cost", header: "AADE cost / unit (net)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.aade_mark ? `AADE MARK ${row.aade_mark}` : "No confirmed AADE unit cost"}>{money(row.aade_cost_net)}{row.aade_cost_date && <small>{row.aade_cost_date}</small>}</div> },
-    { key: "unit-profit", header: "Gross profit / unit (net)", align: "right", render: row => <span title={marginReason(row)}>{money(row.gross_profit_per_unit)}</span> },
+    { key: "aade-cost", header: "AADE cost / sale (net)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.aade_mark ? `AADE MARK ${row.aade_mark}` : "No confirmed AADE unit cost"}>{money(row.aade_cost_sale_net)}{Number(row.sale_quantity) > 1 && <small>{money(row.aade_cost_net)} / piece</small>}{row.aade_cost_date && <small>{row.aade_cost_date}</small>}</div> },
+    { key: "unit-profit", header: "Gross profit / sale (net)", align: "right", render: row => <div className="supplier-catalog-stack" title={marginReason(row)}>{money(row.gross_profit_per_sale)}{Number(row.sale_quantity) > 1 && <small>{money(row.gross_profit_per_unit)} / piece</small>}</div> },
     { key: "margin", header: "Gross margin %", align: "right", render: row => <span title={marginReason(row)}>{row.gross_margin_percent == null ? "-" : `${percent.format(Number(row.gross_margin_percent))}%`}</span> },
-    { key: "wholesale", header: "XML wholesale (net)", align: "right", render: row => money(row.wholesale_price_net) },
-    { key: "retail", header: "XML retail (gross)", align: "right", render: row => money(row.retail_price_gross) },
+    { key: "wholesale", header: "XML wholesale / sale (net)", align: "right", render: row => <div className="supplier-catalog-stack">{money(row.wholesale_price_net)}{Number(row.sale_quantity) > 1 && <small>{money(row.wholesale_price_per_piece_net)} / piece</small>}</div> },
+    { key: "retail", header: "XML retail / sale (gross)", align: "right", render: row => <div className="supplier-catalog-stack">{money(row.retail_price_gross)}{Number(row.sale_quantity) > 1 && <small>{money(row.retail_price_per_piece_gross)} / piece</small>}</div> },
     { key: "inspect", header: "", render: row => <button className="icon-button" title={`Details ${row.supplier_code}`} aria-label={`Details ${row.supplier_code}`} onClick={() => inspect(row)}><Search size={16} /></button> }
   ] as Column<SupplierCatalogProduct>[]).map(column => {
     const key = sortKeys[column.key];
@@ -133,8 +135,8 @@ export function SupplierCatalogPage() {
     {key: "credits", header: "Credits (net)", align: "right", render: row => money(row.credits_net)},
     {key: "net", header: "Net purchases", align: "right", render: row => money(row.net_purchases)},
     {key: "costed", header: "Costed products (net)", align: "right", render: row => money(row.costed_products_net)},
-    {key: "units", header: "Units with margin / costed", align: "right", render: row => `${percent.format(Number(row.priced_units))} / ${percent.format(Number(row.costed_units))}`},
-    {key: "profit", header: "Avg gross profit / unit (net)", align: "right", render: row => <span title="Current net INDE prices minus invoice product costs, weighted by purchased quantities. Not realized sales profit; excludes freight, ads and other expenses.">{money(row.average_profit_per_unit)}</span>},
+    {key: "units", header: "Pieces with margin / costed", align: "right", render: row => `${percent.format(Number(row.priced_units))} / ${percent.format(Number(row.costed_units))}`},
+    {key: "profit", header: "Avg gross profit / piece (net)", align: "right", render: row => <span title="Net INDE set price divided by pieces per sale, minus invoice piece cost; weighted by purchased pieces. Not realized sales profit; excludes freight, ads and other expenses.">{money(row.average_profit_per_unit)}</span>},
     {key: "margin", header: "Weighted gross margin %", align: "right", render: row => <span title="Total potential gross profit / total net catalog selling value of priced purchased units.">{row.average_margin_percent == null ? "-" : `${percent.format(Number(row.average_margin_percent))}%`}</span>},
   ];
   const description = details?.details.description ? new DOMParser().parseFromString(details.details.description, "text/html").body.textContent : "";
@@ -208,6 +210,7 @@ export function SupplierCatalogPage() {
           {details.details.net_price != null && <div><dt>XML net_price (tax basis unconfirmed)</dt><dd>{money(Number(details.details.net_price))}</dd></div>}
           {details.details.stock_price != null && <div><dt>XML stock_price (tax basis unconfirmed)</dt><dd>{money(Number(details.details.stock_price))}</dd></div>}
           {details.details.sell_step != null && <div><dt>Supplier sell step</dt><dd>{details.details.sell_step}</dd></div>}
+          {details.details.minimum != null && <div><dt>Supplier minimum</dt><dd>{details.details.minimum}</dd></div>}
           {details.details.date_expected && <div><dt>Expected availability</dt><dd>{details.details.date_expected}</dd></div>}
           {details.details.attributes?.map((attribute, index) => <div key={`attribute-${index}`}><dt>Supplier attribute {attribute.id}</dt><dd>{attribute.value}</dd></div>)}
         </dl>

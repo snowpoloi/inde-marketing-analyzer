@@ -16,7 +16,8 @@ from app.core.config import settings
 from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services.supplier_costing import normalize_identifier
-from app.services.supplier_catalog_pricing import catalog_prices, latest_aade_costs, price_comparison
+from app.services.supplier_catalog_pricing import (catalog_prices, latest_aade_costs, price_comparison,
+    sale_quantity, sale_step_field, xml_sale_prices)
 from app.services.supplier_catalog_settings import pricing_settings
 
 
@@ -195,7 +196,8 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
         SupplierCatalogFeed, SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(
         ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(*conditions)
     pricing = pricing_settings(db)
-    financial_fields = {"inde_price", "aade_cost_net", "gross_profit_per_unit", "gross_margin_percent"}
+    financial_fields = {"inde_price", "aade_cost_net", "aade_cost_sale_net", "gross_profit_per_unit", "gross_profit_per_sale", "gross_margin_percent",
+                        "sale_quantity", "wholesale_price_net", "retail_price_gross"}
     sort_fields = {"name": SupplierCatalogProduct.name, "supplier_code": SupplierCatalogProduct.supplier_code,
                    "supplier_sku": func.coalesce(SupplierCatalogProduct.supplier_sku, SupplierCatalogProduct.ean),
                    "opencart_sku": ProductCatalog.sku, "quantity": SupplierCatalogProduct.quantity,
@@ -208,12 +210,15 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
     if has_margin or sort_by in financial_fields:
         candidates = db.execute(base.with_only_columns(SupplierCatalogProduct.id, SupplierCatalogFeed.code,
             ProductCatalog.id.label("own_id"), sort_fields.get(sort_by, SupplierCatalogProduct.name).label("sort_value"),
+            SupplierCatalogFeed.adapter, sale_step_field().label("step"),
+            SupplierCatalogProduct.wholesale_price_net, SupplierCatalogProduct.retail_price_gross,
             maintain_column_froms=True).order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id)).all()
         costs = latest_aade_costs(db, {row.own_id for row in candidates if row.own_id}, {row.code for row in candidates})
         price_ids = {row.own_id for row in candidates if row.own_id and (sort_by == "inde_price" or costs.get((row.code, row.own_id)))}
         prices = catalog_prices(db, price_ids)
-        comparisons = {row.id: price_comparison(prices.get(row.own_id), costs.get((row.code, row.own_id)),
-                       confirmed_vat_rate=pricing.get("sale_vat_rate")) for row in candidates}
+        comparisons = {row.id: {**xml_sale_prices(sale_quantity(row.adapter, row.step), row.wholesale_price_net, row.retail_price_gross),
+            **price_comparison(prices.get(row.own_id), costs.get((row.code, row.own_id)),
+                confirmed_vat_rate=pricing.get("sale_vat_rate"), sale_quantity=sale_quantity(row.adapter, row.step))} for row in candidates}
         candidates = [row for row in candidates if not has_margin or comparisons[row.id]["gross_margin_percent"] is not None]
         value = lambda row: comparisons[row.id][sort_by] if sort_by in financial_fields else row.sort_value
         present = [row for row in candidates if value(row) is not None]
@@ -237,6 +242,9 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
         results.sort(key=lambda row: positions[row[0].id])
     if costs is None:
         costs = latest_aade_costs(db, {own.id for _, _, _, own in results if own}, {code for _, _, code, _ in results})
+    steps = {row.id: sale_quantity(row.adapter, row.step) for row in db.execute(select(SupplierCatalogProduct.id,
+        SupplierCatalogFeed.adapter, sale_step_field().label("step")).join(SupplierCatalogFeed,
+        SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).where(SupplierCatalogProduct.id.in_([row[0].id for row in results])))}
     summary = db.execute(select(func.count(), func.sum(case((ProductCatalog.id.is_not(None), 1), else_=0)))
                          .select_from(SupplierCatalogProduct).outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
                          .where(SupplierCatalogProduct.is_current.is_(True), *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))).one()
@@ -247,9 +255,9 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
     rows = [{"id": str(product.id), "supplier": supplier, "supplier_code": product.supplier_code,
              "supplier_sku": product.supplier_sku, "ean": product.ean, "name": product.name,
              "category": product.category, "image_url": product.image_url, "quantity": product.quantity,
-             "wholesale_price_net": product.wholesale_price_net, "retail_price_gross": product.retail_price_gross,
+             **xml_sale_prices(steps[product.id], product.wholesale_price_net, product.retail_price_gross),
              "opencart_sku": own.sku if own else None, "match_method": product.match_method if own else ("ambiguous" if product.match_method == "ambiguous" else "unmatched"),
-             **price_comparison(own, costs.get((code, own.id)) if own else None, confirmed_vat_rate=pricing.get("sale_vat_rate")),
+             **price_comparison(own, costs.get((code, own.id)) if own else None, confirmed_vat_rate=pricing.get("sale_vat_rate"), sale_quantity=steps[product.id]),
              "last_seen_at": product.last_seen_at} for product, supplier, code, own in results]
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "categories": categories,
             "summary": {"products": summary[0], "matched": summary[1] or 0, "unmatched": summary[0] - (summary[1] or 0)}}

@@ -80,6 +80,21 @@ foreign currency and zero sale price never produce a fabricated margin percentag
 
 ## Catalog Analysis
 
+INDE prices already cover the complete sales set. MEGAPAP `minimum` and Pakketo
+`sell_step` declare physical pieces per sale, independently of `packages_per_item`.
+XML per-piece wholesale/retail prices and verified AADE per-piece purchase costs
+are multiplied by that quantity for the sale comparison. INDE prices are never
+multiplied again. The UI shows pieces per sale, total set cost/profit and original
+piece costs. Stored XML prices, AADE invoice quantities and costs remain unchanged.
+Missing legacy step fields retain the previous one-piece behavior; explicit zero,
+fractional or invalid steps block margins instead of producing fabricated values.
+
+Period estimates divide current net INDE set prices by the current XML step before
+multiplying by invoiced physical pieces. Average profit remains per physical piece,
+while the catalog row displays profit per sale/set. Conflicting steps for the same
+supplier/INDE product block the period estimate. These current-step estimates are
+not historical sale-unit conversions or realized profit.
+
 The margin filter includes every computable margin, including zero and negative
 values. Column headers sort across the entire filtered catalog before pagination,
 not just the visible page. Missing values remain last in both directions. Financial

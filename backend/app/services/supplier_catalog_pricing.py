@@ -4,12 +4,46 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
-from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierDocument,
+from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierCatalogFeed, SupplierCatalogProduct, SupplierDocument,
                         SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
 from app.services.supplier_costing import decimal_value, margin_metrics, money
 from app.services.supplier_aade_costs import validated_cost_rows
+
+
+def sale_quantity(adapter, value):
+    if adapter not in {"megapap", "pakoworld"}:
+        return None
+    if value in (None, ""):
+        return Decimal(1)
+    quantity = decimal_value(value, None)
+    return quantity if quantity is not None and 1 <= quantity <= 1000000 and quantity == quantity.to_integral_value() else None
+
+
+def sale_step_field():
+    return case((SupplierCatalogFeed.adapter == "pakoworld", SupplierCatalogProduct.details["sell_step"].astext),
+                else_=SupplierCatalogProduct.details["minimum"].astext)
+
+
+def catalog_sale_quantities(db, product_ids, supplier_codes):
+    if not product_ids:
+        return {}
+    grouped = {}
+    rows = db.execute(select(SupplierCatalogFeed.code, SupplierCatalogProduct.product_catalog_id,
+        SupplierCatalogFeed.adapter, sale_step_field().label("step")).join(SupplierCatalogFeed,
+        SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).where(SupplierCatalogProduct.is_current.is_(True),
+        SupplierCatalogProduct.product_catalog_id.in_(product_ids), SupplierCatalogFeed.code.in_(supplier_codes)))
+    for row in rows:
+        grouped.setdefault((row.code, row.product_catalog_id), set()).add(sale_quantity(row.adapter, row.step))
+    return {key: next(iter(values)) if len(values) == 1 else None for key, values in grouped.items()}
+
+
+def xml_sale_prices(quantity, wholesale, retail):
+    return {"sale_quantity": quantity,
+        "wholesale_price_per_piece_net": wholesale, "retail_price_per_piece_gross": retail,
+        "wholesale_price_net": money(wholesale * quantity) if wholesale is not None and quantity is not None else None,
+        "retail_price_gross": money(retail * quantity) if retail is not None and quantity is not None else None}
 
 
 def catalog_sale_price(product: ProductCatalog | None, *, confirmed_vat_rate=None) -> dict:
@@ -118,12 +152,15 @@ def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
             for key, options in grouped.items()}
 
 
-def price_comparison(product, cost_option, *, confirmed_vat_rate=None) -> dict:
+def price_comparison(product, cost_option, *, confirmed_vat_rate=None, sale_quantity=Decimal(1)) -> dict:
     sale = catalog_sale_price(product, confirmed_vat_rate=confirmed_vat_rate)
     cost, mark = cost_option if cost_option else (None, None)
-    metrics = margin_metrics(sale["inde_price_net"], 1, cost.net_unit_cost) if cost and sale["inde_price_net"] is not None else {}
+    metrics = margin_metrics(sale["inde_price_net"], sale_quantity, cost.net_unit_cost) if cost and sale["inde_price_net"] is not None and sale_quantity is not None else {}
     return {**sale, "aade_cost_net": cost.net_unit_cost if cost else None,
             "aade_cost_date": cost.purchase_date if cost else None, "aade_mark": mark,
-            "gross_profit_per_unit": metrics.get("gross_profit"), "gross_margin_percent": metrics.get("margin_percent"),
-            "margin_status": "missing_aade_cost" if not cost else "missing_sale_tax_basis" if sale["inde_price_net"] is None
+            "aade_cost_sale_net": money(cost.net_unit_cost * sale_quantity) if cost and sale_quantity is not None else None,
+            "gross_profit_per_sale": metrics.get("gross_profit"),
+            "gross_profit_per_unit": money(metrics["gross_profit"] / sale_quantity) if metrics and sale_quantity else None,
+            "gross_margin_percent": metrics.get("margin_percent"),
+            "margin_status": "missing_sale_quantity" if sale_quantity is None else "missing_aade_cost" if not cost else "missing_sale_tax_basis" if sale["inde_price_net"] is None
             else "zero_sale_price" if sale["inde_price_net"] == 0 else "available"}
