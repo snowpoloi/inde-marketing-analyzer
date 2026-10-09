@@ -1,7 +1,8 @@
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
   is_enabled: boolean; refresh_hours: number; status: string; error: string | null;
-  last_synced_at: string | null; counts: { products?: number; matched?: number; ambiguous?: number; unmatched?: number };
+  last_synced_at: string | null; counts: { products?: number; matched?: number; ambiguous?: number; unmatched?: number;
+    ignored_non_product_rows?: number; merged_category_rows?: number; unnamed_products?: number };
 };
 
 export type SupplierCatalogPricing = {
@@ -594,6 +595,8 @@ export const api = {
     net_price?: string | null; stock_price?: string | null;
     sell_step?: string | null; minimum?: string | null; date_expected?: string | null;
     attributes?: Array<{ id: string; value: string }>;
+    profile?: string; shop_model?: string; shop_sku?: string; missing_name?: boolean;
+    source_categories?: string[]; inde_category_ids?: string[]; category_mapping_status?: string;
   } }>(`/supplier-catalog/products/${id}`),
   opencartOrderStatuses: () => request<string[]>("/settings/opencart/order-statuses"),
   saveIntegration: (provider: string, payload: Pick<IntegrationSetting, "is_enabled" | "config">) =>

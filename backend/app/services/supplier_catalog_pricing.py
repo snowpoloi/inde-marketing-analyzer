@@ -10,19 +10,21 @@ from app.models import (AADEDocument, ProductCatalog, Supplier, SupplierCatalogF
                         SupplierDocumentLine, SupplierProductCost, SupplierProductMap)
 from app.services.supplier_costing import decimal_value, margin_metrics, money
 from app.services.supplier_aade_costs import validated_cost_rows
+from app.connectors.supplier_formats import FORMATS
 
 
 def sale_quantity(adapter, value):
-    if adapter not in {"megapap", "pakoworld"}:
+    if adapter not in {"megapap", "pakoworld"} | FORMATS.keys():
         return None
     if value in (None, ""):
-        return Decimal(1)
+        return Decimal(1) if adapter in {"megapap", "pakoworld"} else None
     quantity = decimal_value(value, None)
     return quantity if quantity is not None and 1 <= quantity <= 1000000 and quantity == quantity.to_integral_value() else None
 
 
 def sale_step_field():
     return case((SupplierCatalogFeed.adapter == "pakoworld", SupplierCatalogProduct.details["sell_step"].astext),
+                (SupplierCatalogFeed.adapter.in_(list(FORMATS)), SupplierCatalogProduct.details["sale_quantity"].astext),
                 else_=SupplierCatalogProduct.details["minimum"].astext)
 
 

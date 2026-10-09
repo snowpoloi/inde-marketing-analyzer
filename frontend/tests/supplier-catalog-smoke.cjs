@@ -55,6 +55,8 @@ async function main() {
                     {label:"BOX B",width_cm:"50",length_cm:"90",height_cm:"12",volume_m3:0.054,volumetric_kg:10.8}],
           volumetric_divisor:5000, volume_total_m3:0.094, volumetric_total_kg:18.8, details: {
           description: "<b>Garden chair</b><br>Polypropylene", availability: "In stock", volume_item: "0.06502222", weight_item: "13.00444444",
+          profile:"MEGAPAP", shop_model:"CH-N5080-GR", shop_sku:"CH-N5080-GR", source_categories:["Garden chairs"],
+          inde_category_ids:["456"], category_mapping_status:"mapped",
           packages_per_item: "2", comb_width_cm: "0", comb_height_cm: "0", comb_length_cm: "0", filters: [{ group: "Material", value: "Polypropylene PP" }] } };
         else if (url.pathname === "/api/suppliers/identities") response = {data:{rows:[{ id: "s2", code: "AADE_800749270", name: "Pakketo AE", vat_number: "800749270" }]}};
         else if (url.pathname.endsWith("/settings/integrations") || url.pathname.endsWith("/settings/opencart/order-statuses")) response = [];
@@ -70,12 +72,12 @@ async function main() {
       await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
       await page.getByLabel("Only with gross margin").check();
       await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
-      await page.getByRole("columnheader").filter({hasText:"Gross margin %"}).waitFor();
+      await page.getByRole("columnheader", {name:"Sort by Gross margin %",exact:true}).waitFor();
       assert.equal(catalogQuery.get("has_margin"), "true");
       assert.equal(catalogQuery.get("sort_by"), "gross_margin_percent");
       assert.equal(catalogQuery.get("sort_direction"), "asc");
       await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
-      await page.getByRole("columnheader").filter({hasText:"Gross margin %"}).waitFor();
+      await page.getByRole("columnheader", {name:"Sort by Gross margin %",exact:true}).waitFor();
       assert.equal(catalogQuery.get("sort_direction"), "desc");
       await page.getByLabel("Period from").fill("2026-09-01");
       await page.getByLabel("Period to").fill("2026-09-30");
@@ -88,6 +90,8 @@ async function main() {
       await page.screenshot({ path: `test-results/supplier-catalog-${viewport.width}.png`, fullPage: true });
       await page.getByRole("button", { name: "Details 0268292" }).click();
       await page.getByRole("dialog").getByText("Polypropylene PP", { exact: true }).waitFor();
+      await page.getByRole("dialog").getByText("Profile INDE model", {exact:true}).waitFor();
+      await page.getByRole("dialog").getByText("456", {exact:true}).waitFor();
       assert.equal(await page.getByRole("cell", {name:"BOX A",exact:true}).count(),1);
       assert.equal(await page.getByRole("cell", {name:"BOX B",exact:true}).count(),1);
       await page.getByRole("columnheader", {name:"Volumetric (kg) / 5000",exact:true}).waitFor();
@@ -102,6 +106,8 @@ async function main() {
       assert(synced);
       await page.getByRole("button", { name: "Settings", exact: true }).click();
       await page.getByRole("heading", { name: "Supplier XML feeds" }).waitFor();
+      const formats = await page.getByLabel("XML format", {exact:true}).locator("option").evaluateAll(nodes => nodes.map(node => node.value));
+      assert.deepEqual(formats, ["megapap", "pakoworld", "anthemidis", "arlight", "buyway", "daisat", "getters", "gloria", "kanellopoulos", "printezis", "mastershop", "spm"]);
       await page.getByLabel("Supplier feed", { exact: true }).selectOption("f1");
       assert.equal(await page.getByLabel("Private XML URL").inputValue(), "");
       await page.getByLabel("Refresh interval (hours)").fill("48");
@@ -111,6 +117,9 @@ async function main() {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Settings overflows");
       await page.screenshot({ path: `test-results/supplier-feed-settings-${viewport.width}.png`, fullPage: true });
       await page.getByRole("button", { name: "Add supplier feed", exact: true }).click();
+      await page.getByLabel("XML format", { exact: true }).selectOption("gloria");
+      assert.equal(await page.getByText("Supplier name", {exact:true}).locator("..").locator("input").inputValue(), "Gloria");
+      await page.screenshot({path: `test-results/supplier-multi-feed-${viewport.width}.png`, fullPage:true});
       await page.getByLabel("XML format", { exact: true }).selectOption("pakoworld");
       await page.getByLabel("Registered supplier / AFM", { exact: true }).selectOption("AADE_800749270");
       await page.getByLabel("Private XML URL").fill("https://www.pakoworld.com/?route=feed&token=fixture-private-token");

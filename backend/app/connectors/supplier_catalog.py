@@ -5,16 +5,19 @@ import time
 import re
 from decimal import Decimal, InvalidOperation
 from typing import BinaryIO
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 from defusedxml import ElementTree
+
+from app.connectors.supplier_formats import FORMATS
 
 MAX_FEED_BYTES = 50 * 1024 * 1024
 MAX_PRODUCTS = 20000
 ALLOWED_HOSTS = {"megapap.com", "www.megapap.com"}
 PAKOWORLD_HOSTS = {"pakoworld.com", "www.pakoworld.com"}
-ADAPTER_HOSTS = {"megapap": ALLOWED_HOSTS, "pakoworld": PAKOWORLD_HOSTS}
+ADAPTER_HOSTS = {"megapap": ALLOWED_HOSTS, "pakoworld": PAKOWORLD_HOSTS,
+                 **{adapter: spec["hosts"] for adapter, spec in FORMATS.items()}}
 PAKOWORLD_MAX_FEED_BYTES = 75 * 1024 * 1024
 
 
@@ -24,12 +27,15 @@ def validate_feed_url(value: str, adapter: str = "megapap") -> str:
         raise ValueError("This supplier XML format is not yet supported.")
     try:
         url = urlsplit(value.strip())
+        credentials = bool(url.username or url.password)
+        basic_auth = (adapter == "anthemidis" and bool(url.username) and bool(url.password)
+                      and not any(c in unquote(url.username + url.password) for c in "\r\n\x00"))
         valid = (url.scheme == "https" and url.hostname in hosts
-                 and url.port in (None, 443) and not url.username and not url.password and not url.fragment)
+                 and url.port in (None, 443) and (not credentials or basic_auth) and not url.fragment)
     except ValueError:
         valid = False
     if not valid:
-        raise ValueError(f"Supplier XML requires an HTTPS URL on {adapter}.com.")
+        raise ValueError(f"Supplier XML requires an HTTPS URL on an approved host for {adapter}.")
     return value.strip()
 
 
@@ -77,6 +83,9 @@ def parse_packages(dimensions: dict, count: str | None) -> list[dict]:
 
 
 def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
+    if adapter in FORMATS:
+        from app.connectors.supplier_catalog_profiles import parse_profile_catalog
+        return parse_profile_catalog(source, adapter)
     hosts = ADAPTER_HOSTS[adapter]
     products: list[dict] = []
     seen: set[str] = set()
@@ -141,6 +150,8 @@ def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
                 "components": [{"model": text(f"component_{number}", 255), "pieces": _number(text(f"pieces_{number}"))}
                                for number in range(1, 21) if text(f"component_{number}", 255)],
             })
+        from app.connectors.supplier_catalog_profiles import category_details
+        products[-1]["details"].update(category_details(adapter, text("category")))
         node.clear()
         if len(products) > MAX_PRODUCTS:
             raise ValueError("Supplier XML exceeds the product limit.")
@@ -159,14 +170,21 @@ def parse_pakoworld_catalog(source: BinaryIO) -> list[dict]:
 
 def _fetch_catalog(url: str, adapter: str) -> list[dict]:
     url = validate_feed_url(url, adapter)
+    original = urlsplit(url)
+    auth = httpx.BasicAuth(unquote(original.username), unquote(original.password)) if original.username else None
+    url = urlunsplit((original.scheme, original.hostname, original.path, original.query, ""))
     max_bytes = PAKOWORLD_MAX_FEED_BYTES if adapter == "pakoworld" else MAX_FEED_BYTES
     started = time.monotonic()
     # Redirects stay on the audited supplier host; no arbitrary server-side URLs.
     with httpx.Client(timeout=httpx.Timeout(90, connect=15), follow_redirects=False) as client:
         for _ in range(4):
-            with client.stream("GET", url, headers={"User-Agent": "IndeMarketingAnalyzer/1.0"}) as response:
+            with client.stream("GET", url, auth=auth, headers={"User-Agent": "IndeMarketingAnalyzer/1.0"}) as response:
                 if response.is_redirect:
-                    url = validate_feed_url(urljoin(url, response.headers.get("location", "")), adapter)
+                    target = validate_feed_url(urljoin(url, response.headers.get("location", "")), adapter)
+                    parsed = urlsplit(target)
+                    if parsed.username or (auth and parsed.hostname != original.hostname):
+                        raise ValueError("Supplier XML credentials cannot follow this redirect.")
+                    url = target
                     continue
                 if response.status_code != 200:
                     raise ValueError(f"Supplier XML returned HTTP {response.status_code}.")
@@ -188,3 +206,7 @@ def fetch_megapap_catalog(url: str) -> list[dict]:
 
 def fetch_pakoworld_catalog(url: str) -> list[dict]:
     return _fetch_catalog(url, "pakoworld")
+
+
+def fetch_supplier_catalog(url: str, adapter: str) -> list[dict]:
+    return _fetch_catalog(url, adapter)

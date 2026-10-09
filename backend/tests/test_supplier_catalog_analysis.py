@@ -149,7 +149,8 @@ def test_catalog_analysis_api_validation_and_admin_access(db):
         assert http.get("/api/supplier-catalog/period-summary?date_from=2026-09-01&date_to=2026-09-30").status_code == 403
 
 
-@pytest.mark.parametrize("adapter,field", [("megapap", "minimum"), ("pakoworld", "sell_step")])
+@pytest.mark.parametrize("adapter,field", [("megapap", "minimum"), ("pakoworld", "sell_step"),
+                                         ("kanellopoulos", "sale_quantity")])
 def test_set_prices_costs_global_sort_and_period_profit(db, adapter, field):
     from app.models import SupplierCatalogFeed, SupplierProductCost
     from sqlalchemy import select

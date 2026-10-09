@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.connectors.supplier_catalog import validate_feed_url
+from app.connectors.supplier_catalog import ADAPTER_HOSTS, validate_feed_url
 from decimal import Decimal
 from uuid import UUID
 
@@ -24,7 +24,7 @@ class SupplierCatalogFeedInput(BaseModel):
     @field_validator("adapter")
     @classmethod
     def supported_adapter(cls, value: str) -> str:
-        if value not in {"megapap", "pakoworld"}:
+        if value not in ADAPTER_HOSTS:
             raise ValueError("This supplier XML format is not yet supported.")
         return value
 

@@ -202,6 +202,12 @@ export function SupplierCatalogPage() {
           {details.volume_total_m3 != null && <tfoot><tr><th>Total</th><td colSpan={3}/><td>{Number(details.volume_total_m3).toLocaleString("el-GR", {maximumFractionDigits: 6})}</td><td>{Number(details.volumetric_total_kg).toLocaleString("el-GR", {maximumFractionDigits: 2})}</td></tr></tfoot>}
         </table></div>
         <dl className="supplier-catalog-detail-grid">
+          {details.details.profile && <div><dt>Import profile</dt><dd>{details.details.profile}</dd></div>}
+          {details.details.shop_model && <div><dt>Profile INDE model</dt><dd>{details.details.shop_model}</dd></div>}
+          {details.details.shop_sku && <div><dt>Profile INDE SKU</dt><dd>{details.details.shop_sku}</dd></div>}
+          {details.details.missing_name && <div><dt>Source name</dt><dd>Missing</dd></div>}
+          {details.details.source_categories?.length ? <div><dt>Supplier categories</dt><dd>{details.details.source_categories.join(" | ")}</dd></div> : null}
+          {details.details.category_mapping_status && <div><dt>INDE category IDs</dt><dd>{details.details.inde_category_ids?.join(", ") || details.details.category_mapping_status}</dd></div>}
           <div><dt>Supplier volume (raw)</dt><dd>{details.details.volume_item ?? details.details.volume ?? "-"}</dd></div>
           <div><dt>Supplier weight (raw)</dt><dd>{details.details.weight_item ?? details.details.weight ?? "-"}</dd></div>
           <div><dt>Packages / item</dt><dd>{details.details.packages_per_item ?? "-"}</dd></div>

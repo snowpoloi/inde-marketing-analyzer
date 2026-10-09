@@ -3,6 +3,14 @@ import { Plus, RefreshCw, Save } from "lucide-react";
 import { api } from "../api/client";
 import type { SupplierCatalogFeed, SupplierIdentity, SupplierCatalogPricing } from "../api/client";
 
+const formats = [
+  ["megapap", "MEGAPAP"], ["pakoworld", "Pakketo / Pakoworld"],
+  ["anthemidis", "Anthemidis"], ["arlight", "Arlight"], ["buyway", "Buyway"],
+  ["daisat", "Daisat"], ["getters", "Getters"], ["gloria", "Gloria"],
+  ["kanellopoulos", "Kanellopoulos"], ["printezis", "Printezis / PAM&CO"],
+  ["mastershop", "Mastershop"], ["spm", "SPM"],
+];
+
 export function SupplierFeedSettings() {
   const [feeds, setFeeds] = useState<SupplierCatalogFeed[]>([]);
   const [identities, setIdentities] = useState<SupplierIdentity[]>([]);
@@ -63,9 +71,9 @@ export function SupplierFeedSettings() {
         <label><span>XML format</span><select aria-label="XML format" value={adapter} disabled={busy || current?.status === "running"} onChange={event => {
           setAdapter(event.target.value);
           if (!selected && !identities.some(row => row.code === code)) {
-            setCode(event.target.value.toUpperCase()); setName(event.target.value === "pakoworld" ? "Pakketo AE (Pakoworld)" : "MEGAPAP");
+            setCode(event.target.value.toUpperCase()); setName(formats.find(([value]) => value === event.target.value)?.[1] || "");
           }
-        }}><option value="megapap">MEGAPAP</option><option value="pakoworld">Pakoworld</option></select></label>
+        }}>{formats.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="form-grid-span"><span>Registered supplier / AFM</span><select aria-label="Registered supplier / AFM" value={identities.some(row => row.code === code) ? code : ""} disabled={busy || current?.status === "running"} onChange={event => {
           const identity = identities.find(row => row.code === event.target.value);
           setCode(identity?.code || ""); setName(identity?.name || "");
@@ -73,7 +81,7 @@ export function SupplierFeedSettings() {
         <label><span>Supplier name</span><input value={name} maxLength={255} required onChange={event => setName(event.target.value)} /></label>
         <label><span>Supplier code</span><input value={code} maxLength={120} pattern="[A-Za-z0-9_-]+" required onChange={event => setCode(event.target.value)} /></label>
         <label className="form-grid-span"><span>Private XML URL</span><input type="password" autoComplete="new-password" value={url}
-          required={!current?.configured} placeholder={current?.configured ? "Saved URL retained" : `https://www.${adapter}.com/...`}
+          required={!current?.configured} placeholder={current?.configured ? "Saved URL retained" : "https://..."}
           onChange={event => setUrl(event.target.value)} /></label>
         <label><span>Refresh interval (hours)</span><input type="number" min={6} max={168} value={hours} required onChange={event => setHours(Number(event.target.value))} /></label>
         <label className="supplier-feed-toggle"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />Automatic XML sync</label>
@@ -85,6 +93,9 @@ export function SupplierFeedSettings() {
       </div>
     </form>
     {current?.error && <div className="notice">{current.error}</div>}
+    {Boolean(current?.counts.unnamed_products) && <div className="notice" role="status">Products without source names: {current?.counts.unnamed_products}</div>}
+    {Boolean(current?.counts.ignored_non_product_rows) && <div role="status">Non-product rows excluded: {current?.counts.ignored_non_product_rows}</div>}
+    {Boolean(current?.counts.merged_category_rows) && <div role="status">Repeated category rows merged: {current?.counts.merged_category_rows}</div>}
     {pricing && <form onSubmit={async event => {
       event.preventDefault(); setBusy(true); setMessage("");
       try { setPricing(await api.saveSupplierCatalogPricing(pricing)); setMessage("Catalog cost settings saved."); }

@@ -11,7 +11,8 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, load_only
 
-from app.connectors.supplier_catalog import fetch_megapap_catalog, fetch_pakoworld_catalog, validate_feed_url
+from app.connectors.supplier_catalog import fetch_megapap_catalog, fetch_pakoworld_catalog, fetch_supplier_catalog, validate_feed_url
+from app.connectors.supplier_formats import FORMATS
 from app.core.config import settings
 from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
@@ -91,6 +92,19 @@ def build_catalog_index(catalogs) -> dict[str, dict[str, set]]:
 
 
 def match_supplier_product(row: dict, index: dict, adapter: str = "megapap") -> tuple[UUID | None, str]:
+    if adapter in FORMATS:
+        details = row.get("details") or {}
+        model = normalize_identifier(details.get("shop_model"))
+        sku = normalize_identifier(details.get("shop_sku"))
+        primary = index["model"].get(model, set()) if model else set()
+        # A bare SKU from a different supplier cannot substitute for the
+        # profile's prefixed model. Contradictory shop identifiers block links.
+        candidates = primary | (index["sku"].get(sku, set()) if sku else set())
+        if len(candidates) > 1:
+            return None, "ambiguous"
+        if len(primary) == 1:
+            return next(iter(primary)), "profile_identifiers"
+        return None, "unmatched"
     candidates = set()
     sku, ean, code = (normalize_identifier(row.get(field)) for field in ("supplier_sku", "ean", "supplier_code"))
     if sku:
@@ -129,7 +143,8 @@ def apply_catalog(db: Session, feed: SupplierCatalogFeed, rows: list[dict]) -> d
             constraint="uq_supplier_catalog_product_identity",
             set_={**{field: getattr(statement.excluded, field) for field in fields}, "updated_at": now},
         ))
-    return {"products": len(rows), "matched": matched, "ambiguous": ambiguous, "unmatched": len(rows) - matched - ambiguous}
+    return {"products": len(rows), "matched": matched, "ambiguous": ambiguous, "unmatched": len(rows) - matched - ambiguous,
+            **getattr(rows, "diagnostics", {})}
 
 
 def process_supplier_catalog(db: Session) -> dict | None:
@@ -149,9 +164,8 @@ def process_supplier_catalog(db: Session) -> dict | None:
     feed_id = feed.id
     try:
         fetch_catalog = {"megapap": fetch_megapap_catalog, "pakoworld": fetch_pakoworld_catalog}.get(feed.adapter)
-        if fetch_catalog is None:
-            raise ValueError("Supplier XML format is not yet supported.")
-        rows = fetch_catalog(_cipher().decrypt(feed.encrypted_url.encode()).decode())
+        url = _cipher().decrypt(feed.encrypted_url.encode()).decode()
+        rows = fetch_catalog(url) if fetch_catalog else fetch_supplier_catalog(url, feed.adapter)
         counts = apply_catalog(db, feed, rows)
         feed.status, feed.error, feed.counts = "success", None, counts
         feed.last_synced_at = datetime.now(timezone.utc)

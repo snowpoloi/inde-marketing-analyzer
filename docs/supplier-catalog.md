@@ -9,7 +9,9 @@ It does not modify OpenCart products, orders, AADE documents, supplier costs or 
 
 Settings > Supplier XML feeds accepts a private URL, code, name, automatic-sync
 toggle and refresh interval (6-168 hours, default 24). Explicit adapters support
-the audited MEGAPAP and Pakoworld XML formats. Select the registered supplier/AFM
+MEGAPAP, Pakoworld, Anthemidis, Arlight, Buyway, Daisat, Getters, Gloria,
+Kanellopoulos, Printezis/PAM&CO, Mastershop and SPM. Metaxakis and Liberta remain
+excluded pending the owner's selected live profiles. Select the registered supplier/AFM
 to reuse its existing identity code; the feed code must agree with the AADE supplier
 code, including identities discovered as `AADE_<AFM>`. More formats require an
 explicit adapter; arbitrary XML must not be interpreted as either catalog.
@@ -53,8 +55,39 @@ Attributes, categories, sale step, expected availability and component identifie
 are retained. Components are not exploded into purchase units. Pakoworld dimensions
 and weights remain supplier raw data, not calculated shipping parcel dimensions.
 Each adapter permits only its own HTTPS host for downloads, redirects and media.
+Anthemidis alone supports the supplied HTTPS Basic Auth URL; credentials are
+encrypted with the URL, stripped from the request URL, and never forwarded to a
+different host. Errors and public API responses never return credentials.
 Zero combined dimensions are unknown, not zero-size parcels. Product dimensions
 must never automatically become packaging dimensions.
+
+The ten additional schemas preserve original supplier identifiers and the exact
+OpenCart model/SKU transforms from the selected scheduled profiles. A unique
+profile-derived model is required, and conflicting SKU matches block linking.
+Bare supplier SKUs and EANs cannot substitute for a missing prefixed shop model.
+Gloria uses `GL.` on XML product ID, SPM `sp.` on SKU, Buyway `BW.`, Daisat `dai.`,
+Getters `g.`, and Printezis `pa.`. Mastershop is separate from SPM.
+
+Declarative category bindings retain original supplier labels and target OpenCart
+IDs with selected-profile provenance. Ambiguous bindings remain unresolved; they
+are never combined into guessed categories. No PHP import functions are executed,
+and no shop insert/update/delete, promotional-price or shipping formulas are copied.
+New source fields retain stock/price/dimension provenance without inventing parcels,
+stock from availability text, or VAT treatment for ambiguous wholesale prices.
+Only Daisat's explicit untaxed wholesale field populates the new wholesale column.
+The original shop catalog price remains the selling-price authority.
+
+Daisat repeats identical products across categories. These memberships merge only
+when every non-category field agrees, without adding quantity or price. Conflicting
+duplicates fail the snapshot. Known Anthemidis header and Arlight Offer/Credit
+records are excluded. Valid products with absent names keep their code as a display
+label and produce a diagnostic warning. All new adapters use streaming XML parsing
+with 20,000 unique products and 40,000 source records as upper bounds.
+
+Adding XML support does not authorize automatic AADE costs for a new supplier or
+inherit another supplier's purchase-unit confirmation. Use its registered AFM and
+the existing invoice review/confirmation workflow. Unknown set quantities (including
+Gloria component sets and invalid Kanellopoulos minimums) block margin calculation.
 
 Migration 0011 adds two tables only. Reviewed AADE costs reuse the existing supplier
 document, mapping and cost tables; no additional migration or Gmail evidence is needed.
