@@ -1,6 +1,8 @@
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -13,7 +15,7 @@ from app.services import aade_detail_jobs as jobs
 from app.services.dashboard_service import _aade_line_items
 from app.services.import_service import import_aade_payload
 from app.services.supplier_aade_costs import invoice_preview, line_rows
-from test_supplier_aade_costs import seed
+from test_supplier_aade_costs import auto_policy, seed
 
 
 URL = "https://e-invoicing.gr/invoice/private?key=private"
@@ -135,6 +137,42 @@ def test_render_and_invalidation():
     assert detail.detail_info({**enriched, "mark": "changed"})["status"] == "pending"
 
 
+def test_cost_bookkeeping_preserves_verified_products_and_costs():
+    raw = {"downloadingInvoiceUrl": URL, "invoiceDetails": {"quantity": "2", "netValue": "114.32", "vatAmount": "27.44"}}
+    enriched = verified_raw(raw, invoice())
+    for status in ("review", "imported"):
+        enriched = {**enriched, "_catalog_cost": {"status": status, "checked_at": "2026-10-10"}}
+        assert detail.detail_info(enriched)["status"] == "verified"
+        assert detail.effective_invoice(enriched) == invoice()
+        assert len(_aade_line_items(enriched)) == 2
+        assert line_rows(enriched) == invoice()["invoiceDetails"]
+    assert detail.source_fingerprint(enriched) == detail.source_fingerprint(raw)
+
+
+def test_legacy_fingerprint_with_cost_bookkeeping_is_still_usable():
+    raw = {"downloadingInvoiceUrl": URL, "_catalog_cost": {"status": "review"}}
+    legacy_hash = hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()
+    enriched = {**raw, detail.META_KEY: {"status": "verified", "source_hash": legacy_hash, "invoice": invoice()}}
+    assert legacy_hash != detail.source_fingerprint(raw)
+    assert detail.detail_info(enriched)["status"] == "verified"
+    assert len(line_rows(enriched)) == 2
+    assert detail.detail_info({**enriched, "mark": "changed"})["status"] == "pending"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("mark", "changed"), ("downloadingInvoiceUrl", URL + "changed"),
+    ("invoiceDetails", [{"lineNumber": "1", "netValue": "999"}]),
+    ("issuer", {"vatNumber": "other"}), ("invoiceSummary", {"totalNetValue": "999"}),
+    ("_unknown_metadata", {"untrusted": True}),
+])
+def test_cost_bookkeeping_does_not_hide_source_changes(field, value):
+    raw = {"mark": document().mark, "downloadingInvoiceUrl": URL,
+           "invoiceDetails": {"netValue": "114.32", "vatAmount": "27.44"}}
+    enriched = {**verified_raw(raw, invoice()), "_catalog_cost": {"status": "review"}, field: value}
+    assert detail.detail_info(enriched)["status"] == "pending"
+    assert detail.effective_invoice(enriched) is enriched
+
+
 def configure_fiscal(db):
     _, supplier, _, _, fiscal = seed(db)
     db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "aade")).is_enabled = True
@@ -169,6 +207,61 @@ def test_worker_no_financial_acceptance_and_resync(db, monkeypatch):
     import_aade_payload(db, {"documents": [row]}, fiscal.issue_date)
     db.refresh(fiscal)
     assert detail.META_KEY not in fiscal.raw
+
+
+def test_cost_bookkeeping_during_download_and_resync(db, monkeypatch):
+    supplier, fiscal, payload = configure_fiscal(db)
+    original = deepcopy(fiscal.raw)
+
+    def download(url):
+        fiscal.raw = {**fiscal.raw, "_catalog_cost": {"status": "review"}}
+        db.commit()
+        return payload
+
+    monkeypatch.setattr(jobs, "fetch_detail", download)
+    assert jobs.process_aade_details(db) == {"processed": 1, "verified": 1}
+    db.refresh(fiscal)
+    assert detail.detail_info(fiscal.raw)["status"] == "verified"
+    assert invoice_preview(db, fiscal.id, supplier.id)["can_import"]
+    row = {key: getattr(fiscal, key) for key in ("source_endpoint", "identity_key", "mark", "uid", "issuer_vat", "counterpart_vat",
+           "issue_date", "invoice_type", "document_direction", "series", "aa", "currency", "net_value", "vat_amount", "gross_value", "is_cancelled", "cancelled_by_mark")}
+    row["raw"] = original
+    import_aade_payload(db, {"documents": [row]}, fiscal.issue_date)
+    db.refresh(fiscal)
+    assert detail.detail_info(fiscal.raw)["status"] == "verified"
+    assert invoice_preview(db, fiscal.id, supplier.id)["can_import"]
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("blocked", [False, True])
+def test_cost_worker_keeps_verified_details_and_cost_provenance(db, legacy, blocked):
+    from app.services.supplier_aade_jobs import process_aade_costs
+    from app.services.supplier_catalog_pricing import latest_aade_costs
+
+    user, supplier, product, item, fiscal = seed(db)
+    raw = {**fiscal.raw, "downloadingInvoiceUrl": URL, "_catalog_cost": {}}
+    enriched = verified_raw(raw, {"invoiceDetails": deepcopy(raw["invoiceDetails"])})
+    if legacy:
+        enriched[detail.META_KEY]["source_hash"] = hashlib.sha256(
+            json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest()
+    fiscal.raw = enriched
+    if blocked:
+        item.product_catalog_id = None
+    db.commit()
+    auto_policy(db, user, supplier)
+    result = process_aade_costs(db)
+    db.refresh(fiscal)
+    assert result["status"] == ("review" if blocked else "imported")
+    assert detail.detail_info(fiscal.raw)["status"] == "verified"
+    assert fiscal.raw[detail.META_KEY]["source_hash"] == detail.source_fingerprint(fiscal.raw)
+    assert len(line_rows(fiscal.raw)) == 2
+    costs = latest_aade_costs(db, {product.id}, {supplier.code})
+    if blocked:
+        assert costs == {}
+    else:
+        assert costs[(supplier.code, product.id)][0].net_unit_cost == 70
+    assert process_aade_costs(db) == {"processed": 0}
 
 
 def test_worker_retry_lease_and_rejection(db, monkeypatch):

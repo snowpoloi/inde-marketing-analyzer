@@ -36,14 +36,19 @@ class DetailError(ValueError):
 
 
 def source_fingerprint(raw):
-    original = {key: value for key, value in raw.items() if key != META_KEY}
+    # Local cost-job bookkeeping is not part of the fiscal source document.
+    original = {key: value for key, value in raw.items() if key not in {META_KEY, "_catalog_cost"}}
     return hashlib.sha256(json.dumps(original, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def detail_info(raw):
     meta = raw.get(META_KEY) or {}
     if meta.get("source_hash") != source_fingerprint(raw):
-        return {"status": "pending" if raw.get("downloadingInvoiceUrl") else "no_link"}
+        # Older workers included cost bookkeeping when hashing the source.
+        legacy = {key: value for key, value in raw.items() if key != META_KEY}
+        legacy_hash = hashlib.sha256(json.dumps(legacy, sort_keys=True, default=str).encode()).hexdigest()
+        if meta.get("source_hash") != legacy_hash:
+            return {"status": "pending" if raw.get("downloadingInvoiceUrl") else "no_link"}
     return {key: meta.get(key) for key in ("status", "reason", "host", "checked_at")}
 
 

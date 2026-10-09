@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
+from app.connectors.aade_detail import META_KEY, detail_info, source_fingerprint
 from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierDocument, User
 from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_aade_costs import accept_invoice, invoice_preview
@@ -62,6 +63,9 @@ def process_aade_costs(db):
         db.rollback()
         result["reasons"] = ["Invoice requires review; no automatic cost was saved."]
     current = db.get(AADEDocument, document_id)
-    current.raw = {**current.raw, "_catalog_cost": {**result, "checked_at": now.isoformat()}}
+    raw = current.raw
+    if detail_info(raw)["status"] == "verified":
+        raw = {**raw, META_KEY: {**raw[META_KEY], "source_hash": source_fingerprint(raw)}}
+    current.raw = {**raw, "_catalog_cost": {**result, "checked_at": now.isoformat()}}
     db.commit()
     return {"processed": 1, "costs_created": costs_created, "status": result["status"]}
