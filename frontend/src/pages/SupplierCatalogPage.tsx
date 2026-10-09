@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ListOrdered, RefreshCw, Search, X } from "lucide-react";
 import { api } from "../api/client";
 import type { SupplierCatalogFeed, SupplierCatalogPeriod, SupplierCatalogProduct, SupplierCatalogResult } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
+import { SupplierProductOrders } from "../components/SupplierProductOrders";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const money = (value: number | null) => value == null ? "-" : currency.format(Number(value));
@@ -35,6 +36,7 @@ export function SupplierCatalogPage() {
   const [offset, setOffset] = useState(0);
   const [result, setResult] = useState<SupplierCatalogResult | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
+  const [openOrders, setOpenOrders] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [queuing, setQueuing] = useState(false);
@@ -114,6 +116,10 @@ export function SupplierCatalogPage() {
     { key: "code", header: "Supplier model", render: row => row.supplier_code },
     { key: "sku", header: "Supplier SKU / EAN", render: row => <div className="supplier-catalog-stack">{row.supplier_sku || "-"}<small>{row.ean || "-"}</small></div> },
     { key: "own", header: "INDE SKU", render: row => <div className="supplier-catalog-stack">{row.opencart_sku || "-"}<small>{row.match_method === "ambiguous" ? "Needs review" : row.opencart_sku ? "Matched" : "Not matched"}</small></div> },
+    { key: "orders", header: "INDE orders", render: row => <button className="icon-button" title={`INDE orders for ${row.supplier_code}`} aria-label={`INDE orders for ${row.supplier_code}`}
+      aria-expanded={Boolean(openOrders[row.id])} aria-controls={`product-orders-${row.id}`}
+      disabled={!row.opencart_sku || row.match_method === "ambiguous"}
+      onClick={()=>setOpenOrders(current=>({...current,[row.id]:!current[row.id]}))}><ListOrdered size={17}/></button> },
     { key: "stock", header: "Supplier stock", align: "right", render: row => row.quantity ?? "-" },
     { key: "pieces", header: "Pieces / sale", align: "right", render: row => <span title="Pakketo sell_step / MEGAPAP minimum. Not shipping packages.">{row.sale_quantity ?? "-"}</span> },
     { key: "inde-price", header: "INDE price (VAT incl.)", align: "right", render: row => <div className="supplier-catalog-stack" title={row.inde_price_basis === "unknown" ? "Selling VAT rate not confirmed." : `INDE feed price (${row.inde_price_basis})`}>{money(row.inde_price)}{row.inde_price_net != null && <small>{money(row.inde_price_net)} net</small>}</div> },
@@ -178,7 +184,9 @@ export function SupplierCatalogPage() {
       <span>Not matched <strong>{result?.summary.unmatched ?? 0}</strong></span>
       {selected && <span>{selected.status} · {timestamp(selected.last_synced_at)}</span>}
     </div>
-    <div className="supplier-catalog-table" aria-busy={loading}><DataTable rows={loading ? [] : result?.rows ?? []} columns={columns} rowKey={row=>row.id} empty={loading ? "Loading supplier products..." : "No supplier products found."} /></div>
+    <div className="supplier-catalog-table" aria-busy={loading}><DataTable rows={loading ? [] : result?.rows ?? []} columns={columns} rowKey={row=>row.id} empty={loading ? "Loading supplier products..." : "No supplier products found."}
+      renderExpandedRow={row=>openOrders[row.id] ? <SupplierProductOrders key={`${row.id}:${costStart}:${costEnd}`} product={row} start={costStart} end={costEnd}
+        onClose={()=>setOpenOrders(current=>({...current,[row.id]:false}))}/> : null}/></div>
     <div className="supplier-catalog-pagination">
       <button className="icon-button" title="Previous page" aria-label="Previous page" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}><ChevronLeft size={17} /></button>
       <span>{result?.total ? `${offset + 1}-${Math.min(offset + 50, result.total)} / ${result.total}` : "0"}</span>

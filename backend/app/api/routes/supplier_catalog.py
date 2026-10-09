@@ -12,6 +12,7 @@ from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatal
 from app.services.supplier_catalog_settings import public_pricing_settings, save_pricing_settings, package_metrics
 from app.services.supplier_catalog_service import catalog_products, feed_response, queue_feed, save_feed
 from app.services.supplier_catalog_summary import period_summary
+from app.services.supplier_catalog_orders import product_orders
 
 router = APIRouter(prefix="/supplier-catalog", tags=["supplier-catalog"])
 
@@ -77,6 +78,18 @@ def summary(date_from: date, date_to: date, feed_id: UUID | None = None,
         return period_summary(db, date_from, date_to, feed_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/products/{product_id}/orders")
+def orders(product_id: UUID, date_from: date, date_to: date,
+           offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
+           _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return product_orders(db, product_id, date_from, date_to, offset=offset, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/products/{product_id}")

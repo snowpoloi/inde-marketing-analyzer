@@ -673,6 +673,15 @@ tr:last-child td {
 .supplier-catalog-product small, .supplier-catalog-stack small { display: block; color: #728078; }
 .supplier-catalog-stack { white-space: nowrap; }
 .supplier-catalog-table { min-width: 0; }
+.supplier-catalog-table { container-type: inline-size; }
+.supplier-product-orders { padding: 16px; width: 100cqi; max-width: 100%; box-sizing: border-box; white-space: normal; }
+.supplier-product-orders .panel-title { gap: 12px; }
+.supplier-product-orders h2 { font-size: 16px; overflow-wrap: anywhere; min-width: 0; }
+.supplier-product-orders .icon-button { flex-shrink: 0; }
+.supplier-product-orders p { white-space: normal; overflow-wrap: anywhere; }
+.supplier-catalog-table > .table-wrap > table > tbody > .expanded-table-row > td { padding: 0; background: #f5f8f6; }
+.supplier-catalog-table .supplier-product-orders table { min-width: 560px; width: 100%; }
+.supplier-catalog-table .supplier-product-orders td { white-space: normal; overflow-wrap: anywhere; }
 .supplier-catalog-table table { min-width: 1580px; }
 .supplier-catalog-table td:not(:first-child) { min-width: 95px; white-space: nowrap; }
 .supplier-catalog-table th { min-width: 95px; }
