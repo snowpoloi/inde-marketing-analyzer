@@ -30,7 +30,7 @@ export function SupplierProductOrders({ product, start, end, onClose }: {
     aria-label={`INDE orders for ${product.supplier_code}`} aria-busy={loading}>
     <div className="panel-title"><h2>INDE orders / {product.supplier_code}</h2>
       <button className="icon-button" title="Close orders" aria-label={`Close orders ${product.supplier_code}`} onClick={onClose}><X size={17}/></button></div>
-    <p>{start} - {end}{data ? ` | ${data.total} orders` : ""}</p>
+    <p>{start} - {end}{data ? ` | Orders: ${data.total}` : ""}</p>
     {error && <div className="notice" role="alert">{error}<button className="icon-button" title="Retry orders" aria-label={`Retry orders ${product.supplier_code}`} onClick={()=>setRetry(value=>value+1)}><RefreshCw size={16}/></button></div>}
     {loading ? <p role="status">Loading INDE orders...</p> : data && <>
       <DataTable rows={data.rows} rowKey={row=>row.order_id} empty={data.match_status !== "matched"

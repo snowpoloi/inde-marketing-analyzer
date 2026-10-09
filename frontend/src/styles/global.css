@@ -674,7 +674,7 @@ tr:last-child td {
 .supplier-catalog-stack { white-space: nowrap; }
 .supplier-catalog-table { min-width: 0; }
 .supplier-catalog-table { container-type: inline-size; }
-.supplier-product-orders { padding: 16px; width: 100cqi; max-width: 100%; box-sizing: border-box; white-space: normal; }
+.supplier-product-orders { position: sticky; left: 0; padding: 16px; width: 100cqi; max-width: 100%; box-sizing: border-box; white-space: normal; }
 .supplier-product-orders .panel-title { gap: 12px; }
 .supplier-product-orders h2 { font-size: 16px; overflow-wrap: anywhere; min-width: 0; }
 .supplier-product-orders .icon-button { flex-shrink: 0; }
