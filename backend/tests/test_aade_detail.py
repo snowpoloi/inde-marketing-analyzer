@@ -313,3 +313,37 @@ def test_source_change_during_download_discards_result(db, monkeypatch):
     jobs.process_aade_details(db)
     db.refresh(fiscal)
     assert detail.META_KEY not in fiscal.raw
+
+
+def test_verified_invoiceportal_details_upgrade_once_without_financial_acceptance(db, monkeypatch):
+    _, fiscal, payload = configure_fiscal(db)
+    fiscal.issuer_vat = "094494879"
+    payload["issuer"]["vatNumber"] = fiscal.issuer_vat
+    raw = {**fiscal.raw, "downloadingInvoiceUrl": "https://invoiceportal.gr/invoices/private/pdf",
+           "_catalog_cost": {"status": "review", "next_attempt_at": "2099-01-01"}}
+    fiscal.raw = verified_raw(raw, payload)
+    db.commit()
+    monkeypatch.setattr(jobs, "fetch_detail", lambda url: payload)
+    assert jobs.process_aade_details(db) == {"processed": 1, "verified": 1}
+    db.refresh(fiscal)
+    assert fiscal.raw[detail.META_KEY]["ubl_version"] == 1
+    assert fiscal.raw["_catalog_cost"]["next_attempt_at"] is None
+    assert jobs.process_aade_details(db) == {"processed": 0, "verified": 0}
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+
+
+def test_failed_invoiceportal_upgrade_cannot_reuse_old_wrong_quantity(db, monkeypatch):
+    _, fiscal, payload = configure_fiscal(db)
+    fiscal.issuer_vat = "094494879"
+    payload["issuer"]["vatNumber"] = fiscal.issuer_vat
+    raw = {**fiscal.raw, "downloadingInvoiceUrl": "https://invoiceportal.gr/invoices/private/pdf"}
+    fiscal.raw = verified_raw(raw, payload)
+    db.commit()
+    def fail(url):
+        raise detail.DetailError("UBL quantity does not reconcile.")
+    monkeypatch.setattr(jobs, "fetch_detail", fail)
+    assert jobs.process_aade_details(db) == {"processed": 1, "verified": 0}
+    db.refresh(fiscal)
+    assert detail.detail_info(fiscal.raw)["status"] == "unavailable"
+    assert detail.effective_invoice(fiscal.raw) == fiscal.raw
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0

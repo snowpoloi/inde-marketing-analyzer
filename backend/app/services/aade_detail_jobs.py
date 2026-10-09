@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.connectors.aade_detail import DetailError, META_KEY, fetch_detail, source_fingerprint, validate_invoice
 from app.models import AADEDocument, IntegrationSetting
@@ -25,7 +25,11 @@ def process_aade_details(db, *, batch_size=3, document_ids=None):
             AADEDocument.is_cancelled.is_(False), AADEDocument.cancelled_by_mark.is_(None),
             func.coalesce(AADEDocument.raw["record_type"].astext, "full_document") == "full_document",
             AADEDocument.raw["downloadingInvoiceUrl"].astext.is_not(None),
-            or_(meta["status"].astext.is_(None), meta["status"].astext.in_(["pending", "running", "retry"])),
+            or_(meta["status"].astext.is_(None), meta["status"].astext.in_(["pending", "running", "retry"]),
+                and_(meta["status"].astext == "verified", meta["ubl_version"].astext.is_(None),
+                     AADEDocument.issuer_vat == "094494879",
+                     AADEDocument.invoice_type == "1.1",
+                     AADEDocument.raw["downloadingInvoiceUrl"].astext.startswith("https://invoiceportal.gr/"))),
             or_(meta["next_attempt_at"].astext.is_(None), meta["next_attempt_at"].astext <= now.isoformat()),
         ).order_by(AADEDocument.issue_date.desc(), AADEDocument.id).with_for_update(skip_locked=True).limit(1))
         if document is None:
@@ -45,6 +49,8 @@ def process_aade_details(db, *, batch_size=3, document_ids=None):
             invoice = validate_invoice(document, fetch_detail(url))
             result = {**claim, "status": "verified", "invoice": invoice, "host": urlsplit(url).hostname,
                       "checked_at": datetime.now(timezone.utc).isoformat()}
+            if result["host"] == "invoiceportal.gr" and document.invoice_type == "1.1":
+                result["ubl_version"] = 1
         except DetailError as exc:
             result = {**claim, "status": "retry" if exc.retryable and attempts < 4 else "unavailable",
                       "reason": str(exc), "checked_at": datetime.now(timezone.utc).isoformat(),
@@ -56,6 +62,8 @@ def process_aade_details(db, *, batch_size=3, document_ids=None):
         if (current and (current.raw.get(META_KEY) or {}).get("lease") == lease
                 and source_fingerprint(current.raw) == source_hash and not current.is_cancelled and not current.cancelled_by_mark):
             current.raw = {**current.raw, META_KEY: result}
+            if result["status"] == "verified" and result.get("ubl_version") and not old.get("ubl_version"):
+                current.raw = {**current.raw, "_catalog_cost": {**(current.raw.get("_catalog_cost") or {}), "next_attempt_at": None}}
             verified += result["status"] == "verified"
         db.commit()
         processed += 1

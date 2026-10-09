@@ -89,8 +89,7 @@ def _public_host(host):
         raise DetailError("Provider download resolved to a non-public address.")
 
 
-def fetch_detail(value):
-    target = detail_url(value)
+def _fetch_xml(target):
     origin = urlsplit(target).hostname
     _public_host(origin)
     started = time.monotonic()
@@ -114,11 +113,26 @@ def fetch_detail(value):
                         data.extend(chunk)
                         if len(data) > MAX_BYTES or time.monotonic() - started > 30:
                             raise DetailError("Provider detail exceeded the size or time limit.")
-                    return parse_detail(bytes(data))
+                    return bytes(data)
     except httpx.HTTPError:
         # HTTP errors can include private invoice URLs; do not log their text.
         raise DetailError("Provider detail is temporarily unavailable.", retryable=True) from None
     raise DetailError("Too many provider redirects.")
+
+
+def fetch_detail(value):
+    target = detail_url(value)
+    invoice = parse_detail(_fetch_xml(target))
+    lines = invoice.get("invoiceDetails") or []
+    lines = lines if isinstance(lines, list) else [lines]
+    needs_identifiers = any(not line.get("itemCode") for line in lines if isinstance(line, dict))
+    if (urlsplit(target).hostname == "invoiceportal.gr" and needs_identifiers
+            and (invoice.get("invoiceHeader") or {}).get("invoiceType") == "1.1"):
+        from app.connectors.aade_ubl import supplement_invoice
+        url = urlsplit(target)
+        ubl_url = urlunsplit((url.scheme, url.netloc, url.path.rsplit("/", 1)[0] + "/EN16931", url.query, ""))
+        invoice = supplement_invoice(invoice, _fetch_xml(ubl_url))
+    return invoice
 
 
 def parse_detail(data):
