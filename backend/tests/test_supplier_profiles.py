@@ -123,6 +123,22 @@ def test_no_guessed_stock_prices_shipping_or_sale_quantity():
     assert parse("anthemidis", changes={"min_order_level": "4"})[0]["details"]["sale_quantity"] is None
 
 
+def test_anthemidis_category_artifacts_are_not_products():
+    broken = {"product_sku": '$New arrivals|Home/Cookware"', "product_name": "",
+              "category_path": None, "Web_price": None, "pricewithouttax": "50,00",
+              "product_in_stock": "0", "product_gtin": "0"}
+    root = ET.fromstring(xml("anthemidis"))
+    root.append(ET.fromstring(xml("anthemidis", changes=broken))[0])
+    rows = parse_profile_catalog(io.BytesIO(ET.tostring(root)), "anthemidis")
+    assert len(rows) == 1 and rows[0]["supplier_code"] == "001-ABC"
+    assert rows.diagnostics["ignored_non_product_rows"] == 1
+    assert rows.diagnostics["unnamed_products"] == 0
+    with pytest.raises(ValueError, match="no products"):
+        parse("anthemidis", changes=broken)
+    assert parse("anthemidis", changes={"product_name": ""})[0]["details"]["missing_name"]
+    assert parse("anthemidis", changes={**broken, "product_name": "Named product"})[0]["name"] == "Named product"
+
+
 def test_gloria_product_id_and_supplier_code_remain_separate():
     row = parse("gloria", changes={"@id": "00987", "code": "ABC-001"})[0]
     assert row["supplier_code"] == row["supplier_sku"] == "ABC-001"

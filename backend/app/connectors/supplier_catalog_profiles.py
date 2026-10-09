@@ -75,7 +75,11 @@ def parse_profile_catalog(source, adapter):
 
         code, sku = text(spec["code"], 256), text(spec["sku"], 256)
         name = text(spec["name"], 500)
-        skip = (adapter == "anthemidis" and (code == "product_sku" or (not name and not any(
+        # Broken source CSV lines can place a quoted category path in the SKU.
+        category_artifact = (not name and bool(code) and code.startswith("$") and code.endswith('"')
+                             and "/" in code and not text("category_path") and not text("Web_price")
+                             and text("product_gtin") in (None, "0"))
+        skip = (adapter == "anthemidis" and (code == "product_sku" or category_artifact or (not name and not any(
             _number(text(field)) is not None for field in ("Web_price", "pricewithouttax", "product_in_stock"))))) or (
             adapter == "arlight" and not code and name in {"Offer", "Credit"})
         if skip:
