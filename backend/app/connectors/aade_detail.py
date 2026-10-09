@@ -126,7 +126,8 @@ def fetch_detail(value):
     lines = invoice.get("invoiceDetails") or []
     lines = lines if isinstance(lines, list) else [lines]
     needs_identifiers = any(not line.get("itemCode") for line in lines if isinstance(line, dict))
-    if (urlsplit(target).hostname == "invoiceportal.gr" and needs_identifiers
+    needs_quantities = (invoice.get("issuer") or {}).get("vatNumber") == "094494879"
+    if (urlsplit(target).hostname == "invoiceportal.gr" and (needs_identifiers or needs_quantities)
             and (invoice.get("invoiceHeader") or {}).get("invoiceType") == "1.1"):
         from app.connectors.aade_ubl import supplement_invoice
         url = urlsplit(target)

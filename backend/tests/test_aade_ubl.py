@@ -90,7 +90,8 @@ def test_untrusted_ubl_rejected(data):
     with pytest.raises(detail.DetailError): supplement_invoice(fiscal(), data)
 
 
-def test_provider_fetches_same_origin_ubl_without_credentials(monkeypatch):
+@pytest.mark.parametrize("has_code", [False, True])
+def test_provider_fetches_same_origin_ubl_without_credentials(monkeypatch, has_code):
     real_client = httpx.Client; paths = []
     def respond(request):
         paths.append(request.url.path)
@@ -98,7 +99,10 @@ def test_provider_fetches_same_origin_ubl_without_credentials(monkeypatch):
         assert not any(key in request.headers for key in ("Authorization", "aade-user-id", "Ocp-Apim-Subscription-Key"))
         return httpx.Response(200, content=ET.tostring(ubl()) if request.url.path.endswith("EN16931") else b"<unused/>")
     monkeypatch.setattr(detail, "_public_host", lambda host: None)
-    monkeypatch.setattr(detail, "parse_detail", lambda data: fiscal())
+    source = fiscal()
+    if has_code:
+        source["invoiceDetails"][0]["itemCode"] = "70-6041"
+    monkeypatch.setattr(detail, "parse_detail", lambda data: source)
     monkeypatch.setattr(detail.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
     assert detail.fetch_detail("https://invoiceportal.gr/invoices/private/pdf")["invoiceDetails"][0]["itemCode"] == "70-6041"
     assert paths == ["/invoices/private/myDATA", "/invoices/private/EN16931"]
