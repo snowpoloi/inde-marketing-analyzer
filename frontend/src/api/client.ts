@@ -496,7 +496,8 @@ export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: s
   mark: string; number: string; net_value: number; vat_amount: number; gross_value: number; reasons: string[];
   fingerprint: string; imported: boolean; can_import: boolean; lines: Array<{ line_number: string; item_code: string;
     description: string; line_type: string; quantity: number | null; unit: string; net_value: number | null;
-    vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[] }> };
+    vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[];
+    match_method?: string | null; matched_item_code?: string | null }> };
 export type SupplierAADEBatchRow = {id:string; number:string; mark:string; status:string; costs_created:number; reasons:string[]};
 
 export const api = {

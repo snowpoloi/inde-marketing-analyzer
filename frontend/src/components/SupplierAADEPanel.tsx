@@ -130,7 +130,8 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
           {key:"type", header:"Type", render:line=>line.line_type}, {key:"qty", header:"Qty", align:"right", render:line=>line.quantity ?? "-"},
           {key:"unit", header:"Unit", render:line=>line.unit || "-"}, {key:"cost", header:"Net cost / piece", align:"right", render:line=>money(line.unit_cost_net)},
           {key:"net", header:"Net", align:"right", render:line=>money(line.net_value)}, {key:"vat", header:"VAT", align:"right", render:line=>money(line.vat_amount)},
-          {key:"review", header:"Review", render:line=>line.reasons.join(" ") || (line.line_type==="shipping" ? "Excluded from product cost" : "Exact XML identifiers")}
+          {key:"review", header:"Review", render:line=>line.reasons.join(" ") || (line.line_type==="shipping" ? "Excluded from product cost"
+            : line.match_method==="anthemidis_title_code" ? `Exact XML code in title: ${line.matched_item_code}` : "Exact XML identifiers")}
         ]}/>
         {preview.can_import && <><label className="supplier-feed-toggle"><input type="checkbox" checked={review.confirmed} disabled={review.accepting || importing} onChange={event=>updateReview(row.id, {confirmed:event.target.checked})}/>Verified products; one purchase piece equals one INDE sales unit</label>
           <button className="primary-action compact" disabled={review.accepting || importing || !review.confirmed} onClick={()=>accept(row.id)}><Check size={16}/>Accept AADE costs</button></>}

@@ -10,7 +10,7 @@ from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Suppli
                         SupplierCatalogProduct, SupplierDocument, SupplierProductCost, User)
 from app.schemas.suppliers import SupplierAADEAcceptRequest, SupplierIdentityRequest, SupplierAADEBatchRequest
 from app.services.supplier_identity import save_supplier_identity, supplier_identities, registered_supplier_names
-from app.services.supplier_aade_costs import accept_invoice, invoice_preview, parse_lines, validated_cost_rows, aade_invoices, import_cost_batch
+from app.services.supplier_aade_costs import accept_invoice, invoice_preview, parse_lines, validated_cost_rows, aade_invoices, import_cost_batch, anthemidis_title_codes
 from app.services.supplier_catalog_pricing import latest_aade_costs
 from app.services.supplier_service import supplier_summary
 from test_supplier_api import client
@@ -56,6 +56,122 @@ def auto_policy(db, user, supplier, *, confirm_units=True):
     from app.services.supplier_catalog_settings import save_pricing_settings
     save_pricing_settings(db, SupplierCatalogPricingInput(sale_vat_rate=24, automatic_costs=True,
         piece_supplier_ids=[supplier.id] if confirm_units else []), user)
+
+
+def seed_anthemidis(db):
+    user, supplier, own, item, fiscal = seed(db)
+    supplier.code, supplier.vat_number = "ANTHEMIDIS", "084146750"
+    feed = db.get(SupplierCatalogFeed, item.feed_id)
+    feed.code, feed.adapter = supplier.code, "anthemidis"
+    item.supplier_code, item.supplier_sku = "832187", "832187"
+    fiscal.issuer_vat = supplier.vat_number
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+        "itemCode": "2-214-843", "itemDescr": "CAST IRON GRILL 832187 (50,5x23,5x1,5)"},
+        fiscal.raw["invoiceDetails"][1]]}
+    db.commit()
+    return user, supplier, own, item, fiscal
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("GRILL 832187 (50,5x23,5x1,5)", {"832187"}),
+    ("CABINET 851867 COLOR 7 (48x38x60)", {"851867"}),
+    ("COAT COVER 60x137 764945 (2 colors)", {"764945"}),
+    ("GRILL (832187)", {"832187"}),
+    ("GRILL 832187 832187", {"832187"}),
+    ("8321870 0832187 X832187 832187X", set()),
+    ("832187x23x10 10x832187x23 10x23x832187", set()),
+    ("832187,00 832187.00 2-832187 832187-1 1/832187", set()),
+    ("BUNDLE 832187 / 851867", {"832187", "851867"}),
+])
+def test_anthemidis_title_code_boundaries(title, expected):
+    assert anthemidis_title_codes(title) == expected
+
+
+def test_anthemidis_title_cost_import_keeps_fiscal_code_and_audit(db):
+    user, supplier, own, _, fiscal = seed_anthemidis(db)
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert preview["can_import"], preview
+    line = preview["lines"][0]
+    assert line["item_code"] == "2-214-843"
+    assert line["matched_item_code"] == "832187"
+    assert line["match_method"] == "anthemidis_title_code"
+    assert line["inde_sku"] == own.sku and line["unit_cost_net"] == 70
+    assert accept_invoice(db, fiscal.id, payload(preview), user)["costs_created"] == 1
+    assert accept_invoice(db, fiscal.id, payload(preview), user)["duplicate"]
+    from app.models import SupplierDocumentLine
+    stored = db.scalar(select(SupplierDocumentLine).where(SupplierDocumentLine.line_type == "product"))
+    assert stored.raw_metadata["aade_item_code"] == "2-214-843"
+    assert stored.raw_metadata["aade_matched_item_code"] == "832187"
+    assert stored.raw_metadata["aade_match_method"] == "anthemidis_title_code"
+    assert latest_aade_costs(db, {own.id}, {supplier.code})[(supplier.code, own.id)][0].net_unit_cost == 70
+    assert own.price == 124
+
+
+@pytest.mark.parametrize("problem", ["other_supplier", "multiple_title_codes", "duplicate_xml_code",
+    "conflicting_invoice_code", "unmatched_inde", "unknown_title_code", "non_piece_unit", "missing_unit", "cancelled", "totals"])
+def test_anthemidis_title_matching_preserves_guards(db, problem):
+    user, supplier, own, item, fiscal = seed_anthemidis(db)
+    if problem == "other_supplier":
+        supplier.vat_number = fiscal.issuer_vat = "123456789"
+    elif problem == "multiple_title_codes":
+        fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+            "itemDescr": "GRILL 832187 + 851867"}, fiscal.raw["invoiceDetails"][1]]}
+    elif problem in {"duplicate_xml_code", "conflicting_invoice_code"}:
+        db.add(SupplierCatalogProduct(feed_id=item.feed_id,
+            supplier_code="OTHER", supplier_sku="832187" if problem == "duplicate_xml_code" else "2-214-843",
+            name="Other product", product_catalog_id=own.id, is_current=True, last_seen_at=datetime.now(timezone.utc)))
+    elif problem == "unmatched_inde":
+        item.product_catalog_id = None
+    elif problem == "unknown_title_code":
+        item.supplier_code = item.supplier_sku = "999999"
+    elif problem in {"non_piece_unit", "missing_unit"}:
+        fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+            "measurementUnit": 2 if problem == "non_piece_unit" else None}, fiscal.raw["invoiceDetails"][1]]}
+    elif problem == "cancelled":
+        fiscal.is_cancelled = True
+    else:
+        fiscal.gross_value = 999
+    db.flush()
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert not preview["can_import"]
+    with pytest.raises(ValueError, match="needs review"):
+        accept_invoice(db, fiscal.id, payload(preview), user)
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+
+
+def test_anthemidis_title_matching_uses_existing_automatic_cost_pipeline(db):
+    from app.services.supplier_aade_jobs import process_aade_costs
+    user, supplier, _, _, _ = seed_anthemidis(db)
+    auto_policy(db, user, supplier)
+    assert process_aade_costs(db)["costs_created"] == 1
+    assert process_aade_costs(db) == {"processed": 0}
+
+
+def test_anthemidis_three_line_invoice_452_matches_title_codes(db):
+    user, supplier, own, item, fiscal = seed_anthemidis(db)
+    lines = [
+        ("2-214-843", "832187", "GRILL 832187 (50,5x23,5x1,5)", 1, "10.04", "2.41"),
+        ("2-312-697", "851867", "CABINET 851867 COLOR 7 (48x38x60)", 1, "23.32", "5.59"),
+        ("2-211-033", "764945", "COAT COVER 60x137 764945 (2 colors)", 12, "14.40", "3.46"),
+    ]
+    for _, code, description, *_ in lines[1:]:
+        product = ProductCatalog(sku=code, name=description, price=20)
+        db.add(product); db.flush()
+        db.add(SupplierCatalogProduct(feed_id=item.feed_id, supplier_code=code, supplier_sku=code,
+            name=description, product_catalog_id=product.id, is_current=True, last_seen_at=datetime.now(timezone.utc)))
+    fiscal.net_value, fiscal.vat_amount, fiscal.gross_value = Decimal("47.76"), Decimal("11.46"), Decimal("59.22")
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [
+        {"lineNumber": index, "itemCode": code, "itemDescr": description, "quantity": quantity,
+         "measurementUnit": 1, "netValue": net, "vatAmount": tax}
+        for index, (code, _, description, quantity, net, tax) in enumerate(lines, 1)]}
+    db.commit()
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert preview["can_import"], preview
+    assert [row["matched_item_code"] for row in preview["lines"]] == ["832187", "851867", "764945"]
+    assert [row["unit_cost_net"] for row in preview["lines"]] == [Decimal("10.04"), Decimal("23.32"), Decimal("1.20")]
+    assert accept_invoice(db, fiscal.id, payload(preview), user)["costs_created"] == 3
+    assert db.scalar(select(SupplierDocument.net_products_total)) == Decimal("47.76")
+    assert own.price == 124
 
 
 def test_automatic_new_invoice_costs_and_idempotence(db):

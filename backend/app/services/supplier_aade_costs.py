@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -17,6 +18,11 @@ from app.schemas.suppliers import (SupplierDocumentInput, SupplierDocumentLineIn
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import effective_invoice, detail_info
+
+
+def anthemidis_title_codes(description):
+    """Standalone six-digit catalog codes, never dimensions or partial numbers."""
+    return set(re.findall(r"(?<![\w.,/+\-])[0-9]{6}(?![\w.,/+\-])", description))
 
 
 def pick(row, *keys):
@@ -181,20 +187,41 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
         product_ids = {product.id for _, product in catalogs if product is not None}
         db.scalars(select(ProductCatalog.id).where(ProductCatalog.id.in_(product_ids)).with_for_update()).all()
     index = {}
+    title_index = {}
+    title_matching = vat == "084146750"
     for item, product in catalogs:
         for identifier in (item.supplier_code, item.supplier_sku, item.ean):
             if identifier:
                 index.setdefault(normalize_identifier(identifier), {})[item.id] = (item, product)
+        if title_matching:
+            for identifier in (item.supplier_code, item.supplier_sku):
+                if identifier and re.fullmatch(r"[0-9]{6}", identifier):
+                    title_index.setdefault(identifier, {})[item.id] = (item, product)
     mappings = db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
     for line in lines:
-        line.update(product_catalog_id=None, inde_sku=None, supplier_sku=None, supplier_code=None, supplier_ean=None)
+        line.update(product_catalog_id=None, inde_sku=None, supplier_sku=None, supplier_code=None, supplier_ean=None,
+                    match_method=None, matched_item_code=None)
         if line["line_type"] == "shipping":
             continue
-        matches = list(index.get(normalize_identifier(line["item_code"]), {}).values()) if line["item_code"] else []
+        candidates = dict(index.get(normalize_identifier(line["item_code"]), {})) if line["item_code"] else {}
+        method, matched_code = "invoice_code", line["item_code"]
+        if title_matching:
+            title_codes = anthemidis_title_codes(line["description"])
+            if len(title_codes) > 1:
+                line["reasons"].append("Multiple Anthemidis catalog codes in the invoice title require review.")
+            elif title_codes:
+                title_code = next(iter(title_codes))
+                title_matches = title_index.get(title_code, {})
+                if title_matches:
+                    if not candidates:
+                        method, matched_code = "anthemidis_title_code", title_code
+                    candidates.update(title_matches)
+        matches = list(candidates.values())
         if len(matches) == 1 and matches[0][1] is not None:
             item, product = matches[0]
             line.update(product_catalog_id=str(product.id), inde_sku=product.sku,
-                        supplier_sku=item.supplier_sku, supplier_code=item.supplier_code, supplier_ean=item.ean)
+                        supplier_sku=item.supplier_sku, supplier_code=item.supplier_code, supplier_ean=item.ean,
+                        match_method=method, matched_item_code=matched_code)
             identity = supplier_mapping_identity(item.supplier_sku, item.ean, item.supplier_code, line["description"])
             prior = next((row for row in mappings if row.identity_key == identity), None)
             if prior and (prior.product_catalog_id not in (None, product.id) or prior.conversion_factor != 1 or prior.pack_quantity != 1):
@@ -278,6 +305,7 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
             description=line["description"], quantity=line["quantity"] or 0, unit=line["unit"],
             net_line_total=line["net_value"], vat_amount=line["vat_amount"], gross_total=line["net_value"] + line["vat_amount"],
             raw_metadata={"aade_item_code": line["item_code"], "aade_vat_category": line["vat_category"],
+                          "aade_match_method": line["match_method"], "aade_matched_item_code": line["matched_item_code"],
                           "aade_source_unit": line["source_unit"], "aade_unit_confirmed": line["unit_confirmed"],
                           "vat_rate_not_supplied": True}))
     request = SupplierImportRequest(supplier=SupplierInput(code=supplier.code, name=supplier.name, vat_number=supplier.vat_number),
