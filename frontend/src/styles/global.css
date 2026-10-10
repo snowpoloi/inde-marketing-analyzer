@@ -484,6 +484,30 @@ tr:last-child td {
   margin-top: 4px;
 }
 
+.aade-ledger-table { container-type: inline-size; min-width: 0; }
+.aade-ledger-table > .table-wrap > table > tbody > .expanded-table-row > td {
+  padding: 0;
+  background: #f5f8f6;
+}
+.aade-ledger-table .invoice-detail-panel {
+  position: sticky;
+  left: 0;
+  width: 100cqi;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 16px;
+  white-space: normal;
+}
+.aade-ledger-table .invoice-detail-panel .panel-title { flex-wrap: wrap; gap: 12px; }
+.aade-ledger-table .invoice-detail-panel .panel-title > div { min-width: 0; }
+.aade-ledger-table .invoice-detail-panel h2 { font-size: 16px; }
+.aade-ledger-table .invoice-detail-panel p,
+.aade-ledger-table .invoice-detail-panel .detail-summary span { overflow-wrap: anywhere; }
+.aade-ledger-table .detail-grid > section { min-width: 0; }
+.aade-invoice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.aade-invoice-actions .icon-button { flex-shrink: 0; }
+
 .detail-summary {
   display: flex;
   flex-wrap: wrap;

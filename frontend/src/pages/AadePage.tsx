@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Download, FileText, Landmark, List, RefreshCw, ReceiptText, Scale, TrendingUp } from "lucide-react";
+import { AlertTriangle, Download, FileText, Landmark, List, RefreshCw, ReceiptText, Scale, TrendingUp, X } from "lucide-react";
 import { api } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -332,7 +332,7 @@ export function AadePage() {
   const [invoiceTypeFilter, setInvoiceTypeFilter] = useState("all");
   const [recordTypeFilter, setRecordTypeFilter] = useState("full_document");
   const [ledgerSearch, setLedgerSearch] = useState("");
-  const [selectedIdentityKey, setSelectedIdentityKey] = useState("");
+  const [openInvoices, setOpenInvoices] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -404,11 +404,6 @@ export function AadePage() {
         .includes(needle);
     });
   }, [directionFilter, invoiceTypeFilter, ledgerRows, ledgerSearch, recordTypeFilter]);
-
-  const selectedLedgerRow = useMemo(
-    () => visibleLedgerRows.find((row) => row.identity_key === selectedIdentityKey) ?? null,
-    [selectedIdentityKey, visibleLedgerRows]
-  );
 
   const summaryRows = useMemo<AadeMetric[]>(
     () => [
@@ -575,11 +570,15 @@ export function AadePage() {
         header: "Lines",
         render: (row) => {
           const lineCount = row.line_items.length + (row.opencart_order?.lines.length ?? 0);
-          const selected = row.identity_key === selectedIdentityKey;
+          const expanded = Boolean(openInvoices[row.identity_key]);
           return (
             <button
               className="secondary-action compact"
-              onClick={() => setSelectedIdentityKey(selected ? "" : row.identity_key)}
+              aria-expanded={expanded}
+              aria-controls={`aade-details-${encodeURIComponent(row.identity_key)}`}
+              aria-label={`${expanded ? "Close" : "View"} invoice ${invoiceLabel(row)}`}
+              title={`${expanded ? "Close" : "View"} invoice ${invoiceLabel(row)}`}
+              onClick={() => setOpenInvoices((current) => ({ ...current, [row.identity_key]: !current[row.identity_key] }))}
             >
               <List size={15} />
               {lineCount ? number.format(lineCount) : "View"}
@@ -594,7 +593,7 @@ export function AadePage() {
           row.is_cancelled ? <span className="badge badge-failed">Cancelled</span> : <StatusBadge value="success" />
       }
     ],
-    [selectedIdentityKey]
+    [openInvoices]
   );
 
   return (
@@ -678,9 +677,19 @@ export function AadePage() {
             Export CSV
           </button>
         </div>
-        <DataTable rows={visibleLedgerRows} columns={ledgerColumns} empty="No AADE document rows for this period." />
-        {selectedLedgerRow ? (
-          <div className="invoice-detail-panel">
+        <div className="aade-ledger-table">
+        <DataTable
+          rows={visibleLedgerRows}
+          columns={ledgerColumns}
+          rowKey={(row) => row.identity_key}
+          empty="No AADE document rows for this period."
+          renderExpandedRow={(selectedLedgerRow) => openInvoices[selectedLedgerRow.identity_key] ? (
+          <div
+            className="invoice-detail-panel"
+            id={`aade-details-${encodeURIComponent(selectedLedgerRow.identity_key)}`}
+            role="region"
+            aria-label={`Invoice ${invoiceLabel(selectedLedgerRow)}`}
+          >
             <div className="panel-title">
               <div>
                 <h2>Invoice lines</h2>
@@ -688,6 +697,7 @@ export function AadePage() {
                   {selectedLedgerRow.issue_date} | {selectedLedgerRow.direction} | {formatAadeInvoiceType(selectedLedgerRow.invoice_type)} | {invoiceLabel(selectedLedgerRow)}
                 </p>
               </div>
+              <div className="aade-invoice-actions">
               <button
                 className="secondary-action compact"
                 onClick={() => downloadInvoiceLinesCsv(selectedLedgerRow)}
@@ -696,6 +706,15 @@ export function AadePage() {
                 <Download size={17} />
                 Export lines
               </button>
+              <button
+                className="icon-button"
+                aria-label={`Close invoice ${invoiceLabel(selectedLedgerRow)}`}
+                title="Close invoice"
+                onClick={() => setOpenInvoices((current) => ({ ...current, [selectedLedgerRow.identity_key]: false }))}
+              >
+                <X size={17} />
+              </button>
+              </div>
             </div>
 
             <div className="detail-summary">
@@ -754,7 +773,9 @@ export function AadePage() {
               </section>
             </div>
           </div>
-        ) : null}
+          ) : null}
+        />
+        </div>
       </section>
 
       <div className="two-column">
