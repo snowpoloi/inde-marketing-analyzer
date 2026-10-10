@@ -80,20 +80,33 @@ def seed_anthemidis(db):
     ("GRILL 832187 832187", {"832187"}),
     ("8321870 0832187 X832187 832187X", set()),
     ("832187x23x10 10x832187x23 10x23x832187", set()),
-    ("832187,00 832187.00 2-832187 832187-1 1/832187", set()),
+    ("832187,00 832187.00 2-832187 1/832187", set()),
+    ("FRAME 15x20 SILVER 11703-6", {"11703-6"}),
+    ("FRAME (11703-6) 11703-6", {"11703-6"}),
+    ("VARIANT 832187-1", {"832187-1"}),
+    ("BUNDLE 11703-6 / 832187", {"11703-6", "832187"}),
+    ("11703 11703- 11703-6789 011703-6789", set()),
+    ("X11703-6 11703-6X 11703-6-1 2-11703-6", set()),
+    ("11703-6,00 11703-6.00 1/11703-6", set()),
+    ("11703-6x20 20x11703-6 20x30x11703-6", set()),
     ("BUNDLE 832187 / 851867", {"832187", "851867"}),
 ])
 def test_anthemidis_title_code_boundaries(title, expected):
     assert anthemidis_title_codes(title) == expected
 
 
-def test_anthemidis_title_cost_import_keeps_fiscal_code_and_audit(db):
-    user, supplier, own, _, fiscal = seed_anthemidis(db)
+@pytest.mark.parametrize("catalog_code", ["832187", "11703-6", "832187-1"])
+def test_anthemidis_title_cost_import_keeps_fiscal_code_and_audit(db, catalog_code):
+    user, supplier, own, item, fiscal = seed_anthemidis(db)
+    item.supplier_code = item.supplier_sku = catalog_code
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+        "itemDescr": f"PRODUCT {catalog_code} (15x20)"}, fiscal.raw["invoiceDetails"][1]]}
+    db.flush()
     preview = invoice_preview(db, fiscal.id, supplier.id)
     assert preview["can_import"], preview
     line = preview["lines"][0]
     assert line["item_code"] == "2-214-843"
-    assert line["matched_item_code"] == "832187"
+    assert line["matched_item_code"] == catalog_code
     assert line["match_method"] == "anthemidis_title_code"
     assert line["inde_sku"] == own.sku and line["unit_cost_net"] == 70
     assert accept_invoice(db, fiscal.id, payload(preview), user)["costs_created"] == 1
@@ -101,7 +114,7 @@ def test_anthemidis_title_cost_import_keeps_fiscal_code_and_audit(db):
     from app.models import SupplierDocumentLine
     stored = db.scalar(select(SupplierDocumentLine).where(SupplierDocumentLine.line_type == "product"))
     assert stored.raw_metadata["aade_item_code"] == "2-214-843"
-    assert stored.raw_metadata["aade_matched_item_code"] == "832187"
+    assert stored.raw_metadata["aade_matched_item_code"] == catalog_code
     assert stored.raw_metadata["aade_match_method"] == "anthemidis_title_code"
     assert latest_aade_costs(db, {own.id}, {supplier.code})[(supplier.code, own.id)][0].net_unit_cost == 70
     assert own.price == 124
@@ -109,16 +122,20 @@ def test_anthemidis_title_cost_import_keeps_fiscal_code_and_audit(db):
 
 @pytest.mark.parametrize("problem", ["other_supplier", "multiple_title_codes", "duplicate_xml_code",
     "conflicting_invoice_code", "unmatched_inde", "unknown_title_code", "non_piece_unit", "missing_unit", "cancelled", "totals"])
-def test_anthemidis_title_matching_preserves_guards(db, problem):
+@pytest.mark.parametrize("catalog_code", ["832187", "11703-6"])
+def test_anthemidis_title_matching_preserves_guards(db, problem, catalog_code):
     user, supplier, own, item, fiscal = seed_anthemidis(db)
+    item.supplier_code = item.supplier_sku = catalog_code
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+        "itemDescr": f"PRODUCT {catalog_code} (15x20)"}, fiscal.raw["invoiceDetails"][1]]}
     if problem == "other_supplier":
         supplier.vat_number = fiscal.issuer_vat = "123456789"
     elif problem == "multiple_title_codes":
         fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
-            "itemDescr": "GRILL 832187 + 851867"}, fiscal.raw["invoiceDetails"][1]]}
+            "itemDescr": f"PRODUCT {catalog_code} + 851867"}, fiscal.raw["invoiceDetails"][1]]}
     elif problem in {"duplicate_xml_code", "conflicting_invoice_code"}:
         db.add(SupplierCatalogProduct(feed_id=item.feed_id,
-            supplier_code="OTHER", supplier_sku="832187" if problem == "duplicate_xml_code" else "2-214-843",
+            supplier_code="OTHER", supplier_sku=catalog_code if problem == "duplicate_xml_code" else "2-214-843",
             name="Other product", product_catalog_id=own.id, is_current=True, last_seen_at=datetime.now(timezone.utc)))
     elif problem == "unmatched_inde":
         item.product_catalog_id = None
@@ -139,12 +156,37 @@ def test_anthemidis_title_matching_preserves_guards(db, problem):
     assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
 
 
-def test_anthemidis_title_matching_uses_existing_automatic_cost_pipeline(db):
+@pytest.mark.parametrize("catalog_code", ["832187", "11703-6"])
+def test_anthemidis_title_matching_uses_existing_automatic_cost_pipeline(db, catalog_code):
     from app.services.supplier_aade_jobs import process_aade_costs
-    user, supplier, _, _, _ = seed_anthemidis(db)
+    user, supplier, _, item, fiscal = seed_anthemidis(db)
+    item.supplier_code = item.supplier_sku = catalog_code
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [{**fiscal.raw["invoiceDetails"][0],
+        "itemDescr": f"PRODUCT {catalog_code} (15x20)"}, fiscal.raw["invoiceDetails"][1]]}
+    db.commit()
     auto_policy(db, user, supplier)
     assert process_aade_costs(db)["costs_created"] == 1
     assert process_aade_costs(db) == {"processed": 0}
+
+
+def test_anthemidis_hyphen_match_does_not_skip_missing_catalog_product(db):
+    user, supplier, own, item, fiscal = seed_anthemidis(db)
+    item.supplier_code = item.supplier_sku = "11703-6"
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [
+        {**fiscal.raw["invoiceDetails"][0], "itemDescr": "FRAME 15x20 11703-6"},
+        {**fiscal.raw["invoiceDetails"][1], "itemCode": "2-402-602",
+         "itemDescr": "GAZEBO 3x3M 851546 WHITE", "quantity": 2, "measurementUnit": 1}]}
+    db.flush()
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert preview["lines"][0]["inde_sku"] == own.sku
+    assert preview["lines"][0]["matched_item_code"] == "11703-6"
+    assert not preview["lines"][0]["reasons"]
+    assert preview["lines"][1]["product_catalog_id"] is None
+    assert preview["lines"][1]["reasons"] == ["No unique INDE product through this supplier XML."]
+    assert not preview["can_import"]
+    with pytest.raises(ValueError, match="needs review"):
+        accept_invoice(db, fiscal.id, payload(preview), user)
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
 
 
 def test_anthemidis_three_line_invoice_452_matches_title_codes(db):

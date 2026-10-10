@@ -20,9 +20,12 @@ from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import effective_invoice, detail_info
 
 
+_ANTHEMIDIS_CATALOG_CODE = r"(?:[0-9]{5,6}-[0-9]{1,3}|[0-9]{6})"
+
+
 def anthemidis_title_codes(description):
-    """Standalone six-digit catalog codes, never dimensions or partial numbers."""
-    return set(re.findall(r"(?<![\w.,/+\-])[0-9]{6}(?![\w.,/+\-])", description))
+    """Standalone numeric catalog codes, including variants such as 11703-6."""
+    return set(re.findall(rf"(?<![\w.,/+\-]){_ANTHEMIDIS_CATALOG_CODE}(?![\w.,/+\-])", description))
 
 
 def pick(row, *keys):
@@ -195,7 +198,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                 index.setdefault(normalize_identifier(identifier), {})[item.id] = (item, product)
         if title_matching:
             for identifier in (item.supplier_code, item.supplier_sku):
-                if identifier and re.fullmatch(r"[0-9]{6}", identifier):
+                if identifier and re.fullmatch(_ANTHEMIDIS_CATALOG_CODE, identifier):
                     title_index.setdefault(identifier, {})[item.id] = (item, product)
     mappings = db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
     for line in lines:
