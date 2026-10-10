@@ -79,8 +79,8 @@ async function main() {
       await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
       await page.getByRole("columnheader", {name:"Sort by Gross margin %",exact:true}).waitFor();
       assert.equal(catalogQuery.get("sort_direction"), "desc");
-      await page.getByLabel("Period from").fill("2026-09-01");
-      await page.getByLabel("Period to").fill("2026-09-30");
+      await page.getByLabel("Report period from").fill("2026-09-01");
+      await page.getByLabel("Report period to").fill("2026-09-30");
       await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
       assert.equal(periodQuery.get("date_from"), "2026-09-01");
       assert.equal(periodQuery.get("date_to"), "2026-09-30");

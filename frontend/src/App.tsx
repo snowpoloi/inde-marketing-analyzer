@@ -15,6 +15,7 @@ import { SyncLogsPage } from "./pages/SyncLogsPage";
 import { SuppliersPage } from "./pages/SuppliersPage";
 import { TikTokCallbackPage } from "./pages/TikTokCallbackPage";
 import { RecordDetailPage } from "./pages/RecordDetailPage";
+import { DateRangeProvider } from "./components/DateRangeControls";
 
 type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
@@ -75,6 +76,7 @@ export function App() {
   }
 
   return (
+    <DateRangeProvider>
     <Layout
       isAdmin={isAdmin}
       active={view}
@@ -97,5 +99,6 @@ export function App() {
       {view === "settings" ? <SettingsPage /> : null}
       {view === "sync" ? <SyncLogsPage /> : null}
     </Layout>
+    </DateRangeProvider>
   );
 }

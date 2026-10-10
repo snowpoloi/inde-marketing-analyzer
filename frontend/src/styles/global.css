@@ -1034,7 +1034,7 @@ tr:last-child td {
 
 .analytics-period-row {
   display: grid;
-  grid-template-columns: 12px minmax(170px, 1fr) 160px 160px 40px;
+  grid-template-columns: 12px minmax(170px, 1fr) minmax(0, 470px) 40px;
   align-items: center;
   gap: 10px;
 }
@@ -1048,6 +1048,15 @@ tr:last-child td {
 .analytics-period-row input {
   width: 100%;
   min-width: 0;
+}
+
+.analytics-period-row .date-range-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.analytics-period-row .date-range-controls > * {
+  width: 100%;
 }
 
 .analytics-period-row .icon-button:disabled,
@@ -1319,6 +1328,15 @@ tr:last-child td {
 
   .analytics-period-row input {
     grid-column: 2;
+  }
+
+  .analytics-period-row .date-range-controls {
+    grid-column: 2;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .analytics-period-row .date-range-controls input {
+    grid-column: auto;
   }
 
   .analytics-period-row > i {

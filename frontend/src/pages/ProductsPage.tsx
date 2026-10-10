@@ -4,16 +4,11 @@ import { api } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 2 });
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
 
 type ProductRow = {
   product_id: string | null;
@@ -78,19 +73,18 @@ function compareNumber(a: number | null | undefined, b: number | null | undefine
 }
 
 export function ProductsPage() {
-  const today = isoDate();
-  const [dateTo, setDateTo] = useState(today);
-  const [dateFrom, setDateFrom] = useState(isoDate(-30));
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [sort, setSort] = useState<SortState>({ key: "revenue", direction: "desc" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function load() {
+  async function load(nextFrom = dateFrom, nextTo = dateTo) {
     setLoading(true);
     setError("");
     try {
-      const result = await api.dashboard("products", dateFrom, dateTo);
+      const result = await api.dashboard("products", nextFrom, nextTo);
       setRows(result.data.rows ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load products");
@@ -316,9 +310,8 @@ export function ProductsPage() {
           <p>Best-selling products from OpenCart sales enriched with the XML product feed.</p>
         </div>
         <div className="date-controls">
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="primary-action compact" onClick={load} disabled={loading}>
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
+          <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh
           </button>

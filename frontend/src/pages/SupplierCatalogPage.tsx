@@ -7,6 +7,7 @@ import type { Column } from "../components/DataTable";
 import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
 import { SupplierProductOrders } from "../components/SupplierProductOrders";
 import { SupplierProductInvoices } from "../components/SupplierProductInvoices";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const money = (value: number | null) => value == null ? "-" : currency.format(Number(value));
@@ -45,8 +46,8 @@ export function SupplierCatalogPage() {
   const [showCosts, setShowCosts] = useState(false);
   const [costSupplier, setCostSupplier] = useState("");
   const [openingCosts, setOpeningCosts] = useState(false);
-  const [costStart, setCostStart] = useState(`${new Date().getFullYear()}-01-01`);
-  const [costEnd, setCostEnd] = useState(new Date().toISOString().slice(0,10));
+  const { range, setRange } = useReportPeriod();
+  const { from: costStart, to: costEnd } = range;
   const [period, setPeriod] = useState<SupplierCatalogPeriod | null>(null);
   const [periodLoading, setPeriodLoading] = useState(false);
   const [periodError, setPeriodError] = useState("");
@@ -155,8 +156,7 @@ export function SupplierCatalogPage() {
 
   return <div className="page-stack">
     <header className="page-header"><div><h1>Supplier catalog</h1></div>
-      <div className="supplier-catalog-actions"><label>From<input aria-label="Period from" type="date" value={costStart} onChange={event=>setCostStart(event.target.value)}/></label>
-        <label>To<input aria-label="Period to" type="date" value={costEnd} onChange={event=>setCostEnd(event.target.value)}/></label>
+      <div className="supplier-catalog-actions"><DateRangeControls range={range} onChange={setRange} />
         <button className="secondary-action compact" disabled={loading || periodLoading} onClick={()=>{load();loadPeriod();}}><RefreshCw size={16} />Refresh</button>
         <button className="primary-action compact" disabled={openingCosts} onClick={openCosts}><Download size={16}/>AADE costs</button>
         <button className="primary-action compact" disabled={!selected || queuing || ["queued", "running"].includes(selected.status)} onClick={sync}><RefreshCw size={16} />Sync XML</button></div>
@@ -204,8 +204,7 @@ export function SupplierCatalogPage() {
     {showCosts && <div className="modal-backdrop" onClick={()=>setShowCosts(false)}>
       <section className="supplier-catalog-dialog supplier-cost-dialog" role="dialog" aria-modal="true" aria-label="Import AADE purchase costs" onClick={event=>event.stopPropagation()}>
         <div className="panel-title"><h2>AADE purchase costs</h2><button className="icon-button" autoFocus title="Close cost import" aria-label="Close cost import" onClick={()=>setShowCosts(false)}><X size={18}/></button></div>
-        <div className="supplier-catalog-actions"><label>From<input aria-label="Cost invoices from" type="date" value={costStart} onChange={event=>setCostStart(event.target.value)}/></label>
-          <label>To<input aria-label="Cost invoices to" type="date" value={costEnd} onChange={event=>setCostEnd(event.target.value)}/></label></div>
+        <div className="supplier-catalog-actions"><DateRangeControls range={range} onChange={setRange} label="Cost invoices" /></div>
         <SupplierAADEPanel start={costStart} end={costEnd} initialSupplier={costSupplier} onImported={()=>{load();loadPeriod();}} onSettings={()=>{setShowCosts(false);window.location.hash="settings";}}/>
       </section>
     </div>}

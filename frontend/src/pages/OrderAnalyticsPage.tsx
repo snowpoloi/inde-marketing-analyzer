@@ -26,6 +26,8 @@ import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import "../styles/date-presets.css";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
+import { localIso, presetRange, type DateRange } from "../utils/dateRange";
 
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 1 });
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -55,33 +57,26 @@ const emptyOptions: OrderAnalyticsOptions = {
   }
 };
 
-function localIso(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function shiftDays(value: Date, days: number) {
   const next = new Date(value);
   next.setDate(next.getDate() + days);
   return next;
 }
 
-function defaultPeriods(): OrderAnalyticsPeriodInput[] {
-  const today = new Date();
+function defaultPeriods(range: DateRange): OrderAnalyticsPeriodInput[] {
+  const previous = presetRange("previous-month");
   return [
     {
       key: "current",
       label: "Current period",
-      date_from: localIso(shiftDays(today, -29)),
-      date_to: localIso(today)
+      date_from: range.from,
+      date_to: range.to
     },
     {
       key: "previous",
       label: "Previous period",
-      date_from: localIso(shiftDays(today, -59)),
-      date_to: localIso(shiftDays(today, -30))
+      date_from: previous.from,
+      date_to: previous.to
     }
   ];
 }
@@ -221,7 +216,10 @@ function ComparisonChart({
 }
 
 export function OrderAnalyticsPage() {
-  const [periods, setPeriods] = useState<OrderAnalyticsPeriodInput[]>(defaultPeriods);
+  const { range, setRange } = useReportPeriod();
+  const [configuredPeriods, setPeriods] = useState<OrderAnalyticsPeriodInput[]>(() => defaultPeriods(range));
+  const periods = useMemo(() => configuredPeriods.map((period, index) => index === 0
+    ? { ...period, date_from: range.from, date_to: range.to } : period), [configuredPeriods, range]);
   const [groupBy, setGroupBy] = useState<"day" | "month">("day");
   const [staleDays, setStaleDays] = useState(3);
   const [options, setOptions] = useState<OrderAnalyticsOptions>(emptyOptions);
@@ -249,9 +247,9 @@ export function OrderAnalyticsPage() {
     }
   }
 
-  async function load() {
+  async function load(nextPeriods = periods) {
     await fetchAnalytics({
-      periods,
+      periods: nextPeriods,
       statuses: displayedStatuses,
       aging_statuses: agingStatuses,
       processed_statuses: processedStatuses,
@@ -487,24 +485,20 @@ export function OrderAnalyticsPage() {
                 value={period.label}
                 onChange={(event) => updatePeriod(period.key, { label: event.target.value })}
               />
-              <input
-                aria-label={`${period.label} start`}
-                type="date"
-                value={period.date_from}
-                onChange={(event) => updatePeriod(period.key, { date_from: event.target.value })}
-              />
-              <input
-                aria-label={`${period.label} end`}
-                type="date"
-                value={period.date_to}
-                onChange={(event) => updatePeriod(period.key, { date_to: event.target.value })}
-              />
+              <DateRangeControls range={index === 0 ? range : { from: period.date_from, to: period.date_to }}
+                label={`Period ${index + 1}`} disabled={loading}
+                onChange={next => {
+                  updatePeriod(period.key, { date_from: next.from, date_to: next.to });
+                  if (index === 0) setRange(next);
+                }}
+                onPreset={next => load(periods.map(item => item.key === period.key
+                  ? { ...item, date_from: next.from, date_to: next.to } : item))} />
               <button
                 className="icon-button danger"
                 type="button"
                 title="Remove period"
                 aria-label={`Remove ${period.label}`}
-                disabled={periods.length <= 2}
+                disabled={periods.length <= 2 || index === 0}
                 onClick={() => setPeriods((current) => current.filter((item) => item.key !== period.key))}
               >
                 <Trash2 size={17} />

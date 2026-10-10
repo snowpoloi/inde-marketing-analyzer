@@ -6,37 +6,11 @@ import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import "../styles/date-presets.css";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 2 });
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
-
-type DatePreset = {
-  key: string;
-  label: string;
-  fromOffset: number;
-  toOffset: number;
-};
-
-const datePresets: DatePreset[] = [
-  { key: "today", label: "Today", fromOffset: 0, toOffset: 0 },
-  { key: "yesterday", label: "Yesterday", fromOffset: -1, toOffset: -1 },
-  { key: "last-7", label: "Last 7 days", fromOffset: -6, toOffset: 0 },
-  { key: "last-30", label: "Last 30 days", fromOffset: -29, toOffset: 0 }
-];
-
-function presetRange(preset: DatePreset) {
-  return {
-    from: isoDate(preset.fromOffset),
-    to: isoDate(preset.toOffset)
-  };
-}
 
 type PerformanceRow = {
   source?: string;
@@ -79,9 +53,8 @@ type BrandCategoryData = {
 };
 
 export function DashboardPage() {
-  const today = isoDate();
-  const [dateTo, setDateTo] = useState(today);
-  const [dateFrom, setDateFrom] = useState(isoDate(-29));
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<any>({});
@@ -132,18 +105,6 @@ export function DashboardPage() {
     load();
   }, []);
 
-  function applyPreset(preset: DatePreset) {
-    const range = presetRange(preset);
-    setDateFrom(range.from);
-    setDateTo(range.to);
-    load(range.from, range.to);
-  }
-
-  const activePreset = datePresets.find((preset) => {
-    const range = presetRange(preset);
-    return range.from === dateFrom && range.to === dateTo;
-  })?.key;
-
   const performanceColumns: Column<PerformanceRow>[] = useMemo(
     () => [
       { key: "campaign", header: "Campaign", render: (row) => <strong>{row.campaign_name}</strong> },
@@ -165,20 +126,7 @@ export function DashboardPage() {
           <p>OpenCart is treated as the source of truth for actual sales.</p>
         </div>
         <div className="date-controls">
-          <div className="preset-tabs" aria-label="Date presets">
-            {datePresets.map((preset) => (
-              <button
-                className={`date-preset ${activePreset === preset.key ? "active" : ""}`}
-                key={preset.key}
-                onClick={() => applyPreset(preset)}
-                disabled={loading}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <TrendingUp size={17} />
             Refresh

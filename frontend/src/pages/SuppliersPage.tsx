@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -95,8 +96,8 @@ function downloadTemplate() {
 }
 
 export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
-  const [dateFrom, setDateFrom] = useState(isoDate(-30));
-  const [dateTo, setDateTo] = useState(isoDate());
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [tab, setTab] = useState<Tab>("products");
   const [aadeSupplier, setAADESupplier] = useState("");
   const [summary, setSummary] = useState<SupplierSummary | null>(null);
@@ -143,15 +144,15 @@ export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = overflow; previous?.focus(); };
   }, [historyProduct?.mapping_id]);
 
-  async function load() {
+  async function load(nextFrom = dateFrom, nextTo = dateTo) {
     setLoading(true);
     setError("");
     try {
       const [summaryResult, productsResult, unmatchedResult, performanceResult] = await Promise.all([
-        api.supplierSummary(dateFrom, dateTo),
-        api.supplierProducts(dateTo),
+        api.supplierSummary(nextFrom, nextTo),
+        api.supplierProducts(nextTo),
         api.unmatchedSupplierProducts(),
-        api.supplierPerformance(dateFrom, dateTo)
+        api.supplierPerformance(nextFrom, nextTo)
       ]);
       setSummary(summaryResult.data);
       setProducts(productsResult.data.rows);
@@ -433,9 +434,8 @@ export function SuppliersPage({onSettings}: {onSettings:()=>void}) {
           <h1>Suppliers &amp; COGS</h1>
         </div>
         <div className="date-controls">
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="primary-action compact" onClick={load} disabled={loading}>
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
+          <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh
           </button>

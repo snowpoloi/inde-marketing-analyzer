@@ -8,6 +8,7 @@ import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { orderLink } from "../utils/recordLinks";
 import "../styles/date-presets.css";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
@@ -33,12 +34,6 @@ const emptyOverview: OrdersOverview = {
   supplier_sales: [],
   supplier_products: []
 };
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
 
 function excelCell(value: unknown) {
   const text = value === null || value === undefined ? "" : String(value);
@@ -108,8 +103,8 @@ function supplierProductExportRows(rows: SupplierProductSale[]) {
 }
 
 export function OrdersPage() {
-  const [dateFrom, setDateFrom] = useState(isoDate(-29));
-  const [dateTo, setDateTo] = useState(isoDate());
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [activeTab, setActiveTab] = useState<OrdersTab>("orders");
   const [overview, setOverview] = useState<OrdersOverview>(emptyOverview);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -225,8 +220,7 @@ export function OrdersPage() {
           <p>OpenCart orders with bank payment status, shipping totals and product sales by supplier.</p>
         </div>
         <div className="date-controls">
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh

@@ -5,16 +5,11 @@ import { DataTable } from "../components/DataTable";
 import type { SyncRun } from "../api/client";
 import type { Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const providers = ["meta_ads", "google_ads", "tiktok_ads", "ga4", "merchant_center", "search_console", "aade", "opencart", "shoply"];
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
 
 function shortList(value: unknown, limit = 5) {
   if (!Array.isArray(value)) {
@@ -164,8 +159,8 @@ function syncDetails(row: SyncRun) {
 
 export function SyncLogsPage() {
   const [runs, setRuns] = useState<SyncRun[]>([]);
-  const [dateTo, setDateTo] = useState(isoDate());
-  const [dateFrom, setDateFrom] = useState(isoDate(-1));
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [selectedProviders, setSelectedProviders] = useState(providers);
   const [googleFile, setGoogleFile] = useState<File | null>(null);
   const [metaFile, setMetaFile] = useState<File | null>(null);
@@ -225,8 +220,7 @@ export function SyncLogsPage() {
           <span>Read-only provider pull</span>
         </div>
         <div className="sync-controls">
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <DateRangeControls range={range} onChange={setRange} />
           <div className="provider-pills">
             {providers.map((provider) => (
               <label key={provider}>

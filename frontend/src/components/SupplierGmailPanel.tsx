@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Mail, RefreshCw, Search, X } from "lucide-react";
 import { api, type SupplierGmailSource, type SupplierGmailJob } from "../api/client";
 import { DataTable, type Column } from "./DataTable";
+import { DateRangeControls, useReportPeriod } from "./DateRangeControls";
 
 const euros = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const amount = (value: string) => euros.format(Number(value));
-const day = (offset: number) => { const date = new Date(); date.setDate(date.getDate() + offset); return date.toISOString().slice(0, 10); };
 
 export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<void> }) {
   const [rows, setRows] = useState<SupplierGmailSource[]>([]);
@@ -18,8 +18,8 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [from, setFrom] = useState(day(-7));
-  const [to, setTo] = useState(day(0));
+  const { range, setRange } = useReportPeriod();
+  const { from, to } = range;
   const [selected, setSelected] = useState<SupplierGmailSource | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [freeShipping, setFreeShipping] = useState(false);
@@ -93,8 +93,7 @@ export function SupplierGmailPanel({ onImported }: { onImported: () => Promise<v
   return <section className="panel supplier-gmail">
     <div className="panel-title"><h2><Mail size={18} /> MEGAPAP documents</h2><span>info@inde.gr | {configured === null ? "Connection status unavailable" : configured ? "Configured" : "Not configured"}{configured && automatic ? ` | Auto: ${interval} min` : ""}</span></div>
     <div className="supplier-gmail-controls">
-      <label>Received from<input type="date" value={from} max={to} onChange={event => setFrom(event.target.value)} /></label>
-      <label>Received to<input type="date" value={to} min={from} onChange={event => setTo(event.target.value)} /></label>
+      <DateRangeControls range={range} onChange={setRange} disabled={busy} label="Received period" />
       <button className="primary-action" disabled={!configured || busy || !from || !to || from > to || job?.status === "queued" || job?.status === "running"} onClick={() => sync()}><RefreshCw size={16} /> Read Gmail</button>
       <button className="icon-button" title="Refresh Gmail documents" aria-label="Refresh Gmail documents" disabled={busy || loading} onClick={() => load()}><RefreshCw size={16} /></button>
     </div>

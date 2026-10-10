@@ -7,6 +7,7 @@ import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import "../styles/date-presets.css";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
@@ -29,12 +30,6 @@ const emptyDashboard: BankDashboard = {
   deposits: [],
   transactions: []
 };
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
 
 function scopeLabel(scope: string | undefined) {
   switch (scope) {
@@ -119,8 +114,8 @@ function transactionExportRows(rows: BankTransaction[]) {
 }
 
 export function BanksPage() {
-  const [dateFrom, setDateFrom] = useState(isoDate(-29));
-  const [dateTo, setDateTo] = useState(isoDate());
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [activeTab, setActiveTab] = useState<BankTab>("transactions");
   const [dashboard, setDashboard] = useState<BankDashboard>(emptyDashboard);
   const [file, setFile] = useState<File | null>(null);
@@ -279,8 +274,7 @@ export function BanksPage() {
           <p>Bank exports, expense analysis, deposit confirmations and OpenCart payment matching.</p>
         </div>
         <div className="date-controls">
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh

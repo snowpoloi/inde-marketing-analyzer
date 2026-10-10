@@ -7,36 +7,10 @@ import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { aadeInvoiceTypeLabel, formatAadeInvoiceType } from "../utils/aadeInvoiceTypes";
 import "../styles/date-presets.css";
+import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
-
-function isoDate(daysOffset = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + daysOffset);
-  return value.toISOString().slice(0, 10);
-}
-
-type DatePreset = {
-  key: string;
-  label: string;
-  fromOffset: number;
-  toOffset: number;
-};
-
-const datePresets: DatePreset[] = [
-  { key: "today", label: "Today", fromOffset: 0, toOffset: 0 },
-  { key: "yesterday", label: "Yesterday", fromOffset: -1, toOffset: -1 },
-  { key: "last-7", label: "Last 7 days", fromOffset: -6, toOffset: 0 },
-  { key: "last-30", label: "Last 30 days", fromOffset: -29, toOffset: 0 }
-];
-
-function presetRange(preset: DatePreset) {
-  return {
-    from: isoDate(preset.fromOffset),
-    to: isoDate(preset.toOffset)
-  };
-}
 
 type AuditAction = {
   title: string;
@@ -323,9 +297,8 @@ function downloadInvoiceLinesCsv(row: AadeLedgerRow) {
 }
 
 export function AadePage() {
-  const [dateFrom, setDateFrom] = useState(isoDate(-1));
-  const [dateTo, setDateTo] = useState(isoDate());
-  const [activePreset, setActivePreset] = useState("");
+  const { range, setRange } = useReportPeriod();
+  const { from: dateFrom, to: dateTo } = range;
   const [aade, setAade] = useState<AadeAudit>(emptyAade);
   const [ledgerRows, setLedgerRows] = useState<AadeLedgerRow[]>([]);
   const [directionFilter, setDirectionFilter] = useState("all");
@@ -351,14 +324,6 @@ export function AadePage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function applyPreset(preset: DatePreset) {
-    const range = presetRange(preset);
-    setDateFrom(range.from);
-    setDateTo(range.to);
-    setActivePreset(preset.key);
-    load(range.from, range.to);
   }
 
   useEffect(() => {
@@ -604,20 +569,7 @@ export function AadePage() {
           <p>Fiscal documents, VAT and OpenCart reconciliation from read-only myDATA pulls.</p>
         </div>
         <div className="date-controls">
-          <div className="preset-tabs" aria-label="Date presets">
-            {datePresets.map((preset) => (
-              <button
-                className={`date-preset ${activePreset === preset.key ? "active" : ""}`}
-                key={preset.key}
-                onClick={() => applyPreset(preset)}
-                disabled={loading}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <DateRangeControls range={range} onChange={setRange} onPreset={next => load(next.from, next.to)} disabled={loading} />
           <button className="primary-action compact" onClick={() => load()} disabled={loading}>
             <RefreshCw size={17} />
             Refresh
