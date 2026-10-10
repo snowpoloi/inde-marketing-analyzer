@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.orm import Session
@@ -34,9 +35,11 @@ from app.services.supplier_costing import (
     CatalogIdentity,
     CostOption,
     MatchCandidate,
+    POST_ORDER_INVOICE_DAYS,
     calculate_purchase_line,
     decimal_value,
     exact_catalog_matches,
+    estimate_sale_cost,
     fuzzy_catalog_candidates,
     margin_metrics,
     money,
@@ -628,6 +631,7 @@ def _cost_options(costs: list[SupplierProductCost]) -> list[CostOption]:
             net_unit_cost=cost.net_unit_cost,
             confidence=cost.source_confidence,
             status=cost.status,
+            supplier_key=str(cost.supplier_id),
         )
         for cost in costs if cost.currency == "EUR"
     ]
@@ -1010,6 +1014,8 @@ def product_profitability(
     date_from: date,
     date_to: date,
     sale_statuses: list[str] | None,
+    *,
+    include_later_invoices: bool = False,
 ) -> list[dict[str, Any]]:
     conditions = [func.date(OpenCartOrder.date_added).between(date_from, date_to)]
     if sale_statuses is not None:
@@ -1044,8 +1050,16 @@ def product_profitability(
     ).mappings()]
     catalog_lookup = _catalog_lookup(catalog_products)
     costs_by_catalog: dict[UUID, list[SupplierProductCost]] = defaultdict(list)
-    for cost in validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(SupplierProductCost.purchase_date <= date_to)).all()):
+    costs_through = min(date_to + timedelta(days=POST_ORDER_INVOICE_DAYS),
+                        datetime.now(ZoneInfo("Europe/Athens")).date()) if include_later_invoices else date_to
+    cost_ids = {catalog.id for _, line in pairs if (catalog := _sale_catalog(line, catalog_lookup))}
+    for cost in validated_cost_rows(db, db.scalars(select(SupplierProductCost).where(
+        SupplierProductCost.product_catalog_id.in_(cost_ids),
+        SupplierProductCost.purchase_date <= costs_through,
+    )).all()):
         costs_by_catalog[cost.product_catalog_id].append(cost)
+    cost_options = {key: _cost_options(costs) for key, costs in costs_by_catalog.items()}
+    costs_by_id = {str(cost.id): cost for costs in costs_by_catalog.values() for cost in costs}
 
     lines_by_order: dict[UUID, list[tuple[OpenCartOrder, OpenCartOrderProduct]]] = defaultdict(list)
     for order, product in pairs:
@@ -1097,6 +1111,8 @@ def product_profitability(
                     "cost_dates": [],
                     "confidences": [],
                     "cost_provenance": {},
+                    "cost_methods": set(),
+                    "cost_issues": set(),
                     "sales_bases": set(),
                     "catalog": catalog,
                     "sales_group_key": list(sales_key),
@@ -1110,7 +1126,16 @@ def product_profitability(
             group["sales_bases"].add(sale.basis)
             if net_sales is None:
                 group["missing_sales_lines"] += 1
-            selected = _selected_cost(costs_by_catalog.get(catalog.id, []), order.date_added.date()) if catalog else None
+            cost_basis = "historical_estimate"
+            if include_later_invoices:
+                estimate = estimate_sale_cost(cost_options.get(catalog.id, []) if catalog else [],
+                                              order.date_added.date(), costs_through)
+                selected = costs_by_id.get(estimate.cost.key) if estimate.cost else None
+                cost_basis = estimate.basis
+                if estimate.issue and quantity:
+                    group["cost_issues"].add(estimate.issue if catalog else "catalog_not_matched")
+            else:
+                selected = _selected_cost(costs_by_catalog.get(catalog.id, []), order.date_added.date()) if catalog else None
             if selected:
                 metrics = margin_metrics(net_sales or 0, quantity, selected.net_unit_cost)
                 group["known_cogs"] += metrics["cogs"] or Decimal("0")
@@ -1118,10 +1143,16 @@ def product_profitability(
                 group["sources"].add(selected.source_type)
                 group["cost_dates"].append(selected.purchase_date)
                 group["confidences"].append(selected.source_confidence)
-                group["cost_provenance"][str(selected.id)] = {"source": selected.source_type, "reference": selected.source_reference,
+                group["cost_methods"].add(cost_basis)
+                provenance = group["cost_provenance"].setdefault(str(selected.id), {"source": selected.source_type, "reference": selected.source_reference,
                     "date": selected.purchase_date.isoformat(), "supplier_id": str(selected.supplier_id),
                     "supplier_sku": selected.supplier_sku, "confidence": dec_to_float(selected.source_confidence),
-                    "unit_cost": dec_to_float(selected.net_unit_cost)}
+                    "unit_cost": dec_to_float(selected.net_unit_cost), "invoice_number": selected.supplier_invoice_number,
+                    "cost_methods": [], "order_ids": []})
+                if cost_basis not in provenance["cost_methods"]:
+                    provenance["cost_methods"].append(cost_basis)
+                if order.order_id not in provenance["order_ids"]:
+                    provenance["order_ids"].append(order.order_id)
             elif quantity:
                 group["missing_cost_lines"] += 1
 
@@ -1164,6 +1195,9 @@ def product_profitability(
                 "cogs_date": max(group["cost_dates"]).isoformat() if group["cost_dates"] else None,
                 "cogs_confidence": dec_to_float(min(group["confidences"])) if group["confidences"] else None,
                 "cost_provenance": list(group["cost_provenance"].values()),
+                "cost_basis": "estimated" if group["cost_methods"] else "unknown",
+                "cost_methods": sorted(group["cost_methods"]),
+                "cost_issues": sorted(group["cost_issues"]),
                 "sales_bases": sorted(group["sales_bases"]),
                 "current_cost_date": current_cost.purchase_date.isoformat() if current_cost else None,
             }

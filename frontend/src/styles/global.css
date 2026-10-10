@@ -935,6 +935,11 @@ tr:last-child td {
   min-width: 340px;
 }
 
+.product-cost-source {
+  min-width: 210px;
+  max-width: 260px;
+}
+
 .product-cell img,
 .product-thumb {
   width: 42px;

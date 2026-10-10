@@ -565,7 +565,7 @@ def product_performance(db: Session, date_from: date, date_to: date, include_cos
     }
     profitability_lookup = {
         tuple(profit_row["sales_group_key"]): profit_row
-        for profit_row in product_profitability(db, date_from, date_to, _configured_sale_statuses(db))
+        for profit_row in product_profitability(db, date_from, date_to, _configured_sale_statuses(db), include_later_invoices=True)
     } if include_costs else {}
     results = []
     for row in rows:
@@ -594,6 +594,9 @@ def product_performance(db: Session, date_from: date, date_to: date, include_cos
                 "cogs_date": profitability.get("cogs_date") if profitability else None,
                 "cogs_confidence": profitability.get("cogs_confidence") if profitability else None,
                 "cost_provenance": profitability.get("cost_provenance", []) if profitability else [],
+                "cost_basis": profitability.get("cost_basis", "unknown") if profitability else "unknown",
+                "cost_methods": profitability.get("cost_methods", []) if profitability else [],
+                "cost_issues": profitability.get("cost_issues", []) if profitability else [],
                 "net_quantity": profitability.get("quantity") if profitability else None,
                 "average_unit_price": _ratio(row.revenue, row.quantity),
                 "average_quantity_per_order": _ratio(row.quantity, row.orders),

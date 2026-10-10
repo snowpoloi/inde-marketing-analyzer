@@ -8,7 +8,7 @@ from app.schemas.suppliers import SupplierDocumentLineInput
 from app.services.product_sales_costing import allocate_coupon, net_product_sale
 from app.services.supplier_costing import (
     CatalogIdentity, CostOption, calculate_purchase_line, exact_catalog_matches,
-    fuzzy_catalog_candidates, margin_metrics, select_cost_as_of,
+    fuzzy_catalog_candidates, margin_metrics, select_cost_as_of, estimate_sale_cost,
 )
 
 
@@ -31,6 +31,75 @@ def test_invoice_priority_and_inactive_costs():
              CostOption("void", date(2026, 9, 2), "invoice", D("2"), status="superseded"),
              CostOption("credit", date(2026, 9, 3), "credit_note", D("-8"), status="credit")]
     assert select_cost_as_of(costs, date(2026, 10, 2)).key == "invoice"
+
+
+def test_later_invoice_is_price_estimate_not_historical_allocation():
+    costs = [CostOption("old", date(2026, 8, 1), "invoice", D("8")),
+             CostOption("next-month", date(2026, 10, 2), "invoice", D("9"))]
+    result = estimate_sale_cost(costs, date(2026, 9, 30), date(2026, 10, 11))
+    assert result.cost.key == "next-month"
+    assert result.basis == "later_invoice_estimate"
+    assert select_cost_as_of(costs, date(2026, 9, 30)).key == "old"
+
+
+@pytest.mark.parametrize("invoice_day,through,expected", [
+    (date(2026, 10, 30), date(2026, 10, 30), "invoice"),
+    (date(2026, 10, 31), date(2026, 10, 31), None),
+    (date(2026, 10, 2), date(2026, 10, 1), None),
+])
+def test_later_invoice_window_and_observation_cutoff(invoice_day, through, expected):
+    result = estimate_sale_cost([CostOption("invoice", invoice_day, "invoice", D("8"))],
+                                date(2026, 9, 30), through)
+    assert (result.cost.key if result.cost else None) == expected
+
+
+def test_later_invoice_prefers_fiscal_evidence_then_nearest_date():
+    costs = [CostOption("generic", date(2026, 9, 2), "invoice", D("8")),
+             CostOption("first-fiscal", date(2026, 9, 3), "aade_invoice", D("9")),
+             CostOption("last-fiscal", date(2026, 9, 10), "aade_invoice", D("10"))]
+    assert estimate_sale_cost(costs, date(2026, 9, 1), date(2026, 10, 1)).cost.key == "first-fiscal"
+
+
+@pytest.mark.parametrize("kind,status,amount", [
+    ("credit_note", "credit", "8"), ("invoice", "superseded", "8"),
+    ("invoice", "active", "-8"), ("proforma", "active", "8"),
+    ("supplier_order", "active", "8"), ("pricelist", "active", "8"),
+])
+def test_later_estimates_only_use_active_nonnegative_invoices(kind, status, amount):
+    result = estimate_sale_cost([CostOption("other", date(2026, 9, 2), kind, D(amount), status=status)],
+                                date(2026, 9, 1), date(2026, 9, 30))
+    assert result.cost is None
+
+
+@pytest.mark.parametrize("same_day", [True, False])
+def test_conflicting_prices_are_not_silently_tiebroken(same_day):
+    day = date(2026, 9, 2) if same_day else date(2026, 8, 31)
+    costs = [CostOption("one", day, "invoice", D("8")), CostOption("two", day, "invoice", D("9"))]
+    result = estimate_sale_cost(costs, date(2026, 9, 1), date(2026, 9, 30))
+    assert result.cost is None
+    assert result.issue == "conflicting_invoice_prices"
+
+
+def test_later_multiple_suppliers_require_review_even_at_same_price():
+    costs = [CostOption("one", date(2026, 9, 2), "invoice", D("8"), supplier_key="A"),
+             CostOption("two", date(2026, 9, 3), "invoice", D("8"), supplier_key="B")]
+    assert estimate_sale_cost(costs, date(2026, 9, 1), date(2026, 9, 30)).issue == "multiple_suppliers"
+
+
+def test_same_price_invoice_lines_and_same_day_labels():
+    costs = [CostOption("one", date(2026, 9, 1), "invoice", D("8")),
+             CostOption("two", date(2026, 9, 1), "invoice", D("8"))]
+    result = estimate_sale_cost(costs, date(2026, 9, 1), date(2026, 9, 30))
+    assert result.cost.net_unit_cost == 8
+    assert result.basis == "same_day_invoice_estimate"
+
+
+def test_missing_and_historical_estimate_labels():
+    assert estimate_sale_cost([], date(2026, 9, 1), date(2026, 9, 30)).issue == "no_eligible_cost"
+    result = estimate_sale_cost([CostOption("old", date(2026, 8, 1), "invoice", D("8"))],
+                                date(2026, 9, 1), date(2026, 9, 30))
+    assert result.cost.key == "old"
+    assert result.basis == "historical_estimate"
 
 
 def test_megapap_ignores_internal_code_and_fuzzy_never_matches():

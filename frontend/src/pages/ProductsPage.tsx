@@ -9,6 +9,17 @@ import { DateRangeControls, useReportPeriod } from "../components/DateRangeContr
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 2 });
+const costMethods: Record<string, string> = {
+  later_invoice_estimate: "Estimate: later invoice",
+  same_day_invoice_estimate: "Estimate: same-day invoice",
+  historical_estimate: "Estimate: historical price"
+};
+const costIssues: Record<string, string> = {
+  multiple_suppliers: "Review: multiple suppliers",
+  conflicting_invoice_prices: "Review: conflicting invoice prices",
+  no_eligible_cost: "No eligible purchase cost",
+  catalog_not_matched: "Product not matched to INDE catalog"
+};
 
 type ProductRow = {
   product_id: string | null;
@@ -29,7 +40,11 @@ type ProductRow = {
   cogs_source: string | null;
   cogs_date: string | null;
   cogs_confidence: number | null;
-  cost_provenance: Array<{ source: string; reference: string | null; date: string; unit_cost: number; confidence: number }>;
+  cost_basis: string;
+  cost_methods: string[];
+  cost_issues: string[];
+  cost_provenance: Array<{ source: string; reference: string | null; date: string; unit_cost: number; confidence: number;
+    invoice_number?: string | null; cost_methods?: string[]; order_ids?: string[] }>;
   average_unit_price: number;
   average_quantity_per_order: number;
   last_sold_at: string | null;
@@ -225,7 +240,7 @@ export function ProductsPage() {
       },
       {
         key: "cogs",
-        header: "COGS",
+        header: "COGS (est.)",
         align: "right",
         sortable: true,
         sortDirection: sortDirection("cogs"),
@@ -234,7 +249,7 @@ export function ProductsPage() {
       },
       {
         key: "gross-profit",
-        header: "Gross profit",
+        header: "Gross profit (est.)",
         align: "right",
         sortable: true,
         sortDirection: sortDirection("gross_profit"),
@@ -243,7 +258,7 @@ export function ProductsPage() {
       },
       {
         key: "margin",
-        header: "Margin",
+        header: "Margin (est.)",
         align: "right",
         sortable: true,
         sortDirection: sortDirection("margin_percent"),
@@ -254,11 +269,20 @@ export function ProductsPage() {
         key: "cogs-source",
         header: "COGS source",
         render: (row) => (
-          <div className="stacked-cell">
+          <div className="stacked-cell product-cost-source">
             <span>{row.cogs_source || "Unknown"}</span>
-            <small>{row.cogs_confidence === null ? "-" : percent.format(row.cogs_confidence)} confidence · {number.format(row.cost_coverage_percent)}% coverage</small>
-            {row.cost_provenance?.length ? <details><summary>Sources</summary>{row.cost_provenance.map((source, index) => <small key={index}>{source.date} · {source.reference || source.source} · {currency.format(source.unit_cost)}</small>)}</details> : null}
-            <small>{row.cogs_date || `${number.format(row.cost_coverage_percent)}% coverage`}</small>
+            {row.cost_methods?.map(method => <small key={method}>{costMethods[method] || method}</small>)}
+            <small>{row.cogs_confidence === null ? "-" : percent.format(row.cogs_confidence)} source confidence · {number.format(row.cost_coverage_percent)}% coverage</small>
+            {row.cost_issues?.map(issue => <small key={issue}>{costIssues[issue] || issue}</small>)}
+            {row.cost_provenance?.length ? <details><summary>Sources</summary>{row.cost_provenance.map((source, index) => (
+              <div className="stacked-cell" key={index}>
+                <small>{source.date} · {source.invoice_number || source.reference || source.source} · {currency.format(source.unit_cost)}</small>
+                {source.invoice_number && source.reference ? <small>{source.reference}</small> : null}
+                {source.cost_methods?.map(method => <small key={method}>{costMethods[method] || method}</small>)}
+                {source.order_ids?.length ? <small>Price used for orders: {source.order_ids.join(", ")}</small> : null}
+              </div>
+            ))}</details> : null}
+            {row.cogs_date ? <small>{row.cogs_date}</small> : null}
           </div>
         )
       },

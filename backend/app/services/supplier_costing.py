@@ -4,7 +4,7 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from typing import Any, Iterable
@@ -127,6 +127,47 @@ class CostOption:
     net_unit_cost: Decimal
     confidence: Decimal = Decimal("1")
     status: str = "active"
+    supplier_key: str | None = None
+
+
+POST_ORDER_INVOICE_DAYS = 30
+
+
+@dataclass(frozen=True)
+class SaleCostEstimate:
+    cost: CostOption | None
+    basis: str
+    issue: str | None = None
+
+
+def estimate_sale_cost(costs: Iterable[CostOption], sale_date: date, through: date) -> SaleCostEstimate:
+    """Price evidence is not an invoice quantity allocation to a customer order."""
+    eligible = [cost for cost in costs if cost.status == "active"
+                and cost.net_unit_cost >= 0 and cost.purchase_date <= through]
+    later = [cost for cost in eligible if cost.source_type in {"aade_invoice", "invoice"}
+             and sale_date <= cost.purchase_date <= sale_date + timedelta(days=POST_ORDER_INVOICE_DAYS)]
+    if later:
+        if len({cost.supplier_key for cost in later}) > 1:
+            return SaleCostEstimate(None, "unknown", "multiple_suppliers")
+        # Prefer fiscal evidence, then the first invoice after the customer order.
+        priority = min(SOURCE_PRIORITY.get(cost.source_type, 99) for cost in later)
+        tier = [cost for cost in later if SOURCE_PRIORITY.get(cost.source_type, 99) == priority]
+        first_date = min(cost.purchase_date for cost in tier)
+        candidates = [cost for cost in tier if cost.purchase_date == first_date]
+        basis = "same_day_invoice_estimate" if first_date == sale_date else "later_invoice_estimate"
+    else:
+        historical = select_cost_as_of(eligible, sale_date)
+        if historical is None:
+            return SaleCostEstimate(None, "unknown", "no_eligible_cost")
+        candidates = [cost for cost in eligible if cost.purchase_date == historical.purchase_date
+                      and cost.source_type == historical.source_type]
+        basis = "historical_estimate"
+    if len({cost.supplier_key for cost in candidates}) > 1:
+        return SaleCostEstimate(None, "unknown", "multiple_suppliers")
+    if len({cost.net_unit_cost for cost in candidates}) > 1:
+        return SaleCostEstimate(None, "unknown", "conflicting_invoice_prices")
+    chosen = min(candidates, key=lambda cost: (-cost.confidence, cost.key))
+    return SaleCostEstimate(chosen, basis)
 
 
 def select_cost_as_of(costs: Iterable[CostOption], as_of: date) -> CostOption | None:

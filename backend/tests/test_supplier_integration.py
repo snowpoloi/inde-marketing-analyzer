@@ -88,6 +88,56 @@ def test_no_future_cost_and_no_fuzzy_assignment(db):
     assert row["gross_profit"] is None
 
 
+def test_products_use_later_invoice_across_month_boundary_as_estimate(db):
+    seed(db)
+    import_supplier_documents(db, payload(day="2026-10-02", cost="8.50"))
+    sale(db, day="2026-09-30")
+    rows = product_performance(db, date(2026, 9, 1), date(2026, 9, 30), include_costs=True)
+    assert rows[0]["cogs"] == 8.5
+    assert rows[0]["cost_basis"] == "estimated"
+    assert rows[0]["cost_methods"] == ["later_invoice_estimate"]
+    assert rows[0]["cost_coverage_percent"] == 100
+    source = rows[0]["cost_provenance"][0]
+    assert source["invoice_number"] == "INV1"
+    assert source["date"] == "2026-10-02"
+    assert source["order_ids"] == ["1"]
+    assert rows[0]["current_unit_cogs"] is None
+    historical = product_profitability(db, date(2026, 9, 1), date(2026, 9, 30), ["completed"])[0]
+    assert historical["cogs"] is None
+    assert supplier_performance(db, date(2026, 9, 1), date(2026, 9, 30))[0]["purchases"] == 0
+
+
+def test_estimate_does_not_reuse_other_product_or_supplier_order_id_as_customer_order_id(db):
+    seed(db)
+    import_supplier_documents(db, payload(day="2026-09-02", sku="NOT-IN-STORE"))
+    sale(db, day="2026-09-01")
+    row = product_performance(db, date(2026, 9, 1), date(2026, 9, 30), include_costs=True)[0]
+    assert row["cogs"] is None
+    assert row["cost_issues"] == ["no_eligible_cost"]
+
+
+def test_partial_estimate_suppresses_group_profit_and_reports_reason(db):
+    seed(db)
+    import_supplier_documents(db, payload(day="2026-09-02"))
+    sale(db, day="2026-08-01")
+    sale(db, "2", day="2026-09-01")
+    row = product_performance(db, date(2026, 8, 1), date(2026, 9, 30), include_costs=True)[0]
+    assert row["cost_coverage_percent"] == 50
+    assert row["cogs"] is None
+    assert row["gross_profit"] is None
+    assert row["cost_issues"] == ["no_eligible_cost"]
+
+
+def test_products_ambiguous_invoice_prices_remain_unknown(db):
+    seed(db)
+    import_supplier_documents(db, payload("INV1", "2026-09-02", "8"))
+    import_supplier_documents(db, payload("INV2", "2026-09-02", "9"))
+    sale(db, day="2026-09-01")
+    row = product_performance(db, date(2026, 9, 1), date(2026, 9, 30), include_costs=True)[0]
+    assert row["cogs"] is None
+    assert row["cost_issues"] == ["conflicting_invoice_prices"]
+
+
 def test_mapping_correction_keeps_immutable_cost_values(db):
     product = seed(db)
     import_supplier_documents(db, payload())

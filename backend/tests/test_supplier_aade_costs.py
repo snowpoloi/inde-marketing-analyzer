@@ -58,6 +58,34 @@ def auto_policy(db, user, supplier, *, confirm_units=True):
         piece_supplier_ids=[supplier.id] if confirm_units else []), user)
 
 
+def test_products_later_aade_invoice_estimate_is_invalidated_on_cancellation(db):
+    from app.models import OpenCartOrder, OpenCartOrderProduct
+    from app.services.dashboard_service import product_performance
+    from app.services.supplier_service import product_profitability
+
+    user, supplier, own, _, fiscal = seed(db)
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    accept_invoice(db, fiscal.id, payload(preview), user)
+    order = OpenCartOrder(order_id="later-aade", date_added=datetime(2026, 8, 31, tzinfo=timezone.utc),
+                          order_status="completed", raw={})
+    order.products.append(OpenCartOrderProduct(sku=own.sku, name="Chair", quantity=1, price=100, raw={}))
+    db.add(order)
+    db.flush()
+    rows = product_performance(db, date(2026, 8, 1), date(2026, 8, 31), include_costs=True)
+    assert rows[0]["cogs"] == 70
+    assert rows[0]["cost_methods"] == ["later_invoice_estimate"]
+    assert rows[0]["cost_provenance"][0]["reference"] == f"AADE MARK {fiscal.mark}"
+    assert rows[0]["cost_basis"] == "estimated"
+    order.order_status = "cancelled"
+    db.flush()
+    assert not product_profitability(db, date(2026, 8, 1), date(2026, 8, 31), ["completed"], include_later_invoices=True)
+    fiscal.is_cancelled = True
+    db.flush()
+    rows = product_performance(db, date(2026, 8, 1), date(2026, 8, 31), include_costs=True)
+    assert rows[0]["cogs"] is None
+    assert rows[0]["cost_coverage_percent"] == 0
+
+
 def seed_anthemidis(db):
     user, supplier, own, item, fiscal = seed(db)
     supplier.code, supplier.vat_number = "ANTHEMIDIS", "084146750"
