@@ -1,11 +1,13 @@
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_admin
 from app.db.session import get_db
-from app.models import User
+from app.models import User, OpenCartOrder
+from app.services.dashboard_service import _opencart_order_payload
 from app.schemas.dashboard import DashboardResponse
 from app.schemas.orders import OrderAnalyticsDefaultsRequest, OrderAnalyticsRequest
 from app.services.orders_service import (
@@ -16,6 +18,16 @@ from app.services.orders_service import (
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+@router.get("/detail/{order_id}", response_model=DashboardResponse)
+def detail(order_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    order = db.scalar(select(OpenCartOrder).options(selectinload(OpenCartOrder.products))
+                      .where(OpenCartOrder.order_id == order_id))
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return DashboardResponse(data={**_opencart_order_payload(order, "exact_order_id"),
+                                   "payment_method": order.payment_method})
 
 
 @router.get("/overview", response_model=DashboardResponse)

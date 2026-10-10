@@ -6,6 +6,7 @@ import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { orderLink } from "../utils/recordLinks";
 import "../styles/date-presets.css";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
@@ -152,7 +153,7 @@ export function OrdersPage() {
   const orderColumns: Column<OrderRow>[] = useMemo(
     () => [
       { key: "date", header: "Date", render: (row) => row.date_added.slice(0, 10) },
-      { key: "order", header: "Order", render: (row) => <strong>{row.order_id}</strong> },
+      { key: "order", header: "Order", render: (row) => <a className="record-link" href={orderLink(row.order_id)} target="_blank" rel="noopener noreferrer">{row.order_id}</a> },
       { key: "status", header: "Status", render: (row) => row.order_status || "-" },
       { key: "payment_status", header: "Paid?", render: (row) => <StatusBadge value={row.payment_status} /> },
       { key: "products", header: "Products", align: "right", render: (row) => currency.format(row.products_total) },

@@ -436,6 +436,23 @@ export type SupplierCostHistory = {
   net_unit_cost: number; quantity: number; confidence: number; currency: string; status: string;
 };
 
+export type SupplierCatalogInvoices = {total:number; offset:number; limit:number; rows:Array<{
+  document_id:string; date:string; number:string; mark:string; quantity:number;
+  unit_cost_min:number; unit_cost_max:number; current:boolean;
+}>};
+export type StoredOrderDetail = {order_id:string; date_added:string; status:string | null;
+  sub_total:number; tax:number; shipping:number; total:number; payment_method:string | null;
+  shipping_method:string | null; lines:Array<{name:string; sku:string | null; model:string | null;
+    quantity:number; unit_price:number; line_total:number; line_type:string}>};
+export type AadeDocumentDetail = {id:string; issue_date:string; series:string | null; aa:string | null;
+  issuer_name:string | null; issuer_vat:string | null; counterpart_vat:string | null;
+  mark:string | null; invoice_type:string; is_cancelled:boolean; currency:string;
+  net_value:number; vat_amount:number; gross_value:number;
+  provider_detail?:{status:string; reason?:string; host?:string} | null;
+  line_items:Array<{line_number:string | null; description:string | null; item_code:string | null;
+    quantity:number | null; measurement_unit:string | null; unit_price:number | null;
+    net_value:number; vat_amount:number; gross_value:number}>};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 let authToken = localStorage.getItem("inde_token") ?? "";
@@ -483,6 +500,9 @@ export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: s
 export type SupplierAADEBatchRow = {id:string; number:string; mark:string; status:string; costs_created:number; reasons:string[]};
 
 export const api = {
+  aadeDocument: (id: string) => request<{data: AadeDocumentDetail}>(`/dashboard/aade-documents/${encodeURIComponent(id)}`),
+  orderDetail: (id: string) => request<{data: StoredOrderDetail}>(`/orders/detail/${encodeURIComponent(id)}`),
+  supplierCatalogInvoices: (id: string, offset = 0) => request<SupplierCatalogInvoices>(`/supplier-catalog/products/${id}/invoices?offset=${offset}&limit=50`),
   supplierAADERegistry: (start: string, end: string) => request<{ data: { rows: SupplierRegistryRow[]; skipped_records: number } }>(
     `/suppliers/aade/suppliers?${new URLSearchParams({date_from:start, date_to:end})}`),
   importAADESuppliers: () => request<{ data: { created: number; existing: number; names_updated: number; conflicts: number; skipped_records: number } }>(

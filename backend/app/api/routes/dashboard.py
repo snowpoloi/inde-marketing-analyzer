@@ -1,6 +1,7 @@
 from datetime import date, timedelta
+from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -108,3 +109,11 @@ def aade_documents(date_from: date | None = None, date_to: date | None = None, _
 def fiscal_report(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _window(date_from, date_to)
     return DashboardResponse(data=aade_report(db, start, end))
+
+
+@router.get("/aade-documents/{document_id}", response_model=DashboardResponse)
+def aade_document(document_id: UUID, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    result = aade_document_ledger(db, date.today(), date.today(), document_id=document_id)
+    if not result["rows"]:
+        raise HTTPException(status_code=404, detail="AADE document not found.")
+    return DashboardResponse(data=result["rows"][0])

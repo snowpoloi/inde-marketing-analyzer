@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { api } from "../api/client";
 import type { SupplierCatalogOrders, SupplierCatalogProduct } from "../api/client";
 import { DataTable } from "./DataTable";
+import { orderLink } from "../utils/recordLinks";
 
 export function SupplierProductOrders({ product, start, end, onClose }: {
   product: SupplierCatalogProduct; start: string; end: string; onClose: () => void;
@@ -35,7 +36,7 @@ export function SupplierProductOrders({ product, start, end, onClose }: {
     {loading ? <p role="status">Loading INDE orders...</p> : data && <>
       <DataTable rows={data.rows} rowKey={row=>row.order_id} empty={data.match_status !== "matched"
         ? "No confirmed INDE product match." : "No stored orders for this product in the selected period."} columns={[
-        {key:"order", header:"INDE order", render:row=><strong>{row.order_id}</strong>},
+        {key:"order", header:"INDE order", render:row=><a className="record-link" href={orderLink(row.order_id)} target="_blank" rel="noopener noreferrer" title="Open INDE order in new tab">{row.order_id}</a>},
         {key:"date", header:"Order date", render:row=>new Date(row.date_added).toLocaleString("el-GR")},
         {key:"status", header:"Current status", render:row=>row.order_status || "-"},
         {key:"quantity", header:"Product quantity", align:"right", render:row=>row.quantity},

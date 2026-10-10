@@ -1347,6 +1347,14 @@ tr:last-child td {
 .supplier-aade-panel select { min-width: 0; width: 100%; max-width: 520px; }
 .supplier-aade-panel .panel-title h2 { overflow-wrap: anywhere; }
 .supplier-cost-dialog { width: min(1200px, 100%); }
+.record-link { color: #176b58; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.record-link:hover { color: #104d40; }
+.record-link:focus-visible { outline: 2px solid #176b58; outline-offset: 3px; }
+.record-detail h1 { overflow-wrap: anywhere; }
+.record-detail h2 { font-size: 16px; margin: 0 0 12px; }
+.record-detail .supplier-catalog-detail-grid { margin: 0; }
+.record-detail .supplier-catalog-detail-grid dd { overflow-wrap: anywhere; }
+.record-description { display: block; min-width: 180px; max-width: 440px; white-space: normal; overflow-wrap: anywhere; }
 .supplier-cost-dialog > .supplier-aade-panel { border: 0; padding: 16px 0 0; box-shadow: none; }
 .supplier-registry-panel .panel-title { flex-wrap: wrap; }
 .supplier-registry-panel .supplier-filter { min-width: 0; max-width: 100%; }

@@ -1481,10 +1481,11 @@ def aade_report(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
     return {"aade": aade}
 
 
-def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
+def aade_document_ledger(db: Session, date_from: date, date_to: date, *, document_id=None) -> dict[str, Any]:
     documents = db.scalars(
         select(AADEDocument)
-        .where(_period_filter(AADEDocument.issue_date, date_from, date_to))
+        .where(AADEDocument.id == document_id if document_id is not None
+               else _period_filter(AADEDocument.issue_date, date_from, date_to))
         .order_by(
             AADEDocument.issue_date.desc(),
             AADEDocument.document_direction,
@@ -1500,11 +1501,13 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
         for document in documents
         if document.document_direction == "income" and str(document.aa or "").strip()
     }
+    if document_id is not None and documents:
+        date_from = date_to = documents[0].issue_date
     period_orders = db.scalars(
         select(OpenCartOrder)
         .options(selectinload(OpenCartOrder.products))
         .where(func.date(OpenCartOrder.date_added).between(date_from, date_to))
-    ).all()
+    ).all() if document_id is None or income_order_ids else []
     direct_orders = (
         db.scalars(
             select(OpenCartOrder)
@@ -1553,6 +1556,7 @@ def aade_document_ledger(db: Session, date_from: date, date_to: date) -> dict[st
 
         rows.append(
             {
+                "id": str(document.id),
                 "source_endpoint": document.source_endpoint,
                 "record_type": record_type,
                 "direction": direction,

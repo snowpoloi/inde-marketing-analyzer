@@ -13,6 +13,7 @@ from app.services.supplier_catalog_settings import public_pricing_settings, save
 from app.services.supplier_catalog_service import catalog_products, feed_response, queue_feed, save_feed
 from app.services.supplier_catalog_summary import period_summary
 from app.services.supplier_catalog_orders import product_orders
+from app.services.supplier_catalog_invoices import product_invoices
 
 router = APIRouter(prefix="/supplier-catalog", tags=["supplier-catalog"])
 
@@ -90,6 +91,16 @@ def orders(product_id: UUID, date_from: date, date_to: date,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/products/{product_id}/invoices")
+def invoices(product_id: UUID, offset: int = Query(default=0, ge=0),
+             limit: int = Query(default=50, ge=1, le=100),
+             _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return product_invoices(db, product_id, offset=offset, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/products/{product_id}")
