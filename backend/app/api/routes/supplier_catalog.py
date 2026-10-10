@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
+from app.connectors.supplier_catalog import pakoworld_package_details
 from app.db.session import get_db
 from app.models import SupplierCatalogFeed, SupplierCatalogProduct, User
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatalogPricingInput
@@ -108,5 +109,9 @@ def product(product_id: UUID, _: User = Depends(require_admin), db: Session = De
     row = db.get(SupplierCatalogProduct, product_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Supplier product not found.")
-    return {"id": str(row.id), "name": row.name, "details": row.details, "is_current": row.is_current,
-            **package_metrics(row.details or {}, public_pricing_settings(db)["volumetric_divisor"])}
+    details = row.details or {}
+    feed = db.get(SupplierCatalogFeed, row.feed_id)
+    if feed and feed.adapter == "pakoworld":
+        details = pakoworld_package_details(details)
+    return {"id": str(row.id), "name": row.name, "details": details, "is_current": row.is_current,
+            **package_metrics(details, public_pricing_settings(db)["volumetric_divisor"])}

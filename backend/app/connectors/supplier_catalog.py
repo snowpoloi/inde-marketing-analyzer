@@ -82,6 +82,50 @@ def parse_packages(dimensions: dict, count: str | None) -> list[dict]:
             for label in sorted(labels, key=lambda label: (0, int(label)) if label.isdigit() else (1, label))]
 
 
+def pakoworld_package_details(details: dict) -> dict:
+    """Pakoworld attribute 2 counts boxes; attribute 4 lists their L x W x H in cm."""
+    details = dict(details)
+    attributes = details.get("attributes") or []
+
+    def attribute(identifier):
+        values = {row["value"].strip() for row in attributes
+                  if str(row.get("id")) == identifier and row.get("value")}
+        if len(values) != 1:
+            return None
+        value = values.pop()
+        return value.partition(":")[2].strip() if ":" in value else value
+
+    has_count = any(str(row.get("id")) == "2" and row.get("value") for row in attributes)
+    raw_count = details.get("packages_per_item") or attribute("2")
+    count = _number(raw_count)
+    declared = int(Decimal(count)) if count and Decimal(count) == int(Decimal(count)) and 0 < Decimal(count) <= 30 else None
+    if declared is not None:
+        details["packages_per_item"] = str(declared)
+    if any(row.get(axis) for row in details.get("packages", [])
+           for axis in ("length_cm", "width_cm", "height_cm")):
+        return details
+
+    raw_dimensions = attribute("4")
+    parts = re.split(r"\s*[-;|]\s*", raw_dimensions) if raw_dimensions else []
+    if len(parts) > 30:
+        parts = []
+    number = r"([0-9]+(?:[.,][0-9]+)?)"
+    triplet = rf"{number}\s*[x\u00d7\u03c7]\s*{number}\s*[x\u00d7\u03c7]\s*{number}\s*(?:cm|\u03b5\u03ba\.?)?"
+    packages = []
+    complete = bool(parts) and (declared is not None or (raw_count is None and not has_count))
+    for index in range(max(len(parts), declared or 0)):
+        match = re.fullmatch(triplet, parts[index].strip(), re.I) if index < len(parts) else None
+        sizes = [_number(value) for value in match.groups()] if match else [None] * 3
+        complete = complete and all(value is not None and Decimal(value) > 0 for value in sizes)
+        packages.append({"label": f"BOX {index + 1}",
+                         **dict(zip(("length_cm", "width_cm", "height_cm"), sizes))})
+    details["packages"] = packages
+    details["package_dimensions_complete"] = complete and (declared is None or declared == len(parts))
+    if raw_count is None and complete:
+        details["packages_per_item"] = str(len(parts))
+    return details
+
+
 def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
     if adapter in FORMATS:
         from app.connectors.supplier_catalog_profiles import parse_profile_catalog
@@ -150,6 +194,7 @@ def _parse_catalog(source: BinaryIO, adapter: str) -> list[dict]:
                 "components": [{"model": text(f"component_{number}", 255), "pieces": _number(text(f"pieces_{number}"))}
                                for number in range(1, 21) if text(f"component_{number}", 255)],
             })
+            products[-1]["details"] = pakoworld_package_details(products[-1]["details"])
         from app.connectors.supplier_catalog_profiles import category_details
         products[-1]["details"].update(category_details(adapter, text("category")))
         node.clear()

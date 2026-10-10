@@ -36,7 +36,8 @@ def package_metrics(details, divisor):
         cubic_cm = dimensions[0] * dimensions[1] * dimensions[2] if all(value is not None and value > 0 for value in dimensions) else None
         packages.append({**row, "volume_m3": cubic_cm / Decimal("1000000") if cubic_cm else None,
                          "volumetric_kg": cubic_cm / Decimal(str(divisor)) if cubic_cm else None})
-    complete = bool(packages) and all(row["volume_m3"] is not None for row in packages)
+    complete = (bool(packages) and details.get("package_dimensions_complete", True)
+                and all(row["volume_m3"] is not None for row in packages))
     declared = details.get("packages_per_item")
     if declared is not None and Decimal(str(declared)) != len(packages):
         complete = False

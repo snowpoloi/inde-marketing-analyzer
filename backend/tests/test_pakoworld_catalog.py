@@ -1,4 +1,6 @@
 import io
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -45,6 +47,100 @@ def test_pakoworld_fields_do_not_infer_costs_tax_or_shipping():
     assert row["details"]["components"] == [{"model": "001-000002", "pieces": "2"}]
     assert row["details"]["categories"] == [{"id": "145", "name": "Storage"}]
     assert "net_unit_cost" not in row and "shipping_net" not in row
+
+
+def test_pakoworld_extracts_each_shipping_box_from_attributes():
+    from app.services.supplier_catalog_settings import package_metrics
+    source = xml().decode().replace("Package: 123x40x18", "Package: 47x188x10 - 49x131x15")
+    source = source.replace('<attributes>', '<attributes><attribute id="2">Boxes: 2</attribute>')
+    details = connector.parse_pakoworld_catalog(io.BytesIO(source.encode()))[0]["details"]
+    assert details["packages_per_item"] == "2"
+    assert details["sell_step"] == "2"
+    metrics = package_metrics(details, 5000)
+    assert len(metrics["packages"]) == 2
+    assert metrics["packages"][0]["length_cm"] == "47"
+    assert metrics["packages"][0]["width_cm"] == "188"
+    assert metrics["packages"][0]["height_cm"] == "10"
+    assert metrics["packages"][0]["volume_m3"] == Decimal("0.08836")
+    assert metrics["packages"][0]["volumetric_kg"] == Decimal("17.672")
+    assert metrics["packages"][1]["volume_m3"] == Decimal("0.096285")
+    assert metrics["packages"][1]["volumetric_kg"] == Decimal("19.257")
+    assert metrics["volume_total_m3"] == Decimal("0.184645")
+    assert metrics["volumetric_total_kg"] == Decimal("36.929")
+
+
+@pytest.mark.parametrize("count", range(1, 7))
+def test_pakoworld_box_count_is_not_sale_quantity_or_assembled_dimensions(count):
+    from app.services.supplier_catalog_settings import package_metrics
+    details = connector.pakoworld_package_details({
+        "sell_step": "4", "length": "200", "width": "100", "height": "80", "volume": "1.6",
+        "attributes": [{"id": "2", "value": f"Boxes: {count}"},
+                       {"id": "4", "value": "Package: " + " - ".join("20x30x40" for _ in range(count))}],
+    })
+    assert details["packages_per_item"] == str(count)
+    assert len(details["packages"]) == count
+    assert package_metrics(details, 5000)["volume_total_m3"] == Decimal("0.024") * count
+    assert package_metrics(details, 6000)["volumetric_total_kg"] == Decimal("4") * count
+
+
+@pytest.mark.parametrize("text", ["47,5 x 188 x 10;49x131x15", "47.5X188X10 | 49X131X15 cm",
+                                  "47.5\u00d7188\u00d710-49\u00d7131\u00d715"])
+def test_pakoworld_package_separator_and_decimal_formats(text):
+    details = connector.pakoworld_package_details({"attributes": [
+        {"id": "2", "value": "2"}, {"id": "4", "value": "Package: " + text}]})
+    assert details["packages"][0]["length_cm"] == "47.5"
+    assert details["packages"][1]["length_cm"] == "49"
+    assert details["package_dimensions_complete"] is True
+
+
+@pytest.mark.parametrize("count,dimensions", [("3", "47x188x10 - 49x131x15"),
+    ("1", "47x188x10 - 49x131x15"), ("2", "47x188x10 - unknown"),
+    ("2", "47x188x10 mm - 49x131x15"), ("2", "0x188x10 - 49x131x15"),
+    ("unknown", "47x188x10 - 49x131x15")])
+def test_incomplete_or_conflicting_packaging_does_not_fabricate_totals(count, dimensions):
+    from app.services.supplier_catalog_settings import package_metrics
+    details = connector.pakoworld_package_details({"attributes": [
+        {"id": "2", "value": count}, {"id": "4", "value": "Package: " + dimensions}]})
+    assert package_metrics(details, 5000)["volume_total_m3"] is None
+    assert package_metrics(details, 5000)["volumetric_total_kg"] is None
+
+
+def test_stored_pakoworld_details_are_normalized_without_mutation():
+    raw = {"packages": [], "attributes": [{"id": "2", "value": "Boxes: 2"},
+           {"id": "4", "value": "Package: 47x188x10 - 49x131x15"}]}
+    normalized = connector.pakoworld_package_details(raw)
+    assert raw["packages"] == [] and "packages_per_item" not in raw
+    assert connector.pakoworld_package_details(normalized) == normalized
+    assert len(normalized["packages"]) == 2
+    assert connector.pakoworld_package_details({"sell_step": "4", "length": "200", "volume": "0.2"})["packages"] == []
+
+
+def test_conflicting_box_counts_do_not_assume_dimension_list_is_complete():
+    from app.services.supplier_catalog_settings import package_metrics
+    details = connector.pakoworld_package_details({"attributes": [
+        {"id": "2", "value": "Boxes: 2"}, {"id": "2", "value": "Boxes: 3"},
+        {"id": "4", "value": "Package: 47x188x10 - 49x131x15"}]})
+    assert len(details["packages"]) == 2
+    assert package_metrics(details, 5000)["volume_total_m3"] is None
+
+
+def test_product_detail_restores_existing_pakoworld_boxes_without_resync(db):
+    from app.api.routes.supplier_catalog import product
+    from app.models import SupplierCatalogFeed
+    feed = SupplierCatalogFeed(code="BOX-FIXTURE", name="Boxes", adapter="pakoworld", encrypted_url="test-unused")
+    db.add(feed); db.flush()
+    stored = {"packages": [], "attributes": [{"id": "2", "value": "Boxes: 2"},
+              {"id": "4", "value": "Package: 47x188x10 - 49x131x15"}]}
+    row = SupplierCatalogProduct(feed_id=feed.id, supplier_code="box-fixture", name="Cabinet",
+                                 details=stored, last_seen_at=datetime.now(timezone.utc))
+    db.add(row); db.flush()
+    result = product(row.id, _=SimpleNamespace(is_admin=True), db=db)
+    assert result["details"]["packages_per_item"] == "2"
+    assert len(result["packages"]) == 2
+    assert result["volume_total_m3"] == Decimal("0.184645")
+    assert row.details == stored and row.details["packages"] == []
+    feed.adapter = "megapap"
+    assert product(row.id, _=SimpleNamespace(is_admin=True), db=db)["packages"] == []
 
 
 @pytest.mark.parametrize("adapter, url", [
