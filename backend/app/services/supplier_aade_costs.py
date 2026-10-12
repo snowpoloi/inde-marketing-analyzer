@@ -376,7 +376,7 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
             created += 1
         elif line["line_type"] == "shipping" and not line["reasons"]:
             _create_shipping_cost(db, supplier=supplier, document=document, line=record,
-                                  source_payload=SimpleNamespace(shipping_type="supplier_freight", cbm=None, weight=None, notes=None))
+                                  source_payload=SimpleNamespace(shipping_type="INBOUND", cbm=None, weight=None, notes=None))
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
                              "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
                              "aade_confirm_missing_units": payload.confirm_missing_units,

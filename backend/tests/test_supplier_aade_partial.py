@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, SupplierCatalogFeed,
                         SupplierCatalogProduct, SupplierDocument, SupplierDocumentLine, SupplierProductCost)
+from app.models import SupplierShippingCost
 from app.services.supplier_aade_costs import accept_invoice, invoice_preview, validated_cost_rows
 from app.services.supplier_aade_jobs import process_aade_costs, process_aade_cost_batch
 from app.services.supplier_catalog_settings import queue_cost_refresh
@@ -41,6 +42,7 @@ def test_partial_costs_backfill_same_full_invoice_without_duplicates(db):
     document = db.scalar(select(SupplierDocument))
     assert document.net_products_total == 170 and document.net_shipping_total == 5
     assert document.vat_total == 42 and document.gross_total == 217
+    assert db.scalar(select(SupplierShippingCost.shipping_type)) == "INBOUND"
     assert document.raw_metadata["aade_partial"] is True
     assert db.scalar(select(func.count()).select_from(SupplierDocumentLine)) == 3
     unresolved = db.scalar(select(SupplierDocumentLine).where(SupplierDocumentLine.line_number == "2"))
