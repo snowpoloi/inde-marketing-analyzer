@@ -174,6 +174,17 @@ def test_manifest_resolves_stored_identity_and_does_not_split_total_weight(db):
     assert all(row["weight_kg"] is None for row in result["parcels"])
 
 
+def test_manifest_excludes_explicit_shipping_charge_but_not_products_with_similar_names(db):
+    order, _ = seed_order(db)
+    order.products.append(OpenCartOrderProduct(model="custom_shipping_method", name="Shipping charge", quantity=1))
+    db.flush()
+    result = order_manifest(db, order)
+    assert len(result["parcels"]) == 4 and not result["warnings"]
+    order.products.append(OpenCartOrderProduct(model="REAL-PRODUCT", name="Shipping charge", quantity=1))
+    db.flush()
+    assert len(order_manifest(db, order)["parcels"]) == 5
+
+
 def test_manifest_sale_step_is_not_the_box_count_and_requires_confirmation(db):
     order, _ = seed_order(db, step="4", boxes=2)
     result = order_manifest(db, order)

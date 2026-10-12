@@ -191,7 +191,8 @@ def stored_order(db, order_id):
 
 
 def order_manifest(db, order):
-    lines = order.products
+    # OpenCart's custom shipping charge is stored alongside physical order lines.
+    lines = [line for line in order.products if line.model != "custom_shipping_method" or line.sku]
     ids = {line.product_id for line in lines if line.product_id}
     skus = {line.sku for line in lines if not line.product_id and line.sku}
     models = {line.model for line in lines if not line.product_id and not line.sku and line.model}
