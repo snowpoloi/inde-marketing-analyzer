@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
@@ -11,6 +12,13 @@ def pricing_settings(db):
     return (row.config or {}) if row else {}
 
 
+def queue_cost_refresh(db):
+    """Wake pending invoice reviews without rewriting every stored invoice."""
+    row = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "supplier_catalog").with_for_update())
+    if row is not None:
+        row.config = {**(row.config or {}), "cost_refresh_requested_at": datetime.now(timezone.utc).isoformat()}
+
+
 def save_pricing_settings(db, payload, user):
     suppliers = db.scalars(select(Supplier).where(Supplier.id.in_(payload.piece_supplier_ids))).all()
     if len(suppliers) != len(set(payload.piece_supplier_ids)):
@@ -21,6 +29,7 @@ def save_pricing_settings(db, payload, user):
         db.add(row)
     row.config = {**payload.model_dump(mode="json"), "authorized_by": str(user.id)}
     row.is_enabled = payload.automatic_costs
+    queue_cost_refresh(db)
     db.commit()
     return public_pricing_settings(db)
 

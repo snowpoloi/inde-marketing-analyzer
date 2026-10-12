@@ -197,7 +197,7 @@ def test_anthemidis_title_matching_uses_existing_automatic_cost_pipeline(db, cat
     assert process_aade_costs(db) == {"processed": 0}
 
 
-def test_anthemidis_hyphen_match_does_not_skip_missing_catalog_product(db):
+def test_anthemidis_hyphen_match_imports_safe_line_and_retains_missing_product(db):
     user, supplier, own, item, fiscal = seed_anthemidis(db)
     item.supplier_code = item.supplier_sku = "11703-6"
     fiscal.raw = {**fiscal.raw, "invoiceDetails": [
@@ -211,10 +211,10 @@ def test_anthemidis_hyphen_match_does_not_skip_missing_catalog_product(db):
     assert not preview["lines"][0]["reasons"]
     assert preview["lines"][1]["product_catalog_id"] is None
     assert preview["lines"][1]["reasons"] == ["No unique INDE product through this supplier XML."]
-    assert not preview["can_import"]
-    with pytest.raises(ValueError, match="needs review"):
-        accept_invoice(db, fiscal.id, payload(preview), user)
-    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 0
+    assert preview["can_import"] and preview["pending_lines"] == 1
+    assert accept_invoice(db, fiscal.id, payload(preview), user)["costs_created"] == 1
+    assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 1
+    assert db.scalar(select(SupplierDocument.net_products_total)) == 145
 
 
 def test_anthemidis_three_line_invoice_452_matches_title_codes(db):

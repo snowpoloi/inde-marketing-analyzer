@@ -122,7 +122,8 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
           : preview.provider_detail.status === "unavailable" ? preview.provider_detail.reason
           : "Pending automatic retrieval"}</p>}
         {preview.reasons.map(reason=><div className="notice" key={reason}>{reason}</div>)}
-        {preview.needs_unit_confirmation && !preview.imported && <label className="supplier-feed-toggle"><input type="checkbox" checked={preview.confirm_missing_units ?? false} disabled={review.loading || review.accepting || importing}
+        <p role="status">{preview.costed_lines} product lines costed · {preview.ready_lines} ready · {preview.pending_lines} need review</p>
+        {preview.needs_unit_confirmation && preview.pending_lines > 0 && <label className="supplier-feed-toggle"><input type="checkbox" checked={preview.confirm_missing_units ?? false} disabled={review.loading || review.accepting || importing}
           onChange={event=>inspect(row, event.target.checked)}/>Missing invoice unit: confirm one purchase piece equals one INDE sales unit</label>}
         <DataTable rows={preview.lines} empty="No invoice lines." columns={[
           {key:"line", header:"Line", render:line=>line.line_number}, {key:"code", header:"Invoice code", render:line=>line.item_code || "-"},
@@ -130,11 +131,11 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
           {key:"type", header:"Type", render:line=>line.line_type}, {key:"qty", header:"Qty", align:"right", render:line=>line.quantity ?? "-"},
           {key:"unit", header:"Unit", render:line=>line.unit || "-"}, {key:"cost", header:"Net cost / piece", align:"right", render:line=>money(line.unit_cost_net)},
           {key:"net", header:"Net", align:"right", render:line=>money(line.net_value)}, {key:"vat", header:"VAT", align:"right", render:line=>money(line.vat_amount)},
-          {key:"review", header:"Review", render:line=>line.reasons.join(" ") || (line.line_type==="shipping" ? "Excluded from product cost"
+          {key:"review", header:"Review", render:line=>line.reasons.join(" ") || (line.costed ? "Cost saved" : line.line_type==="shipping" ? "Excluded from product cost"
             : line.match_method==="anthemidis_title_code" ? `Exact XML code in title: ${line.matched_item_code}` : "Exact XML identifiers")}
         ]}/>
         {preview.can_import && <><label className="supplier-feed-toggle"><input type="checkbox" checked={review.confirmed} disabled={review.accepting || importing} onChange={event=>updateReview(row.id, {confirmed:event.target.checked})}/>Verified products; one purchase piece equals one INDE sales unit</label>
-          <button className="primary-action compact" disabled={review.accepting || importing || !review.confirmed} onClick={()=>accept(row.id)}><Check size={16}/>Accept AADE costs</button></>}
+          <button className="primary-action compact" disabled={review.accepting || importing || !review.confirmed} onClick={()=>accept(row.id)}><Check size={16}/>Accept {preview.ready_lines} matched costs</button></>}
       </>}
     </section>;
   }
@@ -154,8 +155,8 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
       <button className="primary-action compact" disabled={!supplier || !batchConfirmed || importing || busy || Object.values(reviews).some(review=>review.accepting)} onClick={importBatch}><Download size={16}/>Import matching AADE costs</button>
       {importing && <button className="icon-button" title="Stop after current batch" aria-label="Stop cost import" onClick={stopBatch}><Square size={16}/></button>}
     </div>
-    {(importing || batchRows.length > 0 || batchNotice) && <div role="status">{batchRows.length} / {batchTotal} invoices · {batchRows.reduce((sum,row)=>sum+row.costs_created,0)} product costs · {batchRows.filter(row=>row.status==="review").length} need review. {batchNotice}</div>}
-    {batchRows.some(row=>row.status==="review") && <DataTable rows={batchRows.filter(row=>row.status==="review").slice(0,50)} empty="No invoices need review." columns={[
+    {(importing || batchRows.length > 0 || batchNotice) && <div role="status">{batchRows.length} / {batchTotal} invoices · {batchRows.reduce((sum,row)=>sum+row.costs_created,0)} product costs · {batchRows.filter(row=>["review", "partial"].includes(row.status)).length} need review. {batchNotice}</div>}
+    {batchRows.some(row=>["review", "partial"].includes(row.status)) && <DataTable rows={batchRows.filter(row=>["review", "partial"].includes(row.status)).slice(0,50)} empty="No invoices need review." columns={[
       {key:"invoice",header:"Invoice requiring review",render:row=>row.number || row.id},
       {key:"mark",header:"MARK",render:row=>row.mark}, {key:"reason",header:"Reason",render:row=>row.reasons.join(" ")}
     ]}/>}
@@ -164,7 +165,9 @@ export function SupplierAADEPanel({start, end, onImported, onSettings, initialSu
       {key:"type", header:"Type", render:row=>row.invoice_type}, {key:"record", header:"Record", render:row=>row.record_type},
       {key:"mark", header:"MARK", render:row=>row.mark || "-"}, {key:"net", header:"Net", align:"right", render:row=>money(row.net_value)},
       {key:"gross", header:"Total", align:"right", render:row=>money(row.gross_value)},
-      {key:"status", header:"Status", render:row=>row.cancelled ? "Cancelled" : "Active"},
+      {key:"status", header:"Status", render:row=>row.cancelled ? "Cancelled" : row.cost_status === "partial"
+        ? `Partially costed · ${row.pending_lines ?? "-"} pending` : row.cost_status === "imported" ? "Costed"
+        : row.cost_status === "review" ? "Needs review" : "Active"},
       {key:"view", header:"", render:row=><button className="icon-button" aria-label={`Review invoice ${row.number}`} aria-expanded={!!reviews[row.id]} aria-controls={reviews[row.id] ? `aade-review-${row.id}` : undefined} title={reviews[row.id] ? "Close invoice preview" : "Review invoice"} disabled={busy || importing} onClick={()=>reviews[row.id] ? closeReview(row.id) : inspect(row)}>{reviews[row.id] ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>}
     ]}/>
     <div className="supplier-catalog-actions">

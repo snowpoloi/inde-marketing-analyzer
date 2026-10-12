@@ -10,7 +10,7 @@ from app.services.sync_service import run_many
 from app.services.supplier_gmail_jobs import process_gmail_jobs
 from app.services.supplier_catalog_service import process_supplier_catalog
 from app.services.aade_detail_jobs import process_aade_details
-from app.services.supplier_aade_jobs import process_aade_costs
+from app.services.supplier_aade_jobs import process_aade_cost_batch
 
 
 def supplier_gmail_sync() -> None:
@@ -37,7 +37,7 @@ def aade_detail_sync() -> None:
 
 def aade_cost_sync() -> None:
     with SessionLocal() as db:
-        process_aade_costs(db)
+        process_aade_cost_batch(db)
 
 
 def main() -> None:

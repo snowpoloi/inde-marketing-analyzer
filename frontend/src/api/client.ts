@@ -496,15 +496,16 @@ export type SupplierRegistryRow = { id: string | null; code: string | null; name
   name_pending: boolean; identity_conflict: boolean; source: string; documents: number; period_documents: number;
   last_document_date: string | null };
 export type SupplierAADEInvoice = { id: string; date: string; mark: string | null; number: string; invoice_type: string;
-  net_value: number; gross_value: number; cancelled: boolean; record_type: string };
+  net_value: number; gross_value: number; cancelled: boolean; record_type: string; cost_status?: string; pending_lines?: number };
 export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: string; issuer_vat: string; date: string;
+  ready_lines: number; pending_lines: number; costed_lines: number;
   confirm_missing_units?: boolean; needs_unit_confirmation?: boolean;
   provider_detail?: {status: string; reason?: string; host?: string};
   mark: string; number: string; net_value: number; vat_amount: number; gross_value: number; reasons: string[];
   fingerprint: string; imported: boolean; can_import: boolean; lines: Array<{ line_number: string; item_code: string;
     description: string; line_type: string; quantity: number | null; unit: string; net_value: number | null;
     vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[];
-    match_method?: string | null; matched_item_code?: string | null }> };
+    costed?: boolean; ready?: boolean; match_method?: string | null; matched_item_code?: string | null }> };
 export type SupplierAADEBatchRow = {id:string; number:string; mark:string; status:string; costs_created:number; reasons:string[]};
 
 export const api = {

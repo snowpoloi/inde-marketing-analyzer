@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from types import SimpleNamespace
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -12,9 +13,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Supplier, SupplierCatalogFeed,
                         SupplierCatalogProduct, SupplierDocument, SupplierDocumentLine, SupplierProductCost,
-                        SupplierProductMap)
-from app.schemas.suppliers import (SupplierDocumentInput, SupplierDocumentLineInput, SupplierImportRequest,
-                                  SupplierInput, SupplierAADEAcceptRequest)
+                        SupplierProductMap, SupplierImportBatch)
+from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import effective_invoice, detail_info
@@ -135,6 +135,8 @@ def aade_invoices(db, supplier_id, start, end, offset, limit):
         "invoice_type": row.invoice_type, "number": f"{row.series or ''} / {row.aa or ''}",
         "net_value": row.net_value, "gross_value": row.gross_value,
         "cancelled": row.is_cancelled or bool(row.cancelled_by_mark),
+        "cost_status": (row.raw or {}).get("_catalog_cost", {}).get("status"),
+        "pending_lines": (row.raw or {}).get("_catalog_cost", {}).get("pending_lines"),
         "record_type": (row.raw or {}).get("record_type", "full_document")} for row in documents]}
 
 
@@ -174,6 +176,11 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
         tax = sum((line["vat_amount"] for line in lines), Decimal("0"))
         if abs(net - document.net_value) > Decimal("0.02") or abs(tax - document.vat_amount) > Decimal("0.02") or abs(net + tax - document.gross_value) > Decimal("0.02"):
             reasons.append("Invoice totals do not reconcile to the stored lines; fees / discounts require review.")
+    else:
+        reasons.append("Invoice amounts cannot be reconciled; missing line amounts require review.")
+    if any((line["net_value"] is not None and line["net_value"] < 0) or
+           (line["vat_amount"] is not None and line["vat_amount"] < 0) for line in lines):
+        reasons.append("Negative invoice adjustments require review before costing.")
     # Matching needs identifiers only, not thousands of descriptions/raw XML rows.
     catalog_query = select(SupplierCatalogProduct, ProductCatalog).options(
         load_only(SupplierCatalogProduct.id, SupplierCatalogProduct.supplier_code,
@@ -230,7 +237,9 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             if prior and (prior.product_catalog_id not in (None, product.id) or prior.conversion_factor != 1 or prior.pack_quantity != 1):
                 line["reasons"].append("Existing mapping / pack conversion conflicts with this XML product.")
         else:
-            line["reasons"].append("Ambiguous supplier XML code." if matches else "No unique INDE product through this supplier XML.")
+            line["reasons"].append("Ambiguous supplier XML code." if len(matches) > 1 else
+                "XML product is not linked to an INDE product." if matches else
+                "No unique INDE product through this supplier XML.")
         if line["reasons"]:
             line["unit_cost_net"] = None
     if not any(line["line_type"] == "product" for line in lines):
@@ -245,8 +254,18 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
         SupplierDocument.identity_key != _invoice_key(document), legacy_match).limit(1))
     if legacy:
         reasons.append("This fiscal invoice already exists from another import; reconciliation required to avoid double counting.")
+    costed = {}
     if existing:
-        reasons.append("Invoice already imported; no second financial copy will be created.")
+        if (existing.raw_metadata or {}).get("aade_source_digest") != _source_digest(document):
+            reasons.append("Imported fiscal source changed; reconciliation required before adding costs.")
+        costed = dict(db.execute(select(SupplierDocumentLine.line_number, SupplierProductCost.product_catalog_id)
+            .join(SupplierProductCost, SupplierProductCost.source_line_id == SupplierDocumentLine.id)
+            .where(SupplierDocumentLine.document_id == existing.id)).all())
+    for line in lines:
+        line["costed"] = line["line_number"] in costed
+        if line["costed"] and str(costed[line["line_number"]]) != line["product_catalog_id"]:
+            line["reasons"].append("Previously costed product mapping changed; existing evidence retained for review.")
+        line["ready"] = line["line_type"] == "product" and not line["reasons"] and not line["costed"]
     fingerprint = hashlib.sha256(json.dumps({"source": _source_digest(document), "supplier": str(supplier.id),
         "vat": vat, "recipient": recipient, "lines": lines, "reasons": reasons,
         "confirm_missing_units": confirm_missing_units}, sort_keys=True, default=str).encode()).hexdigest()
@@ -258,11 +277,14 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             "confirm_missing_units": confirm_missing_units,
             "needs_unit_confirmation": any(line["line_type"] == "product" and not line["source_unit"] for line in lines),
             "reasons": reasons, "fingerprint": fingerprint, "imported": bool(existing),
-            "can_import": not reasons and all(not line["reasons"] for line in lines)}
+            "ready_lines": sum(line["ready"] for line in lines),
+            "pending_lines": sum(line["line_type"] == "product" and not line["costed"] and not line["ready"] for line in lines),
+            "costed_lines": len(costed),
+            "can_import": not reasons and any(line["ready"] for line in lines)}
 
 
 def accept_invoice(db, document_id, payload, user, *, automated=False):
-    from app.services.supplier_service import import_supplier_documents
+    from app.services.supplier_service import _create_cost_from_line, _create_shipping_cost
 
     if not payload.confirm_products_and_units:
         raise ValueError("Confirm the product matches and one purchase piece per INDE sales unit.")
@@ -274,14 +296,15 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
     preview = invoice_preview(db, document_id, supplier.id, lock=True,
                               confirm_missing_units=payload.confirm_missing_units)
-    if preview["imported"]:
-        return {"duplicate": True, "costs_created": 0}
+    if preview["imported"] and not preview["can_import"] and not preview["reasons"]:
+        return {"duplicate": True, "costs_created": 0, "pending_lines": preview["pending_lines"]}
     if preview["fingerprint"] != payload.fingerprint or not preview["can_import"]:
         raise ValueError("Invoice / mapping changed or needs review. Reload the preview before importing.")
     # The explicit review authorizes the XML bridge, not the older generic
     # importer heuristics (MEGAPAP models and own SKUs can be different).
+    mappings = {}
     for line in preview["lines"]:
-        if line["line_type"] != "product":
+        if not line["ready"]:
             continue
         identity = supplier_mapping_identity(line["supplier_sku"], line["supplier_ean"], line["supplier_code"], line["description"])
         mapping = db.scalar(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id,
@@ -301,45 +324,67 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
                       "product":str(product.id), "factor":"1", "method":"aade_xml_reviewed"})
         mapping.raw_metadata = {**(mapping.raw_metadata or {}), "verification_audit":audit}
         db.flush()
-    normalized = []
-    for line in preview["lines"]:
-        normalized.append(SupplierDocumentLineInput(line_number=line["line_number"], line_type=line["line_type"],
-            supplier_code=line["supplier_code"], supplier_sku=line["supplier_sku"], supplier_ean=line["supplier_ean"],
-            description=line["description"], quantity=line["quantity"] or 0, unit=line["unit"],
-            net_line_total=line["net_value"], vat_amount=line["vat_amount"], gross_total=line["net_value"] + line["vat_amount"],
-            raw_metadata={"aade_item_code": line["item_code"], "aade_vat_category": line["vat_category"],
-                          "aade_match_method": line["match_method"], "aade_matched_item_code": line["matched_item_code"],
-                          "aade_source_unit": line["source_unit"], "aade_unit_confirmed": line["unit_confirmed"],
-                          "vat_rate_not_supplied": True}))
-    request = SupplierImportRequest(supplier=SupplierInput(code=supplier.code, name=supplier.name, vat_number=supplier.vat_number),
-        source_reference=f"AADE MARK {preview['mark']}", source_type="xml", documents=[SupplierDocumentInput(
-            document_type="invoice", document_number=preview["number"], document_date=preview["date"],
-            vat_total=preview["vat_amount"], gross_total=preview["gross_value"], lines=normalized)])
-    result = import_supplier_documents(db, request, user.id, commit=False, require_verified_mappings=True)
-    if not result["documents_imported"]:
-        raise ValueError("An existing import needs reconciliation; costs were not duplicated.")
-    document = db.scalar(select(SupplierDocument).where(SupplierDocument.import_batch_id == result["batch_id"]))
+        mappings[line["line_number"]] = mapping
     source = db.get(AADEDocument, document_id)
-    document.identity_key, document.aade_document_id = _invoice_key(source), source.id
+    document = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(source)).with_for_update())
+    if document is None:
+        batch = SupplierImportBatch(supplier_id=supplier.id, source_type="xml",
+            source_reference=f"AADE MARK {source.mark}", content_hash=_source_digest(source),
+            status="completed", imported_documents=1)
+        db.add(batch)
+        db.flush()
+        document = SupplierDocument(supplier_id=supplier.id, import_batch_id=batch.id,
+            identity_key=_invoice_key(source), aade_document_id=source.id, document_type="invoice",
+            document_number=preview["number"], document_date=preview["date"], currency="EUR",
+            net_products_total=sum(line["net_value"] for line in preview["lines"] if line["line_type"] == "product"),
+            net_shipping_total=sum(line["net_value"] for line in preview["lines"] if line["line_type"] == "shipping"),
+            net_other_total=0, vat_total=preview["vat_amount"], gross_total=preview["gross_value"], raw_metadata={})
+        db.add(document)
+        db.flush()
+    # Keep the full reconciled invoice, including unresolved product lines.
+    # Only ready lines receive a verified mapping and a product cost record.
+    stored = {line.line_number: line for line in db.scalars(select(SupplierDocumentLine)
+        .where(SupplierDocumentLine.document_id == document.id)).all()}
+    created = 0
+    for line in preview["lines"]:
+        if line["costed"]:
+            continue
+        record = stored.get(line["line_number"])
+        if record is None:
+            record = SupplierDocumentLine(document_id=document.id, line_number=line["line_number"])
+            db.add(record)
+        record.line_type, record.description = line["line_type"], line["description"]
+        record.supplier_code, record.supplier_sku, record.supplier_ean = line["supplier_code"], line["supplier_sku"], line["supplier_ean"]
+        record.quantity, record.unit = line["quantity"] or 0, line["unit"]
+        record.net_line_total, record.vat_amount = line["net_value"], line["vat_amount"]
+        record.net_unit_cost = line["unit_cost_net"] or 0
+        record.unit_price_before_discount = record.net_unit_cost
+        record.gross_total = line["net_value"] + line["vat_amount"]
+        record.raw_metadata = {"aade_item_code": line["item_code"], "aade_vat_category": line["vat_category"],
+            "aade_match_method": line["match_method"], "aade_matched_item_code": line["matched_item_code"],
+            "aade_source_unit": line["source_unit"], "aade_unit_confirmed": line["unit_confirmed"],
+            "aade_pending_reasons": line["reasons"], "vat_rate_not_supplied": True}
+        mapping = mappings.get(line["line_number"])
+        record.supplier_product_map_id = mapping.id if mapping else None
+        db.flush()
+        if mapping:
+            cost = _create_cost_from_line(db, supplier=supplier, document=document, line=record, mapping=mapping)
+            if cost is None or str(cost.product_catalog_id) != line["product_catalog_id"]:
+                raise ValueError("Catalog match changed while importing; no costs saved.")
+            cost.source_type, cost.source_confidence = "aade_invoice", Decimal("1")
+            cost.source_reference = f"AADE MARK {source.mark}"
+            created += 1
+        elif line["line_type"] == "shipping" and not line["reasons"]:
+            _create_shipping_cost(db, supplier=supplier, document=document, line=record,
+                                  source_payload=SimpleNamespace(shipping_type="supplier_freight", cbm=None, weight=None, notes=None))
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
                              "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
-                             "aade_confirm_missing_units": payload.confirm_missing_units}
-    document.raw_metadata = {**document.raw_metadata, "aade_automated": automated}
-    costs = db.scalars(select(SupplierProductCost).join(SupplierDocumentLine,
-        SupplierDocumentLine.id == SupplierProductCost.source_line_id).where(SupplierDocumentLine.document_id == document.id)).all()
-    for cost in costs:
-        expected = next(row for row in preview["lines"] if row["line_number"] == db.get(SupplierDocumentLine, cost.source_line_id).line_number)
-        if str(cost.product_catalog_id) != expected["product_catalog_id"]:
-            raise ValueError("Catalog match changed while importing; no costs saved.")
-        mapping = db.get(SupplierProductMap, cost.supplier_product_map_id)
-        mapping.verified, mapping.verified_by, mapping.verified_at = True, user.id, func.now()
-        mapping.status, mapping.confidence, mapping.match_method = "matched", Decimal("1"), "aade_xml_reviewed"
-        cost.source_type, cost.source_confidence = "aade_invoice", Decimal("1")
-        cost.source_reference = f"AADE MARK {source.mark}"
-    if len(costs) != sum(line["line_type"] == "product" for line in preview["lines"]):
-        raise ValueError("Some product lines were not mapped; no costs saved.")
+                             "aade_confirm_missing_units": payload.confirm_missing_units,
+                             "aade_automated": automated, "aade_partial": bool(preview["pending_lines"]),
+                             "aade_pending_lines": preview["pending_lines"]}
     db.commit()
-    return {"duplicate": False, "costs_created": len(costs), "mark": source.mark}
+    return {"duplicate": False, "costs_created": created, "mark": source.mark,
+            "pending_lines": preview["pending_lines"]}
 
 
 def import_cost_batch(db, payload, user):
@@ -365,14 +410,15 @@ def import_cost_batch(db, payload, user):
                                       confirm_missing_units=payload.confirm_missing_units)
             result = {"id": str(document_id), "number": preview["number"], "mark": preview["mark"],
                       "costs_created": 0, "status": "review", "reasons": []}
-            if preview["imported"]:
-                result["status"] = "already_imported"
-            elif preview["can_import"]:
+            if preview["can_import"]:
                 accepted = accept_invoice(db, document_id, SupplierAADEAcceptRequest(
                     supplier_id=payload.supplier_id, fingerprint=preview["fingerprint"],
                     confirm_products_and_units=True, confirm_missing_units=payload.confirm_missing_units), user)
-                result.update(status="already_imported" if accepted["duplicate"] else "imported",
+                result.update(status="partial" if accepted.get("pending_lines") else "imported",
                               costs_created=accepted["costs_created"])
+                result["reasons"] = list(dict.fromkeys(reason for line in preview["lines"] for reason in line["reasons"]))
+            elif preview["imported"] and not preview["pending_lines"] and not preview["reasons"]:
+                result["status"] = "already_imported"
             else:
                 result["reasons"] = preview["reasons"] + list(dict.fromkeys(
                     reason for line in preview["lines"] for reason in line["reasons"]))

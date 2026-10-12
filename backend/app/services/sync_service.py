@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.connectors.aade import AADEConnector, AADERateLimitError
@@ -15,7 +15,8 @@ from app.connectors.search_console import SearchConsoleConnector
 from app.connectors.shoply import ShoplyConnector
 from app.connectors.tiktok_ads import TikTokAdsConnector
 from app.core.redaction import redact_sensitive
-from app.models import IntegrationSetting, SyncRun
+from app.models import IntegrationSetting, SyncRun, SupplierCatalogFeed
+from app.services.supplier_catalog_settings import queue_cost_refresh
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
 from app.services.import_service import (
     import_aade_payload,
@@ -360,6 +361,14 @@ def run_provider_sync(
                 return finish_run(db, run, "failed", count, error=order_error, meta=meta)
             if product_feed_error and connector.product_feed_url and order_count == 0:
                 return finish_run(db, run, "failed", count, error=product_feed_error, meta=meta)
+        if provider in {"opencart", "aade"}:
+            queue_cost_refresh(db)
+            meta = {**(meta or {}), "supplier_cost_refresh_queued": True}
+            if provider == "opencart":
+                db.execute(update(SupplierCatalogFeed).where(SupplierCatalogFeed.is_enabled.is_(True),
+                    SupplierCatalogFeed.status != "running").values(
+                        requested_at=datetime.now(timezone.utc), status="queued", error=None))
+                meta["supplier_xml_refresh_queued"] = True
         return finish_run(db, run, "success", count, meta=meta)
     except Exception as exc:
         db.rollback()

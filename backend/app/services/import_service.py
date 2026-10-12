@@ -637,16 +637,19 @@ def import_aade_payload(db: Session, payload: dict[str, Any], fallback_date: dat
             metadata = (existing.raw or {}).get(META_KEY)
             # Only local, previously verified metadata may survive a resync.
             # Never accept provider-detail metadata supplied by a remote payload.
-            values["raw"] = {key: value for key, value in values["raw"].items() if key != META_KEY}
+            values["raw"] = {key: value for key, value in values["raw"].items() if key not in {META_KEY, "_catalog_cost"}}
             unchanged = all(getattr(existing, key) == value for key, value in values.items() if key != "raw")
-            if metadata and unchanged and source_fingerprint(existing.raw) == source_fingerprint(values["raw"]):
-                values["raw"] = {**values["raw"], META_KEY: metadata}
+            if unchanged and source_fingerprint(existing.raw) == source_fingerprint(values["raw"]):
+                if metadata:
+                    values["raw"] = {**values["raw"], META_KEY: metadata}
+                if (existing.raw or {}).get("_catalog_cost"):
+                    values["raw"] = {**values["raw"], "_catalog_cost": existing.raw["_catalog_cost"]}
             for key, value in values.items():
                 setattr(existing, key, value)
             db.add(existing)
         else:
             from app.connectors.aade_detail import META_KEY
-            values["raw"] = {key: value for key, value in values["raw"].items() if key != META_KEY}
+            values["raw"] = {key: value for key, value in values["raw"].items() if key not in {META_KEY, "_catalog_cost"}}
             db.add(AADEDocument(**values))
         count += document_count
 
