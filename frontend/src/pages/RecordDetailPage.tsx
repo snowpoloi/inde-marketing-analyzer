@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, Calculator, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { AadeDocumentDetail, StoredOrderDetail } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import { formatAadeInvoiceType } from "../utils/aadeInvoiceTypes";
+import { OrderShippingCalculator } from "../components/OrderShippingCalculator";
 
 export function RecordDetailPage({kind, id, onBack}: {kind:"invoice" | "order"; id:string; onBack:()=>void}) {
   const [invoice, setInvoice] = useState<AadeDocumentDetail | null>(null);
   const [order, setOrder] = useState<StoredOrderDetail | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [showShipping, setShowShipping] = useState(false);
   useEffect(()=>{
     let active=true;
     setInvoice(null); setOrder(null); setError("");
@@ -23,6 +25,7 @@ export function RecordDetailPage({kind, id, onBack}: {kind:"invoice" | "order"; 
   const title=invoice ? `AADE / ${[invoice.series,invoice.aa].filter(Boolean).join(" / ") || invoice.mark}` : order ? `INDE order / ${order.order_id}` : kind === "invoice" ? "AADE invoice" : "INDE order";
   useEffect(()=>{document.title=title; return ()=>{document.title="INDE Marketing Analyzer";};},[title]);
   return <div className="page-stack record-detail">
+    {showShipping && kind === "order" && <OrderShippingCalculator orderId={id} onClose={()=>setShowShipping(false)}/>}
     <header className="page-header"><h1>{title}</h1><button className="secondary-action compact" onClick={onBack}><ArrowLeft size={17}/>{kind === "invoice" ? "AADE" : "Orders"}</button></header>
     {error ? <div className="notice" role="alert">{error}<button className="icon-button" title="Retry" aria-label="Retry" onClick={()=>setRetry(value=>value+1)}><RefreshCw size={17}/></button></div>
       : !invoice && !order ? <p role="status">Loading {kind}...</p> : null}
@@ -52,6 +55,7 @@ export function RecordDetailPage({kind, id, onBack}: {kind:"invoice" | "order"; 
       ]}/></section>
     </>}
     {order && <>
+      <button className="secondary-action compact" onClick={()=>setShowShipping(true)}><Calculator size={17}/>Shipping estimate</button>
       <dl className="supplier-catalog-detail-grid">
         <div><dt>Order date</dt><dd>{new Date(order.date_added).toLocaleString("el-GR")}</dd></div>
         <div><dt>Status</dt><dd>{order.status || "-"}</dd></div>

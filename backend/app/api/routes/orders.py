@@ -10,6 +10,10 @@ from app.models import User, OpenCartOrder
 from app.services.dashboard_service import _opencart_order_payload
 from app.schemas.dashboard import DashboardResponse
 from app.schemas.orders import OrderAnalyticsDefaultsRequest, OrderAnalyticsRequest
+from app.schemas.order_shipping import ShippingEstimateRequest, ShippingSettings
+from app.services.order_shipping import (
+    estimate_order_shipping, public_settings, save_shipping_settings, shipping_context, shipping_settings,
+)
 from app.services.orders_service import (
     order_analytics_options,
     orders_analytics,
@@ -18,6 +22,37 @@ from app.services.orders_service import (
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+@router.get("/shipping/settings", response_model=DashboardResponse)
+def get_shipping_settings(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return DashboardResponse(data=public_settings(shipping_settings(db)))
+
+
+@router.put("/shipping/settings", response_model=DashboardResponse)
+def put_shipping_settings(payload: ShippingSettings, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return DashboardResponse(data=save_shipping_settings(db, payload))
+
+
+@router.get("/detail/{order_id}/shipping", response_model=DashboardResponse)
+def get_order_shipping(order_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return DashboardResponse(data=shipping_context(db, order_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/detail/{order_id}/shipping", response_model=DashboardResponse)
+def calculate_order_shipping(order_id: str, payload: ShippingEstimateRequest,
+                             _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return DashboardResponse(data=estimate_order_shipping(db, order_id, payload))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/detail/{order_id}", response_model=DashboardResponse)

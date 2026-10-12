@@ -322,3 +322,17 @@ npm run dev
 ```
 
 The Vite dev server proxies `/api` to `http://localhost:8000`.
+
+## Order Shipping Estimates
+
+Orders and individual order details have an on-demand shipping calculator. It reads stored, explicitly matched MEGAPAP/Pakoworld packaging without fetching XML or changing orders, COGS or invoices. All shipments originate in Athens. Estimates remain separate from actual carrier expenses.
+
+Carrier contracts and Mytrans locality lists are private configuration in `integration_settings` under `order_shipping`, not checked-in defaults. An admin imports a validated private JSON configuration through Settings. The schema is `backend/app/schemas/order_shipping.py`. Settings summary responses omit the full locality dataset. No new database migration is needed.
+
+Speedex is priced separately per parcel using the greater of actual and volumetric weight. The confirmed length limit applies to the longest side, inclusive. Mytrans remote fees are additional to the shipment base/minimum. Mytrans area and COD lists never classify Speedex destinations. Ambiguous postcode-only matches require locality confirmation. Missing dimensions, parcel weights, monthly fuel rates, valid tariffs or required confirmations suppress totals rather than becoming zero. Product total weight is never divided equally across multiple boxes, and sale multipliers require manifest confirmation.
+
+Carrier destination rules prefill tariff zones from the stored order region, city and postcode. More specific rules win; equally specific conflicting rules leave the field unresolved. Carrier-specific area records prefill remote charges and COD eligibility from exact locality/postcode matches, or from a postcode only when every listed locality has the same classification. Mytrans remote fees without a known additional price remain unresolved. Known payment codes/methods prefill COD. Each match has visible provenance and all defaults remain editable without changing the stored order. Private locality/rule arrays are omitted from settings summaries. No live geocoding or carrier request runs when opening the calculator.
+
+These are standard domestic estimates, not express-air quotes or booked shipments. Started kilos above the Speedex band are rounded up; rounding and carrier acceptance still require final billing confirmation. Changing an input invalidates the displayed estimate. Customer shipping revenue is compared only after its net amount is explicitly confirmed.
+
+The owner confirmed that Mytrans pickup instructions are always consolidated: `small_pickup` is fixed to false. No under-four-parcel pickup surcharge or repeated confirmation is applied, even when an individual order has fewer than four parcels.

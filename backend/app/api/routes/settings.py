@@ -70,7 +70,7 @@ def complete_tiktok_authorization(
 @router.get("/integrations", response_model=list[IntegrationSettingResponse])
 def list_integrations(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     ensure_default_integrations(db)
-    integrations = db.scalars(select(IntegrationSetting).where(IntegrationSetting.provider != "supplier_catalog")
+    integrations = db.scalars(select(IntegrationSetting).where(IntegrationSetting.provider.notin_(["supplier_catalog", "order_shipping"]))
                              .order_by(IntegrationSetting.display_name)).all()
     return [
         IntegrationSettingResponse(

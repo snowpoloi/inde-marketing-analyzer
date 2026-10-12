@@ -1,3 +1,5 @@
+import type { ShippingContext, ShippingInputs, ShippingParcel, ShippingResult, ShippingSettings } from "./orderShipping";
+
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
   is_enabled: boolean; refresh_hours: number; status: string; error: string | null;
@@ -534,6 +536,13 @@ export const api = {
     request<{ data: BankDashboard }>(`/banks/transactions?date_from=${dateFrom}&date_to=${dateTo}`),
   ordersOverview: (dateFrom: string, dateTo: string) =>
     request<{ data: OrdersOverview }>(`/orders/overview?date_from=${dateFrom}&date_to=${dateTo}`),
+  orderShippingSettings: () => request<{data: ShippingSettings}>("/orders/shipping/settings"),
+  saveOrderShippingSettings: (payload: unknown) => request<{data: ShippingSettings}>("/orders/shipping/settings", {
+    method: "PUT", body: JSON.stringify(payload) }),
+  orderShipping: (id: string) => request<{data: ShippingContext}>(`/orders/detail/${encodeURIComponent(id)}/shipping`),
+  calculateOrderShipping: (id: string, payload: ShippingInputs & {parcels: ShippingParcel[]}) =>
+    request<{data: ShippingResult}>(`/orders/detail/${encodeURIComponent(id)}/shipping`, {
+      method: "POST", body: JSON.stringify(payload) }),
   orderAnalyticsOptions: () => request<{ data: OrderAnalyticsOptions }>("/orders/analytics/options"),
   orderAnalytics: (payload: OrderAnalyticsRequest) =>
     request<{ data: OrderAnalytics }>("/orders/analytics", {

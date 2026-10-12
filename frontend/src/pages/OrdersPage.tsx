@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, PackageCheck, RefreshCw, ShoppingCart, Truck, WalletCards } from "lucide-react";
+import { Calculator, Download, PackageCheck, RefreshCw, ShoppingCart, Truck, WalletCards } from "lucide-react";
 import { api } from "../api/client";
 import type { OrderRow, OrdersOverview, SupplierProductSale, SupplierSale } from "../api/client";
 import { DataTable } from "../components/DataTable";
@@ -9,6 +9,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { orderLink } from "../utils/recordLinks";
 import "../styles/date-presets.css";
 import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
+import { OrderShippingCalculator } from "../components/OrderShippingCalculator";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("el-GR", { maximumFractionDigits: 2 });
@@ -111,6 +112,7 @@ export function OrdersPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [shippingOrder, setShippingOrder] = useState<string | null>(null);
 
   async function load(nextFrom = dateFrom, nextTo = dateTo) {
     setLoading(true);
@@ -153,6 +155,9 @@ export function OrdersPage() {
       { key: "payment_status", header: "Paid?", render: (row) => <StatusBadge value={row.payment_status} /> },
       { key: "products", header: "Products", align: "right", render: (row) => currency.format(row.products_total) },
       { key: "shipping", header: "Shipping", align: "right", render: (row) => currency.format(row.shipping_total) },
+      { key: "shipping_estimate", header: "Shipping estimate", render: row => <button className="icon-button"
+        title={`Calculate shipping for order ${row.order_id}`} aria-label={`Calculate shipping for order ${row.order_id}`}
+        onClick={()=>setShippingOrder(row.order_id)}><Calculator size={18}/></button> },
       { key: "total", header: "Total", align: "right", render: (row) => currency.format(row.order_total) },
       { key: "paid", header: "Paid", align: "right", render: (row) => currency.format(row.paid_amount) },
       { key: "balance", header: "Balance", align: "right", render: (row) => currency.format(row.balance_due) },
@@ -214,6 +219,7 @@ export function OrdersPage() {
 
   return (
     <div className="page-stack">
+      {shippingOrder && <OrderShippingCalculator key={shippingOrder} orderId={shippingOrder} onClose={()=>setShippingOrder(null)}/>}
       <header className="page-header">
         <div>
           <h1>Orders</h1>

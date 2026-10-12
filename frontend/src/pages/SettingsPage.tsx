@@ -4,6 +4,8 @@ import { api } from "../api/client";
 import type { IntegrationSetting } from "../api/client";
 import { SupplierFeedSettings } from "../components/SupplierFeedSettings";
 import { SupplierIdentitySettings } from "../components/SupplierIdentitySettings";
+import { OrderShippingSettings } from "../components/OrderShippingSettings";
+import "../styles/order-shipping.css";
 
 const aadeReadOnlyEndpoints = [
   { value: "RequestTransmittedDocs", label: "Transmitted docs" },
@@ -558,6 +560,7 @@ export function SettingsPage() {
       {message ? <div className="notice">{message}</div> : null}
       <SupplierFeedSettings />
       <SupplierIdentitySettings />
+      <OrderShippingSettings />
       <section className="settings-grid">
         {items.map((item) => (
           <article className="settings-panel" key={item.provider}>
