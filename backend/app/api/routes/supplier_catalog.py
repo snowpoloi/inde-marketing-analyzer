@@ -2,6 +2,7 @@ from uuid import UUID
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,7 +12,8 @@ from app.db.session import get_db
 from app.models import SupplierCatalogFeed, SupplierCatalogProduct, User
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatalogPricingInput
 from app.services.supplier_catalog_settings import public_pricing_settings, save_pricing_settings, package_metrics
-from app.services.supplier_catalog_service import catalog_products, feed_response, queue_feed, save_feed
+from app.services.supplier_catalog_service import CatalogRowLimitExceeded, catalog_products, feed_response, queue_feed, save_feed
+from app.services.supplier_catalog_export import MAX_EXPORT_ROWS, XLSX_MEDIA_TYPE, catalog_workbook
 from app.services.supplier_catalog_summary import period_summary
 from app.services.supplier_catalog_orders import product_orders
 from app.services.supplier_catalog_invoices import product_invoices
@@ -57,18 +59,41 @@ def sync(feed_id: UUID, _: User = Depends(require_admin), db: Session = Depends(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.get("/products")
-def products(feed_id: UUID | None = None, q: str = Query(default="", max_length=200),
+def product_filters(feed_id: UUID | None = None, q: str = Query(default="", max_length=200),
              match: str = Query(default="all", pattern="^(all|matched|unmatched)$"),
              availability: str = Query(default="all", pattern="^(all|in_stock|out_of_stock)$"),
              has_margin: bool = False,
              sort_by: str = Query(default="name", pattern="^(name|supplier_code|supplier_sku|opencart_sku|quantity|sale_quantity|inde_price|aade_cost_net|aade_cost_sale_net|gross_profit_per_unit|gross_profit_per_sale|gross_margin_percent|wholesale_price_net|retail_price_gross)$"),
              sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
-             category: str = Query(default="", max_length=1000), offset: int = Query(default=0, ge=0),
+             category: str = Query(default="", max_length=1000)):
+    return dict(feed_id=feed_id, q=q.strip(), match=match, availability=availability,
+                category=category, has_margin=has_margin, sort_by=sort_by, sort_direction=sort_direction)
+
+
+@router.get("/products")
+def products(filters: dict = Depends(product_filters), offset: int = Query(default=0, ge=0),
              limit: int = Query(default=50, ge=1, le=100), _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return catalog_products(db, feed_id=feed_id, q=q.strip(), match=match, availability=availability,
-                            category=category, offset=offset, limit=limit, has_margin=has_margin,
-                            sort_by=sort_by, sort_direction=sort_direction)
+    return catalog_products(db, **filters, offset=offset, limit=limit)
+
+
+@router.get("/export")
+def export(date_from: date, date_to: date, filters: dict = Depends(product_filters),
+           _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if date_from > date_to:
+        raise HTTPException(status_code=422, detail="From date must be before or equal to To date.")
+    try:
+        products = catalog_products(db, **filters, offset=0, limit=MAX_EXPORT_ROWS, max_rows=MAX_EXPORT_ROWS)
+    except CatalogRowLimitExceeded as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    try:
+        period = period_summary(db, date_from, date_to, filters["feed_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    feed = db.get(SupplierCatalogFeed, filters["feed_id"]) if filters["feed_id"] else None
+    content = catalog_workbook(products, period, filters, feed.name if feed else "All suppliers")
+    filename = f"supplier-catalog-{date_from}-{date_to}.xlsx"
+    return Response(content, media_type=XLSX_MEDIA_TYPE, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
 
 @router.get("/period-summary")

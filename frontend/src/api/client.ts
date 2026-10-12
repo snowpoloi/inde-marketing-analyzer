@@ -469,7 +469,7 @@ export function clearToken() {
   localStorage.removeItem("inde_token");
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function requestResponse(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -483,6 +483,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const detail = await response.json().catch(() => ({}));
     throw new Error(detail.detail || `Request failed with ${response.status}`);
   }
+  return response;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await requestResponse(path, init);
   return response.json() as Promise<T>;
 }
 
@@ -619,6 +624,10 @@ export const api = {
     request<SupplierCatalogFeed>(`/supplier-catalog/feeds${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) }),
   syncSupplierCatalog: (id: string) => request<SupplierCatalogFeed>(`/supplier-catalog/feeds/${id}/sync`, { method: "POST" }),
   supplierCatalogProducts: (filters: Record<string, string>) => request<SupplierCatalogResult>(`/supplier-catalog/products?${new URLSearchParams(filters)}`),
+  supplierCatalogExport: async (filters: Record<string, string>) => {
+    const response = await requestResponse(`/supplier-catalog/export?${new URLSearchParams(filters)}`);
+    return response.blob();
+  },
   supplierCatalogPeriod: (filters: Record<string, string>) => request<SupplierCatalogPeriod>(`/supplier-catalog/period-summary?${new URLSearchParams(filters)}`),
   supplierCatalogOrders: (id: string, filters: Record<string, string>) => request<SupplierCatalogOrders>(`/supplier-catalog/products/${id}/orders?${new URLSearchParams(filters)}`),
   supplierCatalogDetails: (id: string) => request<{ id: string; name: string; is_current: boolean;

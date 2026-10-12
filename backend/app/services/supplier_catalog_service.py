@@ -186,9 +186,13 @@ def process_supplier_catalog(db: Session) -> dict | None:
         return {"failed": True}
 
 
+class CatalogRowLimitExceeded(ValueError):
+    pass
+
+
 def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, availability: str,
                      category: str, offset: int, limit: int, has_margin: bool = False,
-                     sort_by: str = "name", sort_direction: str = "asc") -> dict:
+                     sort_by: str = "name", sort_direction: str = "asc", max_rows: int | None = None) -> dict:
     conditions = [SupplierCatalogProduct.is_current.is_(True)]
     if feed_id:
         conditions.append(SupplierCatalogProduct.feed_id == feed_id)
@@ -246,6 +250,8 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
         order = field.desc() if sort_direction == "desc" else field.asc()
         total = db.scalar(select(func.count()).select_from(base.with_only_columns(SupplierCatalogProduct.id).subquery()))
         page = base.order_by(order.nullslast(), SupplierCatalogFeed.name, SupplierCatalogProduct.id).offset(offset).limit(limit)
+    if max_rows is not None and total > max_rows:
+        raise CatalogRowLimitExceeded(f"Export is limited to {max_rows:,} products. Select a supplier or narrower filters.")
     results = db.execute(page.options(load_only(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.price, ProductCatalog.raw),
         load_only(SupplierCatalogProduct.id, SupplierCatalogProduct.supplier_code, SupplierCatalogProduct.supplier_sku,
                   SupplierCatalogProduct.ean, SupplierCatalogProduct.name, SupplierCatalogProduct.category,

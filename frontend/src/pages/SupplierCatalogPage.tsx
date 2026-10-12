@@ -43,6 +43,8 @@ export function SupplierCatalogPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [queuing, setQueuing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [showCosts, setShowCosts] = useState(false);
   const [costSupplier, setCostSupplier] = useState("");
   const [openingCosts, setOpeningCosts] = useState(false);
@@ -56,13 +58,16 @@ export function SupplierCatalogPage() {
   const detailId = useRef(0);
   const selected = feeds.find(feed => feed.id === feedId);
   const active = feeds.some(feed => ["queued", "running"].includes(feed.status));
+  const productFilters = {
+    ...(feedId ? { feed_id: feedId } : {}), q: search, match, availability, category, has_margin: String(hasMargin),
+    sort_by: sortBy, sort_direction: sortDirection
+  };
 
   async function load() {
     const id = ++requestId.current; setLoading(true);
     try {
       const [rows, data] = await Promise.all([api.supplierCatalogFeeds(), api.supplierCatalogProducts({
-        ...(feedId ? { feed_id: feedId } : {}), q: search, match, availability, category, has_margin: String(hasMargin),
-        sort_by: sortBy, sort_direction: sortDirection, offset: String(offset), limit: "50"
+        ...productFilters, offset: String(offset), limit: "50"
       })]);
       if (id !== requestId.current) return;
       setFeeds(rows); setResult(data); setError("");
@@ -96,6 +101,20 @@ export function SupplierCatalogPage() {
     try { await api.syncSupplierCatalog(feedId); await load(); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not queue sync."); }
     finally { setQueuing(false); }
+  }
+  async function exportExcel() {
+    if (exporting) return;
+    setExporting(true); setExportError("");
+    const filename = `supplier-catalog-${costStart}-${costEnd}.xlsx`;
+    try {
+      const blob = await api.supplierCatalogExport({ ...productFilters, date_from: costStart, date_to: costEnd });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { setExportError(err instanceof Error ? err.message : "Could not export supplier catalog."); }
+    finally { setExporting(false); }
   }
   async function inspect(row: SupplierCatalogProduct) {
     const id = ++detailId.current;
@@ -162,6 +181,7 @@ export function SupplierCatalogPage() {
         <button className="primary-action compact" disabled={!selected || queuing || ["queued", "running"].includes(selected.status)} onClick={sync}><RefreshCw size={16} />Sync XML</button></div>
     </header>
     {error && <div className="notice" role="alert">{error}</div>}
+    {exportError && <div className="notice" role="alert">{exportError}</div>}
     {selected?.error && <div className="notice">{selected.error}</div>}
     <section className="supplier-catalog-period" aria-label="Supplier purchases and margins">
       <h2>Supplier purchases & margins</h2>
@@ -189,6 +209,8 @@ export function SupplierCatalogPage() {
       <span>Products <strong>{result?.summary.products ?? 0}</strong></span><span>Matched <strong>{result?.summary.matched ?? 0}</strong></span>
       <span>Not matched <strong>{result?.summary.unmatched ?? 0}</strong></span>
       {selected && <span>{selected.status} · {timestamp(selected.last_synced_at)}</span>}
+      <button className="secondary-action compact" disabled={exporting || loading || periodLoading || query !== search || !result?.total || !costStart || !costEnd || costStart > costEnd}
+        onClick={exportExcel} aria-busy={exporting}><Download size={16}/>{exporting ? "Exporting..." : "Export Excel"}</button>
     </div>
     <div className="supplier-catalog-table" aria-busy={loading}><DataTable rows={loading ? [] : result?.rows ?? []} columns={columns} rowKey={row=>row.id} empty={loading ? "Loading supplier products..." : "No supplier products found."}
       renderExpandedRow={row=>openOrders[row.id] || openInvoices[row.id] ? <>
