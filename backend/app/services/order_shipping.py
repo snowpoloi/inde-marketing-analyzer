@@ -9,6 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models import IntegrationSetting, OpenCartOrder, ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
+from app.connectors.supplier_catalog import pakoworld_package_details
 from app.schemas.order_shipping import ShippingEstimateRequest, ShippingSettings
 from app.services.supplier_catalog_pricing import sale_quantity
 
@@ -212,6 +213,8 @@ def order_manifest(db, order):
         candidates = current or candidates
         product, adapter = candidates[0] if len(candidates) == 1 else (None, None)
         details = product.details or {} if product else {}
+        if adapter == "pakoworld":
+            details = pakoworld_package_details(details)
         step = sale_quantity(adapter, details.get("sell_step" if adapter == "pakoworld" else "minimum"))
         supported = adapter in {"megapap", "pakoworld"}
         packages = details.get("packages") or [] if supported else []
@@ -222,21 +225,43 @@ def order_manifest(db, order):
             warnings.append(f"{line.name}: missing or incomplete supplier parcel dimensions; confirm the actual manifest.")
             count = int(declared) if declared and declared == int(declared) and declared <= 30 else 1
             packages = [{} for _ in range(count)]
-        if step is None or step > 1:
+        pieces_per_package = positive(details.get("pieces_per_package")) if adapter == "pakoworld" else None
+        uncertain_packing = step is None
+        if adapter == "pakoworld":
+            uncertain_packing |= ((pieces_per_package is None and
+                (step != 1 or "pieces_per_package" in details)) or
+                (pieces_per_package is not None and pieces_per_package > 1 and len(packages) != 1))
+        elif step is None or step > 1:
             warnings.append(f"{line.name}: verify XML pieces per INDE sale unit and parcel count (sell step {step or 'unknown'}).")
         if product and not product.is_current:
             warnings.append(f"{line.name}: archived XML packaging, last seen {product.last_seen_at.date()}.")
-        copies = max(0, line.quantity) * int(step or 1)
+        pieces = max(0, line.quantity) * int(step or 1)
+        carton_pieces = int(pieces_per_package or 1)
+        copies = (pieces + carton_pieces - 1) // carton_pieces
+        partial_carton = pieces % carton_pieces != 0
+        if uncertain_packing:
+            warnings.append(f"{line.name}: missing or ambiguous pieces per carton (sell step {step or 'unknown'}); enter the actual parcels.")
+            copies = max(0, line.quantity)
+            packages = [{} for _ in packages]
+        elif partial_carton:
+            warnings.append(f"{line.name}: quantity does not fill the last carton; verify its dimensions and weight.")
         if copies * len(packages) + len(parcels) > 200:
             raise ValueError("More than 200 parcels; calculate this shipment in separate batches.")
         # A product's total gross weight is not split equally between its boxes.
         total_weight = positive(details.get("weight_item") if adapter == "megapap" else details.get("gross_weight"))
+        if adapter == "pakoworld" and carton_pieces > 1 and not uncertain_packing:
+            total_weight = positive(total_weight * carton_pieces) if total_weight else None
+            if total_weight:
+                warnings.append(f"{line.name}: carton gross weight = XML gross weight per piece x {carton_pieces}; verify before confirming.")
         for copy in range(copies):
             for index, package in enumerate(packages):
+                weight = positive(package.get("weight_kg")) or (total_weight if len(packages) == 1 else None)
+                if uncertain_packing or (partial_carton and copy == copies - 1):
+                    weight = None
                 parcels.append({"key": f"{line.id}:{copy}:{index}",
                     "label": f"{line.name} / {copy + 1}.{index + 1}",
                     **{key: positive(package.get(key)) for key in ("width_cm", "length_cm", "height_cm")},
-                    "weight_kg": positive(package.get("weight_kg")) or (total_weight if len(packages) == 1 else None)})
+                    "weight_kg": weight})
     return {"parcels": parcels, "warnings": warnings}
 
 

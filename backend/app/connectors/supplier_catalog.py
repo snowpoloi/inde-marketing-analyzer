@@ -83,7 +83,7 @@ def parse_packages(dimensions: dict, count: str | None) -> list[dict]:
 
 
 def pakoworld_package_details(details: dict) -> dict:
-    """Pakoworld attribute 2 counts boxes; attribute 4 lists their L x W x H in cm."""
+    """Attributes 2/4 describe boxes; 11 is pieces in a box, not the sale step."""
     details = dict(details)
     attributes = details.get("attributes") or []
 
@@ -101,6 +101,12 @@ def pakoworld_package_details(details: dict) -> dict:
     declared = int(Decimal(count)) if count and Decimal(count) == int(Decimal(count)) and 0 < Decimal(count) <= 30 else None
     if declared is not None:
         details["packages_per_item"] = str(declared)
+    has_pieces = any(str(row.get("id")) == "11" and row.get("value") for row in attributes)
+    raw_pieces = attribute("11") if has_pieces else details.get("pieces_per_package")
+    if has_pieces or "pieces_per_package" in details:
+        pieces = _number(raw_pieces)
+        details["pieces_per_package"] = (str(int(Decimal(pieces))) if pieces and
+            Decimal(pieces) == int(Decimal(pieces)) and 0 < Decimal(pieces) <= 10000 else None)
     if any(row.get(axis) for row in details.get("packages", [])
            for axis in ("length_cm", "width_cm", "height_cm")):
         return details

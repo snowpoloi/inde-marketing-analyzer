@@ -188,8 +188,73 @@ def test_manifest_excludes_explicit_shipping_charge_but_not_products_with_simila
 def test_manifest_sale_step_is_not_the_box_count_and_requires_confirmation(db):
     order, _ = seed_order(db, step="4", boxes=2)
     result = order_manifest(db, order)
-    assert len(result["parcels"]) == 16  # 2 order units x 4 supplier pieces x 2 boxes
+    assert len(result["parcels"]) == 4  # Unknown packing: placeholders, not 16 invented cartons.
+    assert all(row["width_cm"] is None and row["weight_kg"] is None for row in result["parcels"])
     assert any("sell step 4" in warning for warning in result["warnings"])
+
+
+@pytest.mark.parametrize("quantity", [1, 2, 4])
+def test_manifest_pakoworld_four_chairs_per_carton_is_one_box_per_inde_set(db, quantity):
+    order, supplier = seed_order(db, step="4", boxes=1)
+    order.products[0].quantity = quantity
+    supplier.details = {**supplier.details, "gross_weight": "3.875", "attributes": [
+        {"id": "2", "value": "Boxes: 1.000"}, {"id": "11", "value": "Pieces per carton: 4"}],
+        "packages": [{"length_cm": "78", "width_cm": "43", "height_cm": "26"}]}
+    db.flush()
+    original = dict(supplier.details)
+    result = order_manifest(db, order)
+    assert len(result["parcels"]) == quantity
+    assert all(row["weight_kg"] == Decimal("15.5") for row in result["parcels"])
+    assert all(row["width_cm"] == 43 and row["length_cm"] == 78 and row["height_cm"] == 26
+               for row in result["parcels"])
+    assert supplier.details == original and "pieces_per_package" not in supplier.details
+    assert not db.dirty
+    value = request(parcels=result["parcels"])
+    quote = carrier_estimate(rates(), value, "speedex")
+    assert len(quote["parcels"]) == quantity
+    assert all(row["billable_kg"] == Decimal("17.4408") for row in quote["parcels"])
+
+
+def test_manifest_pakoworld_keeps_distinct_boxes_for_each_physical_item(db):
+    order, supplier = seed_order(db, step="2", boxes=2)
+    supplier.details = {**supplier.details, "attributes": [{"id": "11", "value": "Pieces per carton: 1"}],
+        "packages": [{"length_cm": "47", "width_cm": "188", "height_cm": "10"},
+                     {"length_cm": "49", "width_cm": "131", "height_cm": "15"}]}
+    result = order_manifest(db, order)
+    assert len(result["parcels"]) == 8
+    assert [row["length_cm"] for row in result["parcels"]] == [Decimal(47), Decimal(49)] * 4
+    assert all(row["weight_kg"] is None for row in result["parcels"])
+
+
+@pytest.mark.parametrize("pieces,boxes", [("invalid", 1), ("0", 1), ("1.5", 1), ("4", 2)])
+def test_manifest_ambiguous_carton_contents_require_manual_parcels(db, pieces, boxes):
+    order, supplier = seed_order(db, step="4", boxes=boxes)
+    supplier.details = {**supplier.details, "attributes": [{"id": "11", "value": pieces}]}
+    result = order_manifest(db, order)
+    assert all(row["width_cm"] is None and row["weight_kg"] is None for row in result["parcels"])
+    assert any("actual parcels" in warning for warning in result["warnings"])
+    assert carrier_estimate(rates(), request(parcels=result["parcels"]), "speedex")["gross"] is None
+
+
+def test_manifest_partial_carton_keeps_full_outer_dimensions_but_not_full_weight(db):
+    order, supplier = seed_order(db, step="3", boxes=1)
+    supplier.details = {**supplier.details, "attributes": [{"id": "11", "value": "4"}]}
+    result = order_manifest(db, order)
+    assert len(result["parcels"]) == 2  # Six pieces: one full carton, one needing confirmation.
+    assert result["parcels"][0]["weight_kg"] == 120
+    assert result["parcels"][1]["weight_kg"] is None
+    assert any("last carton" in warning for warning in result["warnings"])
+
+
+def test_manifest_megapap_minimum_and_multibox_packaging_remain_separate(db):
+    order, supplier = seed_order(db, boxes=3)
+    feed = db.get(SupplierCatalogFeed, supplier.feed_id)
+    feed.adapter = "megapap"
+    supplier.details = {**supplier.details, "minimum": "2", "weight_item": "40"}
+    db.flush()
+    result = order_manifest(db, order)
+    assert len(result["parcels"]) == 12
+    assert all(row["weight_kg"] is None for row in result["parcels"])
 
 
 def test_manifest_single_box_can_use_total_gross_weight(db):

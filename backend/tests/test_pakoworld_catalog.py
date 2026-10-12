@@ -115,6 +115,30 @@ def test_stored_pakoworld_details_are_normalized_without_mutation():
     assert connector.pakoworld_package_details({"sell_step": "4", "length": "200", "volume": "0.2"})["packages"] == []
 
 
+def test_pakoworld_pieces_per_carton_is_preserved_with_existing_dimensions():
+    raw = {"sell_step": "4", "packages_per_item": "1", "packages": [
+        {"length_cm": "78", "width_cm": "43", "height_cm": "26"}],
+        "attributes": [{"id": "11", "value": "Pieces per carton: 4.000"}]}
+    normalized = connector.pakoworld_package_details(raw)
+    assert normalized["pieces_per_package"] == "4"
+    assert normalized["packages"] == raw["packages"]
+    assert "pieces_per_package" not in raw
+    assert connector.pakoworld_package_details(normalized) == normalized
+
+
+@pytest.mark.parametrize("values", [["0"], ["-4"], ["1.5"], ["NaN"], ["unknown"], ["10001"], ["2", "4"]])
+def test_pakoworld_invalid_or_conflicting_carton_pieces_remain_unknown(values):
+    details = connector.pakoworld_package_details({"pieces_per_package": "4", "attributes": [
+        {"id": "11", "value": "Pieces per carton: " + value} for value in values]})
+    assert details["pieces_per_package"] is None
+
+
+def test_pakoworld_parser_extracts_carton_pieces_without_changing_sale_step():
+    source = xml().decode().replace('<attributes>', '<attributes><attribute id="11">Pieces per carton: 4</attribute>')
+    details = connector.parse_pakoworld_catalog(io.BytesIO(source.encode()))[0]["details"]
+    assert details["pieces_per_package"] == "4" and details["sell_step"] == "2"
+
+
 def test_conflicting_box_counts_do_not_assume_dimension_list_is_complete():
     from app.services.supplier_catalog_settings import package_metrics
     details = connector.pakoworld_package_details({"attributes": [
