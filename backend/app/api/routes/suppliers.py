@@ -11,9 +11,11 @@ from app.api.deps import require_admin
 from app.db.session import get_db
 from app.models import User
 from app.schemas.suppliers import (ManualSupplierCostRequest, SupplierImportRequest, VerifySupplierMappingRequest,
-                                  SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest, SupplierAADEBatchRequest)
+                                  SupplierSettingsRequest, SupplierIdentityRequest, SupplierAADEAcceptRequest, SupplierAADEBatchRequest,
+                                  SupplierAADEConfirmLineRequest)
 from app.services.supplier_identity import supplier_identities, save_supplier_identity, aade_supplier_registry, import_aade_suppliers
 from app.services.supplier_aade_costs import aade_invoices, invoice_preview, accept_invoice, import_cost_batch
+from app.services.supplier_aade_review import pending_costs, confirm_line
 from app.services.supplier_service import (
     add_manual_cost,
     import_supplier_documents,
@@ -80,6 +82,27 @@ def fiscal_suppliers(date_from: date, date_to: date, _: User = Depends(require_a
         return {"data": aade_supplier_registry(db, start, end)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/aade/pending-costs")
+def fiscal_pending(date_from: date, date_to: date, supplier_id: UUID | None = None,
+                   offset: int = Query(default=0, ge=0), limit: int = Query(default=10, ge=1, le=10),
+                   _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    start, end = _dates(date_from, date_to)
+    if (end - start).days > 366:
+        raise HTTPException(status_code=400, detail="Choose a period of at most 366 days.")
+    return {"data": pending_costs(db, start, end, supplier_id, offset, limit)}
+
+
+@router.post("/aade/invoices/{document_id}/confirm-line")
+def fiscal_confirm_line(document_id: UUID, payload: SupplierAADEConfirmLineRequest,
+                        user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        return {"data": confirm_line(db, document_id, payload, user)}
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc) if isinstance(exc, ValueError)
+            else "Cost confirmation conflicts with existing evidence; reload and review.") from None
 
 
 @router.post("/aade/suppliers/import")

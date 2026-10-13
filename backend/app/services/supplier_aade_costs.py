@@ -140,7 +140,7 @@ def aade_invoices(db, supplier_id, start, end, offset, limit):
         "record_type": (row.raw or {}).get("record_type", "full_document")} for row in documents]}
 
 
-def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing_units=False):
+def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing_units=False, matching_cache=None):
     document = db.get(AADEDocument, document_id, with_for_update=lock, populate_existing=lock)
     supplier = db.get(Supplier, supplier_id)
     if document is None or supplier is None:
@@ -185,14 +185,16 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
     catalog_query = select(SupplierCatalogProduct, ProductCatalog).options(
         load_only(SupplierCatalogProduct.id, SupplierCatalogProduct.supplier_code,
                   SupplierCatalogProduct.supplier_sku, SupplierCatalogProduct.ean),
-        load_only(ProductCatalog.id, ProductCatalog.sku)
+        load_only(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.ean,
+                  ProductCatalog.upc, ProductCatalog.mpn)
     ).join(SupplierCatalogFeed,
         SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(ProductCatalog,
         ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(SupplierCatalogFeed.code == supplier.code,
         SupplierCatalogProduct.is_current.is_(True))
     if lock:
         catalog_query = catalog_query.with_for_update(of=SupplierCatalogProduct)
-    catalogs = db.execute(catalog_query).all()
+    cached = matching_cache.get(supplier.id) if matching_cache is not None and not lock else None
+    catalogs = cached[0] if cached else db.execute(catalog_query).all()
     if lock:
         product_ids = {product.id for _, product in catalogs if product is not None}
         db.scalars(select(ProductCatalog.id).where(ProductCatalog.id.in_(product_ids)).with_for_update()).all()
@@ -207,10 +209,14 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             for identifier in (item.supplier_code, item.supplier_sku):
                 if identifier and re.fullmatch(_ANTHEMIDIS_CATALOG_CODE, identifier):
                     title_index.setdefault(identifier, {})[item.id] = (item, product)
-    mappings = db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
+    mappings = cached[1] if cached else db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
+    if matching_cache is not None and not lock:
+        matching_cache[supplier.id] = (catalogs, mappings)
+    from app.services.supplier_aade_rules import reviewed_mapping, mapping_valid, xml_identity
+    digest = _source_digest(document)
     for line in lines:
         line.update(product_catalog_id=None, inde_sku=None, supplier_sku=None, supplier_code=None, supplier_ean=None,
-                    match_method=None, matched_item_code=None)
+                    match_method=None, matched_item_code=None, mapping_id=None, xml_candidates=[])
         if line["line_type"] == "shipping":
             continue
         candidates = dict(index.get(normalize_identifier(line["item_code"]), {})) if line["item_code"] else {}
@@ -226,7 +232,32 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                     if not candidates:
                         method, matched_code = "anthemidis_title_code", title_code
                     candidates.update(title_matches)
-        matches = list(candidates.values())
+        matches = sorted(candidates.values(), key=lambda row: str(row[0].id))
+        line["xml_candidates"] = [{"id": str(item.id), **xml_identity(item)} for item, _ in matches]
+        manual = reviewed_mapping(mappings, line, document, digest)
+        if manual:
+            product = db.get(ProductCatalog, manual.product_catalog_id, options=[load_only(
+                ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.ean,
+                ProductCatalog.upc, ProductCatalog.mpn)]) if manual.product_catalog_id else None
+            review = (manual.raw_metadata or {}).get("aade_review", {})
+            saved_xml = review.get("xml_identity")
+            current_xml = next((item for item, _ in catalogs if str(item.id) == review.get("catalog_item_id")), None)
+            if not mapping_valid(manual, product) or (saved_xml and current_xml and xml_identity(current_xml) != saved_xml):
+                line["reasons"].append("Reviewed product identifiers changed; confirm the mapping again.")
+            else:
+                line["reasons"] = [reason for reason in line["reasons"] if reason not in {
+                    "Missing item code; description alone is not an automatic match.",
+                    "Multiple Anthemidis catalog codes in the invoice title require review."}]
+                if not line["source_unit"] and review.get("missing_unit_is_piece"):
+                    line["unit"], line["unit_confirmed"] = "piece", True
+                    line["reasons"] = [reason for reason in line["reasons"] if reason !=
+                        "Purchase unit is not explicitly pieces; pack conversion requires review."]
+                line.update(product_catalog_id=str(product.id), inde_sku=product.sku,
+                    supplier_sku=manual.supplier_sku, supplier_code=manual.supplier_code, supplier_ean=manual.supplier_ean,
+                    match_method="aade_manual_reviewed", matched_item_code=line["item_code"], mapping_id=str(manual.id))
+                if not line["reasons"]:
+                    line["unit_cost_net"] = money(line["net_value"] / line["quantity"])
+            continue
         if len(matches) == 1 and matches[0][1] is not None:
             item, product = matches[0]
             line.update(product_catalog_id=str(product.id), inde_sku=product.sku,
@@ -276,14 +307,14 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             "provider_detail": detail_info(document.raw or {}),
             "confirm_missing_units": confirm_missing_units,
             "needs_unit_confirmation": any(line["line_type"] == "product" and not line["source_unit"] for line in lines),
-            "reasons": reasons, "fingerprint": fingerprint, "imported": bool(existing),
+            "reasons": reasons, "fingerprint": fingerprint, "source_digest": digest, "imported": bool(existing),
             "ready_lines": sum(line["ready"] for line in lines),
             "pending_lines": sum(line["line_type"] == "product" and not line["costed"] and not line["ready"] for line in lines),
             "costed_lines": len(costed),
             "can_import": not reasons and any(line["ready"] for line in lines)}
 
 
-def accept_invoice(db, document_id, payload, user, *, automated=False):
+def accept_invoice(db, document_id, payload, user, *, automated=False, only_line_number=None):
     from app.services.supplier_service import _create_cost_from_line, _create_shipping_cost
 
     if not payload.confirm_products_and_units:
@@ -304,11 +335,12 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
     # importer heuristics (MEGAPAP models and own SKUs can be different).
     mappings = {}
     for line in preview["lines"]:
-        if not line["ready"]:
+        if not line["ready"] or (only_line_number is not None and line["line_number"] != only_line_number):
             continue
         identity = supplier_mapping_identity(line["supplier_sku"], line["supplier_ean"], line["supplier_code"], line["description"])
-        mapping = db.scalar(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id,
-            SupplierProductMap.identity_key == identity).with_for_update())
+        mapping = db.get(SupplierProductMap, line["mapping_id"], with_for_update=True) if line["mapping_id"] else db.scalar(
+            select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id,
+                SupplierProductMap.identity_key == identity).with_for_update())
         if mapping is None:
             mapping = SupplierProductMap(supplier_id=supplier.id, identity_key=identity,
                 supplier_code=line["supplier_code"], supplier_sku=line["supplier_sku"], supplier_ean=line["supplier_ean"],
@@ -317,11 +349,12 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
         product = db.get(ProductCatalog, line["product_catalog_id"])
         mapping.product_catalog_id, mapping.opencart_sku, mapping.opencart_model = product.id, product.sku, product.model
         mapping.opencart_product_id, mapping.product_name = product.product_id, product.name
-        mapping.verified, mapping.verified_by, mapping.verified_at = True, user.id, datetime.now(timezone.utc)
-        mapping.status, mapping.confidence, mapping.match_method = "matched", Decimal("1"), "aade_xml_reviewed"
+        if not line["mapping_id"]:
+            mapping.verified, mapping.verified_by, mapping.verified_at = True, user.id, datetime.now(timezone.utc)
+            mapping.status, mapping.confidence, mapping.match_method = "matched", Decimal("1"), "aade_xml_reviewed"
         audit = list((mapping.raw_metadata or {}).get("verification_audit", []))
-        audit.append({"user_id":str(user.id), "automated": automated, "at":mapping.verified_at.isoformat(), "aade_mark":preview["mark"],
-                      "product":str(product.id), "factor":"1", "method":"aade_xml_reviewed"})
+        audit.append({"user_id":str(user.id), "automated": automated, "at":datetime.now(timezone.utc).isoformat(), "aade_mark":preview["mark"],
+                      "product":str(product.id), "factor":"1", "method":mapping.match_method})
         mapping.raw_metadata = {**(mapping.raw_metadata or {}), "verification_audit":audit}
         db.flush()
         mappings[line["line_number"]] = mapping
@@ -377,14 +410,16 @@ def accept_invoice(db, document_id, payload, user, *, automated=False):
         elif line["line_type"] == "shipping" and not line["reasons"]:
             _create_shipping_cost(db, supplier=supplier, document=document, line=record,
                                   source_payload=SimpleNamespace(shipping_type="INBOUND", cbm=None, weight=None, notes=None))
+    pending = sum(line["line_type"] == "product" and not line["costed"] and line["line_number"] not in mappings
+                  for line in preview["lines"])
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
                              "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
                              "aade_confirm_missing_units": payload.confirm_missing_units,
-                             "aade_automated": automated, "aade_partial": bool(preview["pending_lines"]),
-                             "aade_pending_lines": preview["pending_lines"]}
+                             "aade_automated": automated, "aade_partial": bool(pending),
+                             "aade_pending_lines": pending}
     db.commit()
     return {"duplicate": False, "costs_created": created, "mark": source.mark,
-            "pending_lines": preview["pending_lines"]}
+            "pending_lines": pending}
 
 
 def import_cost_batch(db, payload, user):

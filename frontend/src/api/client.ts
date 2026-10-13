@@ -511,8 +511,20 @@ export type SupplierAADEPreview = { id: string; supplier_id: string; supplier: s
     vat_amount: number | null; unit_cost_net: number | null; inde_sku: string | null; reasons: string[];
     costed?: boolean; ready?: boolean; match_method?: string | null; matched_item_code?: string | null }> };
 export type SupplierAADEBatchRow = {id:string; number:string; mark:string; status:string; costs_created:number; reasons:string[]};
+export type PendingCostLine = SupplierAADEPreview["lines"][number] & {
+  source_unit: string; product_catalog_id: string | null; invoice_unit_cost_net: number | null;
+};
+export type PendingCostInvoice = Omit<SupplierAADEPreview, "lines"> & { source_digest: string; lines: PendingCostLine[] };
+export type PendingCostResult = { invoices: PendingCostInvoice[]; total: number; offset: number; limit: number };
+export type ConfirmCostLine = {
+  supplier_id: string; line_number: string; product_catalog_id: string; fingerprint: string; source_digest: string;
+  preview_confirm_missing_units: boolean; confirm_missing_units: boolean; confirm_products_and_units: boolean; remember_match: boolean;
+};
 
 export const api = {
+  pendingSupplierCosts: (filters: Record<string, string>) => request<{data: PendingCostResult}>(`/suppliers/aade/pending-costs?${new URLSearchParams(filters)}`),
+  confirmSupplierCostLine: (id: string, payload: ConfirmCostLine) => request<{data:{duplicate:boolean; costs_created:number; pending_lines:number}}>(
+    `/suppliers/aade/invoices/${id}/confirm-line`, {method:"POST", body:JSON.stringify(payload)}),
   aadeDocument: (id: string) => request<{data: AadeDocumentDetail}>(`/dashboard/aade-documents/${encodeURIComponent(id)}`),
   orderDetail: (id: string) => request<{data: StoredOrderDetail}>(`/orders/detail/${encodeURIComponent(id)}`),
   supplierCatalogInvoices: (id: string, offset = 0) => request<SupplierCatalogInvoices>(`/supplier-catalog/products/${id}/invoices?offset=${offset}&limit=50`),

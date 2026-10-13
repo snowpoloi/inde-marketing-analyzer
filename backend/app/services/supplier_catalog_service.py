@@ -136,11 +136,23 @@ def apply_catalog(db: Session, feed: SupplierCatalogFeed, rows: list[dict]) -> d
     catalog_rows = db.execute(select(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model,
                                    ProductCatalog.ean, ProductCatalog.upc, ProductCatalog.mpn)).all()
     index = build_catalog_index(catalog_rows)
+    from app.services.supplier_aade_rules import catalog_review_links, xml_identity
+    reviewed = catalog_review_links(db, feed.code, catalog_rows)
     now = datetime.now(timezone.utc)
     matched = ambiguous = 0
     values = []
     for row in rows:
         product_id, method = match_supplier_product(row, index, feed.adapter)
+        links = reviewed.get(row["supplier_code"], [])
+        if links:
+            valid = {mapping.product_catalog_id for mapping, okay in links if okay
+                     and mapping.raw_metadata["aade_review"]["xml_identity"] == xml_identity(row)}
+            if len(valid) == 1 and all(okay and mapping.product_catalog_id in valid
+                                      and mapping.raw_metadata["aade_review"]["xml_identity"] == xml_identity(row)
+                                      for mapping, okay in links):
+                product_id, method = next(iter(valid)), "manual_aade"
+            else:
+                product_id, method = None, "ambiguous"
         matched += product_id is not None
         ambiguous += method == "ambiguous"
         values.append({**row, "id": uuid4(), "feed_id": feed.id, "product_catalog_id": product_id,

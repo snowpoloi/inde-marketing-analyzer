@@ -5,6 +5,7 @@ import type { SupplierCatalogFeed, SupplierCatalogPeriod, SupplierCatalogProduct
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
+import { PendingSupplierCosts } from "../components/PendingSupplierCosts";
 import { SupplierProductOrders } from "../components/SupplierProductOrders";
 import { SupplierProductInvoices } from "../components/SupplierProductInvoices";
 import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
@@ -26,6 +27,8 @@ const sortKeys: Record<string, string> = { product: "name", code: "supplier_code
   margin: "gross_margin_percent", wholesale: "wholesale_price_net", retail: "retail_price_gross" };
 
 export function SupplierCatalogPage() {
+  const [tab, setTab] = useState<"products" | "pending">("products");
+  const [pendingRevision, setPendingRevision] = useState(0);
   const [feeds, setFeeds] = useState<SupplierCatalogFeed[]>([]);
   const [feedId, setFeedId] = useState("");
   const [query, setQuery] = useState("");
@@ -71,6 +74,7 @@ export function SupplierCatalogPage() {
     if (!background) { foregroundLoading.current = true; setLoading(true); }
     try {
       const state = await api.supplierCatalogRefresh();
+      if (tab !== "products") {if (id === requestId.current) {refreshState.current = state;setFeeds(state.feeds);} return;}
       const data = await api.supplierCatalogProducts({
         ...productFilters, offset: String(offset), limit: "50"
       });
@@ -92,7 +96,7 @@ export function SupplierCatalogPage() {
     finally { if (id === periodRequestId.current) setPeriodLoading(false); }
   }
   useEffect(() => { setOffset(0); }, [productScope, costStart, costEnd]);
-  useEffect(() => { load(); return () => { requestId.current++; }; }, [feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
+  useEffect(() => { load(); return () => { requestId.current++; }; }, [tab, feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
   useEffect(() => { loadPeriod(); return () => { periodRequestId.current++; }; }, [feedId, costStart, costEnd]);
   useEffect(() => {
     let cancelled = false, polling = false;
@@ -105,12 +109,12 @@ export function SupplierCatalogPage() {
         if (cancelled || version !== requestId.current) return;
         const changed = refreshState.current && catalogDataChanged(refreshState.current, next, feedId);
         refreshState.current = next; setFeeds(next.feeds);
-        if (changed) await Promise.all([load(true), loadPeriod(true)]);
+        if (changed) {if (tab === "pending") setPendingRevision(value=>value+1); await Promise.all([load(true), loadPeriod(true)]);}
       } catch { /* A transient status failure must not clear a loaded report. */ }
       finally { polling = false; }
     }, 10000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
+  }, [tab, feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
   useEffect(() => { const timer = window.setTimeout(() => { setSearch(query); setOffset(0); }, 300); return () => window.clearTimeout(timer); }, [query]);
   useEffect(() => {
     if (!details && !showCosts) return;
@@ -198,19 +202,25 @@ export function SupplierCatalogPage() {
   return <div className="page-stack">
     <header className="page-header"><div><h1>Supplier catalog</h1></div>
       <div className="supplier-catalog-actions"><DateRangeControls range={range} onChange={setRange} />
-        <button className="secondary-action compact" disabled={loading || periodLoading} onClick={()=>{load();loadPeriod();}}><RefreshCw size={16} />Refresh</button>
+        <button className="secondary-action compact" disabled={loading || periodLoading} onClick={()=>{load();loadPeriod();setPendingRevision(value=>value+1);}}><RefreshCw size={16} />Refresh</button>
         <button className="primary-action compact" disabled={openingCosts} onClick={openCosts}><Download size={16}/>AADE costs</button>
         <button className="primary-action compact" disabled={!selected || queuing || ["queued", "running"].includes(selected.status)} onClick={sync}><RefreshCw size={16} />Sync XML</button></div>
     </header>
     {error && <div className="notice" role="alert">{error}</div>}
     {exportError && <div className="notice" role="alert">{exportError}</div>}
     {selected?.error && <div className="notice">{selected.error}</div>}
-    <section className="supplier-catalog-period" aria-label="Supplier purchases and margins">
+    <nav className="view-tabs" aria-label="Προϊόντα και κοστολογήσεις">
+      <button className={tab === "products" ? "active" : ""} aria-current={tab === "products" ? "page" : undefined} onClick={()=>setTab("products")}>Προϊόντα προμηθευτών</button>
+      <button className={tab === "pending" ? "active" : ""} aria-current={tab === "pending" ? "page" : undefined} onClick={()=>setTab("pending")}>Εκκρεμείς κοστολογήσεις</button>
+    </nav>
+    {tab === "products" && <section className="supplier-catalog-period" aria-label="Supplier purchases and margins">
       <h2>Supplier purchases & margins</h2>
       {periodError && <div className="notice" role="alert">{periodError}</div>}
       {periodLoading ? <div role="status">Loading supplier purchases...</div> : <DataTable rows={period?.rows ?? []} columns={periodColumns} rowKey={row=>row.feed_id} empty="No supplier purchases found."/>}
       {period?.rows.some(row=>row.excluded_conflicts > 0) && <div className="notice" role="status">Conflicting AADE invoice totals require review and are excluded.</div>}
-    </section>
+    </section>}
+    {tab === "pending" ? <PendingSupplierCosts start={costStart} end={costEnd} supplierCode={selected?.code} revision={pendingRevision}
+      onSaved={()=>{loadPeriod(true);refreshState.current=null;}}/> : <>
     <div className="supplier-catalog-filters">
       <label><span>Product scope</span><select aria-label="Product scope" value={productScope} onChange={event=>{setProductScope(event.target.value);setCategory("");setOffset(0);}}>
         <option value="period">AADE costs in period</option><option value="all">All XML products</option>
@@ -248,6 +258,7 @@ export function SupplierCatalogPage() {
       <span>{result?.total ? `${offset + 1}-${Math.min(offset + 50, result.total)} / ${result.total}` : "0"}</span>
       <button className="icon-button" title="Next page" aria-label="Next page" disabled={loading || !result || offset + 50 >= result.total} onClick={() => setOffset(offset + 50)}><ChevronRight size={17} /></button>
     </div>
+    </>}
     {showCosts && <div className="modal-backdrop" onClick={()=>setShowCosts(false)}>
       <section className="supplier-catalog-dialog supplier-cost-dialog" role="dialog" aria-modal="true" aria-label="Import AADE purchase costs" onClick={event=>event.stopPropagation()}>
         <div className="panel-title"><h2>AADE purchase costs</h2><button className="icon-button" autoFocus title="Close cost import" aria-label="Close cost import" onClick={()=>setShowCosts(false)}><X size={18}/></button></div>

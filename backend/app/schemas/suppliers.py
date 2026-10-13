@@ -38,6 +38,20 @@ class SupplierAADEAcceptRequest(SupplierBase):
     confirm_missing_units: bool = False
 
 
+class SupplierAADEConfirmLineRequest(SupplierBase):
+    model_config = ConfigDict(allow_inf_nan=False, str_strip_whitespace=True, extra="forbid")
+
+    supplier_id: UUID
+    line_number: str = Field(min_length=1, max_length=64)
+    product_catalog_id: UUID
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    preview_confirm_missing_units: bool = False
+    confirm_missing_units: bool = False
+    confirm_products_and_units: bool = False
+    remember_match: bool = True
+
+
 class SupplierAADEBatchRequest(SupplierBase):
     supplier_id: UUID
     date_from: date

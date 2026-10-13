@@ -680,6 +680,26 @@ tr:last-child td {
 .supplier-feed-toggle input { width: auto; }
 .supplier-catalog-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .supplier-catalog-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.pending-costs { display: grid; gap: 16px; min-width: 0; container-type: inline-size; }
+.pending-costs table { min-width: 1020px; }
+.pending-costs .supplier-catalog-stack { display: grid; gap: 4px; white-space: normal; overflow-wrap: anywhere; }
+.pending-costs .expanded-table-row > td { padding: 0; background: #f5f8f6; }
+.pending-cost-toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.pending-cost-toolbar label { display: grid; gap: 6px; width: 360px; max-width: 100%; }
+.pending-cost-toolbar select { width: 100%; }
+.pending-cost-reasons { display: grid; gap: 5px; max-width: 320px; white-space: normal; }
+.pending-cost-review { padding: 16px; display: grid; gap: 14px; white-space: normal; position: sticky; left: 0; width: 100cqi; max-width: 100%; box-sizing: border-box; }
+.pending-cost-selected { max-width: 1000px; overflow-wrap: anywhere; }
+.pending-cost-search { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 2fr); gap: 12px; max-width: 1000px; }
+.pending-cost-search label { display: grid; gap: 6px; min-width: 0; }
+.pending-cost-search label span { display: flex; align-items: center; gap: 6px; }
+.pending-cost-search input, .pending-cost-search select { width: 100%; min-width: 0; }
+.pending-cost-values { display: flex; gap: 24px; flex-wrap: wrap; }
+.pending-cost-check { display: flex; gap: 8px; align-items: start; width: fit-content; }
+.pending-cost-check input { width: 16px; height: 16px; min-width: 16px; margin-top: 2px; }
+.pending-cost-review > button { width: fit-content; }
+.pending-costs td:nth-child(3) { min-width: 220px; max-width: 360px; white-space: normal; }
+@media (max-width: 650px) { .pending-cost-search { grid-template-columns: 1fr; } .pending-cost-values { gap: 8px; flex-direction: column; } }
 .supplier-catalog-filters label { min-width: 0; display: grid; gap: 6px; }
 .supplier-catalog-filters select, .supplier-catalog-filters input { width: 100%; min-width: 0; }
 .supplier-catalog-filters label.supplier-margin-filter { display: flex; align-items: center; gap: 8px; align-self: end; min-height: 38px; }

@@ -7,21 +7,52 @@ The browser processes requests sequentially and can stop after the in-flight
 batch. Closing the dialog stops subsequent requests, not a committed import.
 
 All existing invoice identity, cancellation, reconciliation, exact XML identifier,
-mapping and duplicate guards apply. A blocked invoice is reported and not partly
-imported. Delivery notes, credit notes and services do not set purchase unit costs.
+mapping and duplicate guards apply. Global fiscal failures block the invoice;
+unmatched product lines remain pending while independently safe lines may be
+accepted. Delivery notes, credit notes and services do not set purchase unit costs.
 Shipping is stored separately, excluded from product unit cost. XML prices and
 Gmail prices are never substituted for invoice costs.
 
-The caller explicitly confirms a 1:1 purchase-to-INDE sales unit relationship.
+The caller explicitly confirms one purchased unit equals one physical product piece;
+catalog sale sets still multiply piece cost by `sell_step` / `minimum` separately.
 An additional confirmation can resolve only missing units, never explicit kg,
 pack or other incompatible units. Original AADE data remains unchanged; reviewed
 unit decisions and reviewer identity are recorded on the accepted evidence.
 The confirmation participates in the preview fingerprint and is rechecked under
-the existing import locks. No confirmation is silently remembered for another
-supplier or period.
+the existing import locks. Unit confirmations never authorize another supplier.
 
 Catalog rows already consume latest accepted fiscal costs. Different unit costs
 on the latest purchase date remain ambiguous, not chosen arbitrarily. Source
 changes, cancellation and conflicting copies invalidate accepted evidence.
 Sales prices, VAT assumptions and OpenCart data are not modified. Margins are
 shown only when the existing net sales-price basis is known.
+
+## Pending Costings
+
+Supplier catalog > **Εκκρεμείς κοστολογήσεις** lists unresolved goods invoices in
+the selected period, with a supplier filter and ten invoices per page. Duplicate
+AADE endpoint copies are grouped by MARK, preferring full invoice detail. Each
+product row shows its original code/title, quantity, net line value, calculated
+invoice-unit price and blocking reasons. Invoice links open the stored detail in
+a new tab. Summaries without product detail remain visibly blocked.
+
+Expand a row, search/select an INDE product and explicitly confirm physical-piece
+units. Confirmation accepts only that selected line, preserving the complete
+reconciled invoice and leaving other lines available for later approval. Price,
+quantity and VAT cannot be edited through this endpoint. Missing units may be
+confirmed for the selected code/line only; explicit kg/pack units and missing
+amounts or quantities cannot be bypassed. Repeated submissions are idempotent.
+
+The optional future-invoice checkbox stores a verified mapping scoped to supplier
+and normalized invoice code. Without a code, only invoice-line-specific approval
+is allowed. A unique matching XML row can also receive the reviewed INDE link;
+ambiguous XML candidates are not linked en masse. XML refresh preserves reviewed
+links only while the supplier and INDE identifiers remain unchanged. Identifier
+drift requires review. Reassigning a code already used by financial evidence is
+blocked; an invoice-only exception does not rewrite historical cost records.
+
+The mapping records reviewer/time, source digest, invoice MARK/line and identity
+snapshots. Approval wakes the existing bounded AADE worker for historical partial
+invoices, without enabling automatic costing if disabled. No migration, OpenCart
+write, AADE network call or invented purchase price is introduced. Background
+refreshes do not discard an open review form; stale confirmations fail safely.
