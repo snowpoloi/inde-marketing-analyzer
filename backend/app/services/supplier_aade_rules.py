@@ -8,6 +8,9 @@ from app.models import ProductCatalog, Supplier, SupplierProductMap
 from app.services.supplier_costing import normalize_identifier
 
 
+PAKKETO_VAT = "800749270"
+
+
 def review_identity(code, mark, line_number, digest, remember):
     value = normalize_identifier(code) if remember and code else f"{mark}:{line_number}:{digest}"
     prefix = "aade-code:" if remember and code else "aade-line:"

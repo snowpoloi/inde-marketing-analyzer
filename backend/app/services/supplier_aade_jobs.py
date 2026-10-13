@@ -3,7 +3,7 @@
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import String, exists, func, or_, select, text
+from sqlalchemy import String, case, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.connectors.aade_detail import META_KEY, detail_info, source_fingerprint
@@ -11,6 +11,7 @@ from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierDocu
 from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_aade_costs import accept_invoice, invoice_preview
 from app.services.supplier_catalog_settings import pricing_settings
+from app.services.supplier_aade_rules import PAKKETO_VAT
 
 
 def process_aade_costs(db):
@@ -33,7 +34,8 @@ def process_aade_costs(db):
     partial = exists(select(SupplierDocument.id).where(
         SupplierDocument.identity_key == func.concat("aade:", Supplier.vat_number, ":", AADEDocument.mark),
         SupplierDocument.raw_metadata["aade_partial"].astext == "true"))
-    revision = func.concat("line-costs-v2:", policy.get("cost_refresh_requested_at", ""), ":",
+    matching_version = case((Supplier.vat_number == PAKKETO_VAT, "pakketo-sku-v1:"), else_="line-costs-v2:")
+    revision = func.concat(matching_version, policy.get("cost_refresh_requested_at", ""), ":",
                            func.coalesce(SupplierCatalogFeed.last_synced_at.cast(String), ""))
     candidate = db.execute(select(AADEDocument, Supplier)
         .join(Supplier, or_(AADEDocument.issuer_vat == Supplier.vat_number,

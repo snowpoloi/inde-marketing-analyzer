@@ -207,15 +207,17 @@ def test_media_cannot_point_to_other_suppliers_or_token_urls():
     assert row["details"]["images"] == ["https://www.pakoworld.com/safe.jpg"]
 
 
-def test_pakoworld_model_checks_own_sku_but_conflicts_never_choose_arbitrarily():
+def test_pakoworld_model_matches_exact_sku_despite_a_shared_barcode():
     first, second = uuid4(), uuid4()
     def own(id, sku, ean=None):
         return SimpleNamespace(id=id, sku=sku, model=None, mpn=None, ean=ean, upc=None)
     index = service.build_catalog_index([own(first, "123-000001")])
-    assert service.match_supplier_product(rows()[0], index, "pakoworld") == (first, "exact_identifiers")
+    assert service.match_supplier_product(rows()[0], index, "pakoworld") == (first, "invoice_sku")
     assert service.match_supplier_product(rows()[0], index, "megapap") == (None, "unmatched")
     index = service.build_catalog_index([own(first, "123-000001"), own(second, "Other", "5207351018882")])
-    assert service.match_supplier_product(rows()[0], index, "pakoworld") == (None, "ambiguous")
+    assert service.match_supplier_product(rows()[0], index, "pakoworld") == (first, "invoice_sku")
+    index = service.build_catalog_index([own(second, "Other", "5207351018882")])
+    assert service.match_supplier_product(rows()[0], index, "pakoworld") == (None, "unmatched")
 
 
 def test_fetch_get_only_streaming_size_limit_and_cross_supplier_redirect(monkeypatch):

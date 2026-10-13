@@ -117,14 +117,15 @@ def match_supplier_product(row: dict, index: dict, adapter: str = "megapap") -> 
         return None, "unmatched"
     candidates = set()
     sku, ean, code = (normalize_identifier(row.get(field)) for field in ("supplier_sku", "ean", "supplier_code"))
+    if adapter == "pakoworld":
+        exact = index["sku"].get(code, set()) if code else set()
+        return (next(iter(exact)), "invoice_sku") if len(exact) == 1 else (None, "ambiguous" if exact else "unmatched")
     if sku:
         candidates |= index["sku"].get(sku, set()) | index["model"].get(sku, set())
     if ean:
         candidates |= index["ean"].get(ean, set())
     if code:
         candidates |= index["mpn"].get(code, set()) | index["model"].get(code, set())
-        if adapter == "pakoworld":
-            candidates |= index["sku"].get(code, set())
     if len(candidates) == 1:
         return next(iter(candidates)), "exact_identifiers"
     return None, "ambiguous" if candidates else "unmatched"

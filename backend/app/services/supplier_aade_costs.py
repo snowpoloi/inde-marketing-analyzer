@@ -18,6 +18,7 @@ from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import effective_invoice, detail_info
+from app.services.supplier_aade_rules import PAKKETO_VAT
 
 
 _ANTHEMIDIS_CATALOG_CODE = r"(?:[0-9]{5,6}-[0-9]{1,3}|[0-9]{6})"
@@ -149,6 +150,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
     reasons = []
     vat = normalize_vat(supplier.vat_number)
     same_vat = [row for row in db.scalars(select(Supplier)).all() if vat and normalize_vat(row.vat_number) == vat]
+    direct_sku = vat == PAKKETO_VAT
     if not vat or fiscal_supplier_vat(document.issuer_vat, document.raw or {}) != vat or len(same_vat) != 1:
         reasons.append("Issuer AFM does not identify exactly one registered supplier.")
     recipient = own_vat(db)
@@ -195,7 +197,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
     if lock:
         catalog_query = catalog_query.with_for_update(of=SupplierCatalogProduct)
     cached = matching_cache.get(supplier.id) if matching_cache is not None and not lock else None
-    catalogs = cached[0] if cached else db.execute(catalog_query).all()
+    catalogs = [] if direct_sku else cached[0] if cached else db.execute(catalog_query).all()
     if lock:
         product_ids = {product.id for _, product in catalogs if product is not None}
         db.scalars(select(ProductCatalog.id).where(ProductCatalog.id.in_(product_ids)).with_for_update()).all()
@@ -211,6 +213,17 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                 if identifier and re.fullmatch(_ANTHEMIDIS_CATALOG_CODE, identifier):
                     title_index.setdefault(identifier, {})[item.id] = (item, product)
     mappings = cached[1] if cached else db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
+    products_by_sku = {}
+    if direct_sku:
+        # Pakketo's fiscal item code is the INDE SKU. Barcode/XML drift must
+        # not redirect an invoice to a different product or block this match.
+        product_query = select(ProductCatalog).options(load_only(
+            ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.ean,
+            ProductCatalog.upc, ProductCatalog.mpn)).where(
+                ProductCatalog.sku.in_({line["item_code"] for line in lines if line["item_code"]}))
+        if lock:
+            product_query = product_query.with_for_update()
+        products_by_sku = {product.sku: product for product in db.scalars(product_query).all()}
     if matching_cache is not None and not lock:
         matching_cache[supplier.id] = (catalogs, mappings)
     from app.services.supplier_aade_rules import reviewed_mapping, mapping_valid, xml_identity
@@ -243,7 +256,12 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             review = (manual.raw_metadata or {}).get("aade_review", {})
             saved_xml = review.get("xml_identity")
             current_xml = next((item for item, _ in catalogs if str(item.id) == review.get("catalog_item_id")), None)
-            if not mapping_valid(manual, product) or (saved_xml and current_xml and xml_identity(current_xml) != saved_xml):
+            if direct_sku and saved_xml and review.get("catalog_item_id"):
+                current_xml = db.get(SupplierCatalogProduct, review["catalog_item_id"], with_for_update=lock)
+            exact_product = products_by_sku.get(line["item_code"])
+            if direct_sku and exact_product and manual.product_catalog_id != exact_product.id:
+                line["reasons"].append("Reviewed mapping conflicts with the exact Pakketo invoice SKU; reconciliation required.")
+            elif not mapping_valid(manual, product) or (saved_xml and current_xml and xml_identity(current_xml) != saved_xml):
                 line["reasons"].append("Reviewed product identifiers changed; confirm the mapping again.")
             else:
                 line["reasons"] = [reason for reason in line["reasons"] if reason not in {
@@ -258,6 +276,23 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                     match_method="aade_manual_reviewed", matched_item_code=line["item_code"], mapping_id=str(manual.id))
                 if not line["reasons"]:
                     line["unit_cost_net"] = money(line["net_value"] / line["quantity"])
+            continue
+        if direct_sku:
+            product = products_by_sku.get(line["item_code"])
+            if product:
+                line.update(product_catalog_id=str(product.id), inde_sku=product.sku,
+                    supplier_sku=line["item_code"], supplier_code=line["item_code"],
+                    match_method="aade_pakketo_sku", matched_item_code=line["item_code"])
+                identity = supplier_mapping_identity(line["item_code"], None, line["item_code"], line["description"])
+                prior = [row for row in mappings if row.identity_key == identity or
+                         (row.verified and line["item_code"] in {row.supplier_code, row.supplier_sku})]
+                if any(row.product_catalog_id not in (None, product.id) or
+                       row.conversion_factor != 1 or row.pack_quantity != 1 for row in prior):
+                    line["reasons"].append("Existing mapping / pack conversion conflicts with the exact Pakketo invoice SKU.")
+            else:
+                line["reasons"].append("No INDE product with the exact Pakketo invoice SKU.")
+            if line["reasons"]:
+                line["unit_cost_net"] = None
             continue
         if len(matches) == 1 and matches[0][1] is not None:
             item, product = matches[0]
@@ -315,6 +350,32 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             "can_import": not reasons and any(line["ready"] for line in lines)}
 
 
+def _link_pakketo_catalog(db, supplier, mappings):
+    """Refresh optional catalog links from accepted SKUs, never fiscal amounts."""
+    if normalize_vat(supplier.vat_number) != PAKKETO_VAT or not mappings:
+        return
+    targets = {row.opencart_sku: row.product_catalog_id for row in mappings.values()}
+    feed = db.scalar(select(SupplierCatalogFeed).where(SupplierCatalogFeed.code == supplier.code,
+        SupplierCatalogFeed.adapter == "pakoworld"))
+    if feed is None:
+        return
+    items = db.scalars(select(SupplierCatalogProduct).where(SupplierCatalogProduct.feed_id == feed.id,
+        SupplierCatalogProduct.is_current.is_(True), SupplierCatalogProduct.supplier_code.in_(targets)).with_for_update()).all()
+    # XML sync also writes catalog rows before feed counts; use the same order.
+    db.refresh(feed, attribute_names=["counts"], with_for_update=True)
+    counts = dict(feed.counts or {})
+    for item in items:
+        product_id = targets[item.supplier_code]
+        if item.match_method == "manual_aade" and item.product_catalog_id != product_id:
+            continue
+        if item.product_catalog_id is None and counts:
+            counts["matched"] = counts.get("matched", 0) + 1
+            previous = "ambiguous" if item.match_method == "ambiguous" else "unmatched"
+            counts[previous] = max(0, counts.get(previous, 0) - 1)
+        item.product_catalog_id, item.match_method = product_id, "invoice_sku"
+    feed.counts = counts
+
+
 def accept_invoice(db, document_id, payload, user, *, automated=False, only_line_number=None):
     from app.services.supplier_service import _create_cost_from_line, _create_shipping_cost
 
@@ -332,8 +393,7 @@ def accept_invoice(db, document_id, payload, user, *, automated=False, only_line
         return {"duplicate": True, "costs_created": 0, "pending_lines": preview["pending_lines"]}
     if preview["fingerprint"] != payload.fingerprint or not preview["can_import"]:
         raise ValueError("Invoice / mapping changed or needs review. Reload the preview before importing.")
-    # The explicit review authorizes the XML bridge, not the older generic
-    # importer heuristics (MEGAPAP models and own SKUs can be different).
+    # Use the supplier-specific fiscal match, not generic importer heuristics.
     mappings = {}
     for line in preview["lines"]:
         if not line["ready"] or (only_line_number is not None and line["line_number"] != only_line_number):
@@ -352,13 +412,15 @@ def accept_invoice(db, document_id, payload, user, *, automated=False, only_line
         mapping.opencart_product_id, mapping.product_name = product.product_id, product.name
         if not line["mapping_id"]:
             mapping.verified, mapping.verified_by, mapping.verified_at = True, user.id, datetime.now(timezone.utc)
-            mapping.status, mapping.confidence, mapping.match_method = "matched", Decimal("1"), "aade_xml_reviewed"
+            mapping.status, mapping.confidence = "matched", Decimal("1")
+            mapping.match_method = "aade_pakketo_sku" if line["match_method"] == "aade_pakketo_sku" else "aade_xml_reviewed"
         audit = list((mapping.raw_metadata or {}).get("verification_audit", []))
         audit.append({"user_id":str(user.id), "automated": automated, "at":datetime.now(timezone.utc).isoformat(), "aade_mark":preview["mark"],
                       "product":str(product.id), "factor":"1", "method":mapping.match_method})
         mapping.raw_metadata = {**(mapping.raw_metadata or {}), "verification_audit":audit}
         db.flush()
         mappings[line["line_number"]] = mapping
+    _link_pakketo_catalog(db, supplier, mappings)
     source = db.get(AADEDocument, document_id)
     document = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(source)).with_for_update())
     if document is None:
