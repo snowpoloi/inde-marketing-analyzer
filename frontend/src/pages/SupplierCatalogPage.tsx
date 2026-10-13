@@ -107,7 +107,7 @@ export function SupplierCatalogPage() {
       try {
         const next = await api.supplierCatalogRefresh();
         if (cancelled || version !== requestId.current) return;
-        const changed = refreshState.current && catalogDataChanged(refreshState.current, next, feedId);
+        const changed = refreshState.current && catalogDataChanged(refreshState.current, next, tab === "pending" ? "" : feedId);
         refreshState.current = next; setFeeds(next.feeds);
         if (changed) {if (tab === "pending") setPendingRevision(value=>value+1); await Promise.all([load(true), loadPeriod(true)]);}
       } catch { /* A transient status failure must not clear a loaded report. */ }
