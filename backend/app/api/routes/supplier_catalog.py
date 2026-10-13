@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.models import SupplierCatalogFeed, SupplierCatalogProduct, User
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput, SupplierCatalogPricingInput
 from app.services.supplier_catalog_settings import public_pricing_settings, save_pricing_settings, package_metrics
-from app.services.supplier_catalog_service import CatalogRowLimitExceeded, catalog_products, feed_response, queue_feed, save_feed
+from app.services.supplier_catalog_service import CatalogRowLimitExceeded, catalog_products, feed_response, queue_feed, refresh_state, save_feed
 from app.services.supplier_catalog_export import MAX_EXPORT_ROWS, XLSX_MEDIA_TYPE, catalog_workbook
 from app.services.supplier_catalog_summary import period_summary
 from app.services.supplier_catalog_orders import product_orders
@@ -40,6 +40,11 @@ def feeds(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     return [feed_response(feed) for feed in db.scalars(select(SupplierCatalogFeed).order_by(SupplierCatalogFeed.name))]
 
 
+@router.get("/refresh-state")
+def state(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return refresh_state(db)
+
+
 @router.post("/feeds")
 @router.put("/feeds/{feed_id}")
 def save(payload: SupplierCatalogFeedInput, feed_id: UUID | None = None,
@@ -65,9 +70,14 @@ def product_filters(feed_id: UUID | None = None, q: str = Query(default="", max_
              has_margin: bool = False,
              sort_by: str = Query(default="name", pattern="^(name|supplier_code|supplier_sku|opencart_sku|quantity|sale_quantity|inde_price|aade_cost_net|aade_cost_sale_net|gross_profit_per_unit|gross_profit_per_sale|gross_margin_percent|wholesale_price_net|retail_price_gross)$"),
              sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
-             category: str = Query(default="", max_length=1000)):
+             category: str = Query(default="", max_length=1000),
+             product_scope: str = Query(default="all", pattern="^(all|period)$"),
+             date_from: date | None = None, date_to: date | None = None):
+    if product_scope == "period" and (not date_from or not date_to or date_from > date_to):
+        raise HTTPException(status_code=422, detail="Select a valid From / To period for AADE product costs.")
     return dict(feed_id=feed_id, q=q.strip(), match=match, availability=availability,
-                category=category, has_margin=has_margin, sort_by=sort_by, sort_direction=sort_direction)
+                category=category, has_margin=has_margin, sort_by=sort_by, sort_direction=sort_direction,
+                product_scope=product_scope, date_from=date_from, date_to=date_to)
 
 
 @router.get("/products")

@@ -141,6 +141,21 @@ charges. Credit notes (5.1/5.2) are shown separately and deducted from net purch
 Book/VAT summaries, cancelled records and duplicate MARKs are excluded. Conflicting
 copies are counted for review, never selected arbitrarily.
 
+The default Product scope is `AADE costs in period`: the product list, its counts
+and Excel Products sheet include only products with validated AADE purchase cost
+evidence dated within From/To, using the latest cost inside that window. Older or
+later costs never leak into the period; a credit-only day has no purchase-cost
+products. `All XML products` preserves the full catalog and latest historical cost
+comparison. Selling prices remain current, not historical realized sale prices.
+The export records the selected scope and applies the same filtering and sorting
+before pagination. A zero-product selection produces an empty Products sheet.
+
+The page polls lightweight feed/cost revisions rather than the product report.
+Queued/running status changes and unrelated supplier updates do not reload the
+selected supplier's products. Relevant XML completion, AADE cost changes or a
+successful source sync refresh products and period totals in the background,
+without clearing rows or unmounting expanded invoice/order details.
+
 Costed products use validated AADE product lines only. Average gross profit per
 unit is the total potential gross profit divided by priced purchased units.
 Weighted margin is total potential gross profit divided by their current net INDE

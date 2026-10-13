@@ -116,7 +116,9 @@ def catalog_workbook(products: dict, summary: dict, filters: dict, supplier: str
         ("Only with gross margin", "Yes" if filters["has_margin"] else "No"),
         ("Sort column", filters["sort_by"]), ("Sort direction", filters["sort_direction"]),
         ("Exported products", products["total"]),
-        ("Product prices", "Current catalog prices and latest confirmed AADE unit costs; not filtered by the report period."),
+        ("Product scope", "AADE costs in period" if filters.get("product_scope") == "period" else "All XML products"),
+        ("Product prices", "Current selling prices; latest verified AADE purchase cost within From / To. Only products costed in this period are included."
+            if filters.get("product_scope") == "period" else "Current catalog prices and latest confirmed AADE unit costs across all dates."),
         ("Supplier summary period", "From / To applies to supplier invoice totals. Product filters do not alter these totals."),
         ("Gross margin", "(INDE selling price net - AADE cost per sale net) / INDE selling price net. Excludes freight, ads and other expenses."),
         ("Summary purchases", "Full AADE invoice net totals include invoice freight and other charges. Not proof of payment."),

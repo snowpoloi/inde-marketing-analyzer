@@ -12,6 +12,10 @@ export type SupplierCatalogPricing = {
   automatic_costs: boolean; piece_supplier_ids: string[];
 };
 
+export type SupplierCatalogRefresh = {
+  feeds: SupplierCatalogFeed[]; cost_revisions: Record<string, string | null>; sync_revision: string | null;
+};
+
 export type SupplierCatalogProduct = {
   id: string; supplier: string; supplier_code: string; supplier_sku: string | null; ean: string | null;
   name: string; category: string | null; image_url: string | null; quantity: number | null;
@@ -621,6 +625,7 @@ export const api = {
   supplierCatalogPricing: () => request<SupplierCatalogPricing>("/supplier-catalog/pricing-settings"),
   saveSupplierCatalogPricing: (payload: SupplierCatalogPricing) => request<SupplierCatalogPricing>("/supplier-catalog/pricing-settings", { method: "PUT", body: JSON.stringify(payload) }),
   supplierCatalogFeeds: () => request<SupplierCatalogFeed[]>("/supplier-catalog/feeds"),
+  supplierCatalogRefresh: () => request<SupplierCatalogRefresh>("/supplier-catalog/refresh-state"),
   saveSupplierCatalogFeed: (id: string | null, payload: { code: string; name: string; adapter: string; url?: string; is_enabled: boolean; refresh_hours: number }) =>
     request<SupplierCatalogFeed>(`/supplier-catalog/feeds${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) }),
   syncSupplierCatalog: (id: string) => request<SupplierCatalogFeed>(`/supplier-catalog/feeds/${id}/sync`, { method: "POST" }),

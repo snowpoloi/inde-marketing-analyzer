@@ -129,10 +129,15 @@ def catalog_prices(db, product_ids) -> dict:
                                   .where(ProductCatalog.id.in_(product_ids)))}
 
 
-def latest_aade_costs(db, product_ids, supplier_codes) -> dict:
-    if not product_ids:
+def latest_aade_costs(db, product_ids, supplier_codes, *, date_from=None, date_to=None) -> dict:
+    if not supplier_codes or (product_ids is not None and not product_ids):
         return {}
-    eligible = aade_cost_query(supplier_codes).where(SupplierProductCost.product_catalog_id.in_(product_ids))\
+    query = aade_cost_query(supplier_codes)
+    if product_ids is not None:
+        query = query.where(SupplierProductCost.product_catalog_id.in_(product_ids))
+    if date_from is not None and date_to is not None:
+        query = query.where(SupplierProductCost.purchase_date.between(date_from, date_to))
+    eligible = query\
         .with_only_columns(SupplierProductCost.id.label("cost_id"),
             func.dense_rank().over(partition_by=(SupplierProductCost.supplier_id, SupplierProductCost.product_catalog_id),
                                   order_by=SupplierProductCost.purchase_date.desc()).label("recency"),

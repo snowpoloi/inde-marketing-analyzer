@@ -7,14 +7,14 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, load_only
 
 from app.connectors.supplier_catalog import fetch_megapap_catalog, fetch_pakoworld_catalog, fetch_supplier_catalog, validate_feed_url
 from app.connectors.supplier_formats import FORMATS
 from app.core.config import settings
-from app.models import ProductCatalog, SupplierCatalogFeed, SupplierCatalogProduct
+from app.models import ProductCatalog, Supplier, SupplierCatalogFeed, SupplierCatalogProduct, SupplierProductCost
 from app.schemas.supplier_catalog import SupplierCatalogFeedInput
 from app.services.supplier_costing import normalize_identifier
 from app.services.supplier_catalog_pricing import (catalog_prices, latest_aade_costs, price_comparison,
@@ -34,6 +34,16 @@ def feed_response(feed: SupplierCatalogFeed) -> dict:
             "configured": bool(feed.encrypted_url), "is_enabled": feed.is_enabled,
             "refresh_hours": feed.refresh_hours, "status": feed.status, "error": feed.error,
             "last_synced_at": feed.last_synced_at, "counts": feed.counts or {}}
+
+
+def refresh_state(db: Session) -> dict:
+    feeds = db.scalars(select(SupplierCatalogFeed).order_by(SupplierCatalogFeed.name)).all()
+    revisions = dict(db.execute(select(Supplier.code, func.max(SupplierProductCost.updated_at))
+        .join(SupplierProductCost, SupplierProductCost.supplier_id == Supplier.id)
+        .where(SupplierProductCost.source_type == "aade_invoice").group_by(Supplier.code)).all())
+    return {"feeds": [feed_response(feed) for feed in feeds],
+            "cost_revisions": {str(feed.id): revisions.get(feed.code) for feed in feeds},
+            "sync_revision": pricing_settings(db).get("cost_refresh_requested_at")}
 
 
 def save_feed(db: Session, payload: SupplierCatalogFeedInput, feed_id: UUID | None = None) -> SupplierCatalogFeed:
@@ -192,10 +202,24 @@ class CatalogRowLimitExceeded(ValueError):
 
 def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, availability: str,
                      category: str, offset: int, limit: int, has_margin: bool = False,
-                     sort_by: str = "name", sort_direction: str = "asc", max_rows: int | None = None) -> dict:
+                     sort_by: str = "name", sort_direction: str = "asc", max_rows: int | None = None,
+                     product_scope: str = "all", date_from=None, date_to=None) -> dict:
+    if product_scope not in {"all", "period"}:
+        raise ValueError("Invalid product scope.")
+    if product_scope == "period" and (not date_from or not date_to or date_from > date_to):
+        raise ValueError("Select a valid From / To period for AADE product costs.")
     conditions = [SupplierCatalogProduct.is_current.is_(True)]
     if feed_id:
         conditions.append(SupplierCatalogProduct.feed_id == feed_id)
+    costs = None
+    if product_scope == "period":
+        codes = set(db.scalars(select(SupplierCatalogFeed.code).where(
+            *([SupplierCatalogFeed.id == feed_id] if feed_id else []))))
+        costs = latest_aade_costs(db, None, codes, date_from=date_from, date_to=date_to)
+        # Restrict supplier and shop product together; identical shop products can
+        # have purchase evidence from more than one supplier.
+        conditions.append(tuple_(SupplierCatalogFeed.code, ProductCatalog.id).in_(list(costs)))
+    scope_conditions = list(conditions)
     if q:
         literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         conditions.append(or_(*(field.ilike(f"%{literal}%", escape="\\") for field in
@@ -223,7 +247,6 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
                    "retail_price_gross": SupplierCatalogProduct.retail_price_gross}
     if sort_by not in financial_fields | sort_fields.keys() or sort_direction not in {"asc", "desc"}:
         raise ValueError("Invalid catalog sort.")
-    costs = None
     ordered_ids = None
     if has_margin or sort_by in financial_fields:
         candidates = db.execute(base.with_only_columns(SupplierCatalogProduct.id, SupplierCatalogFeed.code,
@@ -231,7 +254,8 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
             SupplierCatalogFeed.adapter, sale_step_field().label("step"),
             SupplierCatalogProduct.wholesale_price_net, SupplierCatalogProduct.retail_price_gross,
             maintain_column_froms=True).order_by(SupplierCatalogFeed.name, SupplierCatalogProduct.name, SupplierCatalogProduct.id)).all()
-        costs = latest_aade_costs(db, {row.own_id for row in candidates if row.own_id}, {row.code for row in candidates})
+        if costs is None:
+            costs = latest_aade_costs(db, {row.own_id for row in candidates if row.own_id}, {row.code for row in candidates})
         price_ids = {row.own_id for row in candidates if row.own_id and (sort_by == "inde_price" or costs.get((row.code, row.own_id)))}
         prices = catalog_prices(db, price_ids)
         comparisons = {row.id: {**xml_sale_prices(sale_quantity(row.adapter, row.step), row.wholesale_price_net, row.retail_price_gross),
@@ -266,11 +290,14 @@ def catalog_products(db: Session, *, feed_id: UUID | None, q: str, match: str, a
         SupplierCatalogFeed.adapter, sale_step_field().label("step")).join(SupplierCatalogFeed,
         SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).where(SupplierCatalogProduct.id.in_([row[0].id for row in results])))}
     summary = db.execute(select(func.count(), func.sum(case((ProductCatalog.id.is_not(None), 1), else_=0)))
-                         .select_from(SupplierCatalogProduct).outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
-                         .where(SupplierCatalogProduct.is_current.is_(True), *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))).one()
-    categories = db.scalars(select(SupplierCatalogProduct.category).where(
-        SupplierCatalogProduct.is_current.is_(True), SupplierCatalogProduct.category.is_not(None),
-        *([SupplierCatalogProduct.feed_id == feed_id] if feed_id else []))
+                         .select_from(SupplierCatalogProduct).join(SupplierCatalogFeed,
+                             SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id)
+                         .outerjoin(ProductCatalog, ProductCatalog.id == SupplierCatalogProduct.product_catalog_id)
+                         .where(*scope_conditions)).one()
+    categories = db.scalars(select(SupplierCatalogProduct.category).join(SupplierCatalogFeed,
+        SupplierCatalogFeed.id == SupplierCatalogProduct.feed_id).outerjoin(ProductCatalog,
+        ProductCatalog.id == SupplierCatalogProduct.product_catalog_id).where(
+        *scope_conditions, SupplierCatalogProduct.category.is_not(None))
         .distinct().order_by(SupplierCatalogProduct.category).limit(500)).all()
     rows = [{"id": str(product.id), "supplier": supplier, "supplier_code": product.supplier_code,
              "supplier_sku": product.supplier_sku, "ean": product.ean, "name": product.name,

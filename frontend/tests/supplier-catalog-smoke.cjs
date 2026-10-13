@@ -26,6 +26,8 @@ async function main() {
       await page.route((url) => url.pathname.startsWith("/api/"), async route => {
         const url = new URL(route.request().url()); let response;
         if (url.pathname.endsWith("/auth/me")) response = { is_admin: true };
+        else if (url.pathname === "/api/supplier-catalog/refresh-state") response = {
+          feeds:[feed, ...(pakoworldFeed ? [pakoworldFeed] : [])], cost_revisions:{f1:"fixture"}, sync_revision:"fixture" };
         else if (url.pathname === "/api/supplier-catalog/feeds" || url.pathname === "/api/supplier-catalog/feeds/f1") {
           if (route.request().method() === "POST") {
             const body = route.request().postDataJSON();
@@ -76,6 +78,7 @@ async function main() {
       assert.equal(catalogQuery.get("has_margin"), "true");
       assert.equal(catalogQuery.get("sort_by"), "gross_margin_percent");
       assert.equal(catalogQuery.get("sort_direction"), "asc");
+      assert.equal(catalogQuery.get("product_scope"), "period");
       await page.getByRole("button", {name:"Sort by Gross margin %",exact:true}).click();
       await page.getByRole("columnheader", {name:"Sort by Gross margin %",exact:true}).waitFor();
       assert.equal(catalogQuery.get("sort_direction"), "desc");
@@ -84,6 +87,8 @@ async function main() {
       await page.getByRole("cell", {name:"25%",exact:true}).waitFor();
       assert.equal(periodQuery.get("date_from"), "2026-09-01");
       assert.equal(periodQuery.get("date_to"), "2026-09-30");
+      assert.equal(catalogQuery.get("date_from"), "2026-09-01");
+      assert.equal(catalogQuery.get("date_to"), "2026-09-30");
       assert.equal(await page.getByRole("cell", { name: "30%", exact: true }).count(), 1);
       assert.equal(await page.getByRole("cell", { name: /70,00/ }).count(), 1);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "Page overflows");

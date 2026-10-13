@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, ListOrdered, ReceiptText, RefreshCw, Search, X } from "lucide-react";
 import { api } from "../api/client";
-import type { SupplierCatalogFeed, SupplierCatalogPeriod, SupplierCatalogProduct, SupplierCatalogResult } from "../api/client";
+import type { SupplierCatalogFeed, SupplierCatalogPeriod, SupplierCatalogProduct, SupplierCatalogRefresh, SupplierCatalogResult } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { SupplierAADEPanel } from "../components/SupplierAADEPanel";
 import { SupplierProductOrders } from "../components/SupplierProductOrders";
 import { SupplierProductInvoices } from "../components/SupplierProductInvoices";
 import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
+import { catalogDataChanged } from "../utils/supplierCatalogRefresh";
 
 const currency = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 const money = (value: number | null) => value == null ? "-" : currency.format(Number(value));
@@ -33,6 +34,7 @@ export function SupplierCatalogPage() {
   const [availability, setAvailability] = useState("all");
   const [category, setCategory] = useState("");
   const [hasMargin, setHasMargin] = useState(false);
+  const [productScope, setProductScope] = useState("period");
   const [sortBy, setSortBy] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [offset, setOffset] = useState(0);
@@ -56,39 +58,59 @@ export function SupplierCatalogPage() {
   const periodRequestId = useRef(0);
   const requestId = useRef(0);
   const detailId = useRef(0);
+  const refreshState = useRef<SupplierCatalogRefresh | null>(null);
+  const foregroundLoading = useRef(false);
   const selected = feeds.find(feed => feed.id === feedId);
-  const active = feeds.some(feed => ["queued", "running"].includes(feed.status));
   const productFilters = {
     ...(feedId ? { feed_id: feedId } : {}), q: search, match, availability, category, has_margin: String(hasMargin),
-    sort_by: sortBy, sort_direction: sortDirection
+    sort_by: sortBy, sort_direction: sortDirection, product_scope: productScope, date_from: costStart, date_to: costEnd
   };
 
-  async function load() {
-    const id = ++requestId.current; setLoading(true);
+  async function load(background = false) {
+    const id = ++requestId.current;
+    if (!background) { foregroundLoading.current = true; setLoading(true); }
     try {
-      const [rows, data] = await Promise.all([api.supplierCatalogFeeds(), api.supplierCatalogProducts({
+      const state = await api.supplierCatalogRefresh();
+      const data = await api.supplierCatalogProducts({
         ...productFilters, offset: String(offset), limit: "50"
-      })]);
+      });
       if (id !== requestId.current) return;
-      setFeeds(rows); setResult(data); setError("");
+      refreshState.current = state; setFeeds(state.feeds); setResult(data); setError("");
     } catch (err) { if (id === requestId.current) setError(err instanceof Error ? err.message : "Could not load supplier catalog."); }
-    finally { if (id === requestId.current) setLoading(false); }
+    finally { if (id === requestId.current) { foregroundLoading.current = false; setLoading(false); } }
   }
-  async function loadPeriod() {
+  async function loadPeriod(background = false) {
     const id = ++periodRequestId.current;
     if (!costStart || !costEnd || costStart > costEnd) {
       setPeriod(null); setPeriodLoading(false); setPeriodError("Select a valid From / To period."); return;
     }
-    setPeriodLoading(true);
+    if (!background) setPeriodLoading(true);
     try {
       const data = await api.supplierCatalogPeriod({ date_from: costStart, date_to: costEnd, ...(feedId ? {feed_id: feedId} : {}) });
       if (id === periodRequestId.current) { setPeriod(data); setPeriodError(""); }
-    } catch (err) { if (id === periodRequestId.current) { setPeriod(null); setPeriodError(err instanceof Error ? err.message : "Could not load supplier purchases."); } }
+    } catch (err) { if (id === periodRequestId.current) { if (!background) setPeriod(null); setPeriodError(err instanceof Error ? err.message : "Could not load supplier purchases."); } }
     finally { if (id === periodRequestId.current) setPeriodLoading(false); }
   }
-  useEffect(() => { load(); return () => { requestId.current++; }; }, [feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection]);
+  useEffect(() => { setOffset(0); }, [productScope, costStart, costEnd]);
+  useEffect(() => { load(); return () => { requestId.current++; }; }, [feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
   useEffect(() => { loadPeriod(); return () => { periodRequestId.current++; }; }, [feedId, costStart, costEnd]);
-  useEffect(() => { if (!active) return; const timer = window.setInterval(load, 10000); return () => window.clearInterval(timer); }, [active, feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection]);
+  useEffect(() => {
+    let cancelled = false, polling = false;
+    const timer = window.setInterval(async () => {
+      if (polling || foregroundLoading.current) return;
+      polling = true;
+      const version = requestId.current;
+      try {
+        const next = await api.supplierCatalogRefresh();
+        if (cancelled || version !== requestId.current) return;
+        const changed = refreshState.current && catalogDataChanged(refreshState.current, next, feedId);
+        refreshState.current = next; setFeeds(next.feeds);
+        if (changed) await Promise.all([load(true), loadPeriod(true)]);
+      } catch { /* A transient status failure must not clear a loaded report. */ }
+      finally { polling = false; }
+    }, 10000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [feedId, search, match, availability, category, offset, hasMargin, sortBy, sortDirection, productScope, costStart, costEnd]);
   useEffect(() => { const timer = window.setTimeout(() => { setSearch(query); setOffset(0); }, 300); return () => window.clearTimeout(timer); }, [query]);
   useEffect(() => {
     if (!details && !showCosts) return;
@@ -190,6 +212,9 @@ export function SupplierCatalogPage() {
       {period?.rows.some(row=>row.excluded_conflicts > 0) && <div className="notice" role="status">Conflicting AADE invoice totals require review and are excluded.</div>}
     </section>
     <div className="supplier-catalog-filters">
+      <label><span>Product scope</span><select aria-label="Product scope" value={productScope} onChange={event=>{setProductScope(event.target.value);setCategory("");setOffset(0);}}>
+        <option value="period">AADE costs in period</option><option value="all">All XML products</option>
+      </select></label>
       <label><span>Supplier</span><select aria-label="Supplier" value={feedId} onChange={event => { setFeedId(event.target.value); setCategory(""); setOffset(0); }}>
         <option value="">All suppliers</option>{feeds.map(feed => <option key={feed.id} value={feed.id}>{feed.name}</option>)}
       </select></label>
@@ -212,7 +237,7 @@ export function SupplierCatalogPage() {
       <button className="secondary-action compact" disabled={exporting || loading || periodLoading || query !== search || !result?.total || !costStart || !costEnd || costStart > costEnd}
         onClick={exportExcel} aria-busy={exporting}><Download size={16}/>{exporting ? "Exporting..." : "Export Excel"}</button>
     </div>
-    <div className="supplier-catalog-table" aria-busy={loading}><DataTable rows={loading ? [] : result?.rows ?? []} columns={columns} rowKey={row=>row.id} empty={loading ? "Loading supplier products..." : "No supplier products found."}
+    <div className="supplier-catalog-table" aria-busy={loading}><DataTable rows={loading ? [] : result?.rows ?? []} columns={columns} rowKey={row=>row.id} empty={loading ? "Loading supplier products..." : productScope === "period" ? "No verified AADE product costs in this period." : "No supplier products found."}
       renderExpandedRow={row=>openOrders[row.id] || openInvoices[row.id] ? <>
         {openInvoices[row.id] && <SupplierProductInvoices product={row} onClose={()=>setOpenInvoices(current=>({...current,[row.id]:false}))}/>}
         {openOrders[row.id] && <SupplierProductOrders key={`${row.id}:${costStart}:${costEnd}`} product={row} start={costStart} end={costEnd}
