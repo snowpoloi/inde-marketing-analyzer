@@ -73,7 +73,8 @@ def parse_lines(raw, *, confirm_missing_units=False):
             unit = "piece"
         reasons = []
         record_type = str(pick(row, "recType") or "")
-        if record_type:
+        triangular_fee = code.upper() == "ΤΡΓ" and description.casefold().startswith("χρέωση τριγωνικής".casefold())
+        if record_type or triangular_fee:
             reasons.append("Special fiscal line (fee / tax / adjustment) requires separate review.")
         if net is None or net < 0 or vat is None or vat < 0:
             reasons.append("Missing or invalid net value / VAT; negative adjustments require review.")

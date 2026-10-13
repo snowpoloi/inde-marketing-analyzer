@@ -238,3 +238,15 @@ def test_manual_confirmation_preserves_verified_provider_lines(db, legacy_hash):
     assert detail_info(fiscal.raw)["status"] == "verified"
     assert db.scalar(select(SupplierProductCost.net_unit_cost)) == 70
     assert validated_cost_rows(db,db.scalars(select(SupplierProductCost)).all())
+
+
+def test_triangular_fee_cannot_be_mapped_as_product_cost(db):
+    user,supplier,own,_,fiscal=seed(db)
+    fiscal.raw={**fiscal.raw,"invoiceDetails":[{**fiscal.raw["invoiceDetails"][0],
+        "itemCode":"ΤΡΓ","itemDescr":"Χρέωση Τριγωνικής (αξία)"},fiscal.raw["invoiceDetails"][1]]}
+    db.flush()
+    preview=invoice_preview(db,fiscal.id,supplier.id)
+    assert any("Special fiscal line" in reason for reason in preview["lines"][0]["reasons"])
+    with pytest.raises(ValueError,match="Special fiscal line"):
+        confirm_line(db,fiscal.id,request(preview,own),user)
+    assert not db.scalar(select(SupplierProductCost.id))

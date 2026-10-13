@@ -18,6 +18,7 @@ const reasonLabels: Record<string, string> = {
   "Invoice totals do not reconcile to the stored lines; fees / discounts require review.": "Οι γραμμές δεν συμφωνούν με τα σύνολα του τιμολογίου.",
   "Book / VAT summaries are not product invoices.": "Υπάρχει μόνο λογιστική σύνοψη, χωρίς αναλυτικό τιμολόγιο.",
   "Invoice is cancelled.": "Το τιμολόγιο έχει ακυρωθεί.",
+  "Special fiscal line (fee / tax / adjustment) requires separate review.": "Χρέωση ή φορολογική προσαρμογή, όχι επιβεβαιώσιμο κόστος προϊόντος.",
   "Reviewed product identifiers changed; confirm the mapping again.": "Άλλαξαν οι κωδικοί του επιβεβαιωμένου προϊόντος. Χρειάζεται νέα επιβεβαίωση.",
 };
 const reason = (value: string) => reasonLabels[value] || value;
@@ -134,7 +135,8 @@ export function PendingSupplierCosts({start, end, supplierCode, revision, onSave
     {key:"unit",header:"Κόστος / μονάδα",align:"right",render:({line})=>money(line?.invoice_unit_cost_net ?? null)},
     {key:"reason",header:"Εκκρεμότητα",render:({invoice,line})=><div className="pending-cost-reasons">{[...invoice.reasons,...(line?.reasons || [])].map((value,index)=><span key={index}>{reason(value)}</span>)}{line && !invoice.reasons.length && !line.reasons.length && <span>Έτοιμο για επιβεβαίωση.</span>}</div>},
     {key:"review",header:"",render:row=><button className="icon-button" title="Επιβεβαίωση προϊόντος" aria-label={`Επιβεβαίωση ${row.line?.item_code || row.invoice.number}`}
-      disabled={!row.line || Boolean(row.invoice.reasons.length)} aria-expanded={Boolean(open[row.key])} onClick={()=>setOpen(current=>({...current,[row.key]:!current[row.key]}))}>
+      disabled={!row.line || Boolean(row.invoice.reasons.length) || row.line.reasons.includes("Special fiscal line (fee / tax / adjustment) requires separate review.")}
+      aria-expanded={Boolean(open[row.key])} onClick={()=>setOpen(current=>({...current,[row.key]:!current[row.key]}))}>
       {open[row.key] ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</button>},
   ];
   return <section className="pending-costs" aria-label="Εκκρεμείς κοστολογήσεις">
