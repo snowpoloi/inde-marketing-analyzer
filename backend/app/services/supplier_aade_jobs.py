@@ -3,7 +3,7 @@
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import String, case, exists, func, or_, select, text
+from sqlalchemy import String, and_, case, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.connectors.aade_detail import META_KEY, detail_info, source_fingerprint
@@ -11,7 +11,7 @@ from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierDocu
 from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_aade_costs import accept_invoice, invoice_preview
 from app.services.supplier_catalog_settings import pricing_settings
-from app.services.supplier_aade_rules import PAKKETO_VAT
+from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
 
 
 def process_aade_costs(db):
@@ -34,14 +34,16 @@ def process_aade_costs(db):
     partial = exists(select(SupplierDocument.id).where(
         SupplierDocument.identity_key == func.concat("aade:", Supplier.vat_number, ":", AADEDocument.mark),
         SupplierDocument.raw_metadata["aade_partial"].astext == "true"))
-    matching_version = case((Supplier.vat_number == PAKKETO_VAT, "pakketo-sku-v1:"), else_="line-costs-v2:")
+    matching_version = case(*[(Supplier.vat_number == vat, rule["revision"])
+        for vat, rule in DIRECT_SKU_SUPPLIERS.items()], else_="line-costs-v2:")
     revision = func.concat(matching_version, policy.get("cost_refresh_requested_at", ""), ":",
                            func.coalesce(SupplierCatalogFeed.last_synced_at.cast(String), ""))
     candidate = db.execute(select(AADEDocument, Supplier)
         .join(Supplier, or_(AADEDocument.issuer_vat == Supplier.vat_number,
                            AADEDocument.issuer_vat == func.concat("EL", Supplier.vat_number)))
-        .join(SupplierCatalogFeed, SupplierCatalogFeed.code == Supplier.code).where(
-            SupplierCatalogFeed.is_enabled.is_(True), Supplier.vat_number.is_not(None),
+        .outerjoin(SupplierCatalogFeed, SupplierCatalogFeed.code == Supplier.code).where(
+            or_(SupplierCatalogFeed.is_enabled.is_(True), and_(SupplierCatalogFeed.id.is_(None),
+                Supplier.vat_number.in_(DIRECT_SKU_SUPPLIERS))), Supplier.vat_number.is_not(None),
             AADEDocument.document_direction == "expense", AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3"]),
             AADEDocument.issue_date <= date.today(), AADEDocument.is_cancelled.is_(False),
             AADEDocument.cancelled_by_mark.is_(None), or_(~imported, partial),

@@ -20,6 +20,7 @@ from app.services.supplier_costing import normalize_identifier
 from app.services.supplier_catalog_pricing import (catalog_prices, latest_aade_costs, price_comparison,
     sale_quantity, sale_step_field, xml_sale_prices)
 from app.services.supplier_catalog_settings import pricing_settings
+from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
 
 
 def _cipher() -> Fernet:
@@ -41,8 +42,11 @@ def refresh_state(db: Session) -> dict:
     revisions = dict(db.execute(select(Supplier.code, func.max(SupplierProductCost.updated_at))
         .join(SupplierProductCost, SupplierProductCost.supplier_id == Supplier.id)
         .where(SupplierProductCost.source_type == "aade_invoice").group_by(Supplier.code)).all())
+    feed_codes = {feed.code for feed in feeds}
+    cost_revisions = {str(feed.id): revisions.get(feed.code) for feed in feeds}
+    cost_revisions.update({f"supplier:{code}": revision for code, revision in revisions.items() if code not in feed_codes})
     return {"feeds": [feed_response(feed) for feed in feeds],
-            "cost_revisions": {str(feed.id): revisions.get(feed.code) for feed in feeds},
+            "cost_revisions": cost_revisions,
             "sync_revision": pricing_settings(db).get("cost_refresh_requested_at")}
 
 
@@ -101,7 +105,11 @@ def build_catalog_index(catalogs) -> dict[str, dict[str, set]]:
     return index
 
 
-def match_supplier_product(row: dict, index: dict, adapter: str = "megapap") -> tuple[UUID | None, str]:
+def match_supplier_product(row: dict, index: dict, adapter: str = "megapap", *, direct_sku: bool = False) -> tuple[UUID | None, str]:
+    if adapter == "pakoworld" or direct_sku:
+        code = normalize_identifier(row.get("supplier_code"))
+        exact = index["sku"].get(code, set()) if code else set()
+        return (next(iter(exact)), "invoice_sku") if len(exact) == 1 else (None, "ambiguous" if exact else "unmatched")
     if adapter in FORMATS:
         details = row.get("details") or {}
         model = normalize_identifier(details.get("shop_model"))
@@ -117,9 +125,6 @@ def match_supplier_product(row: dict, index: dict, adapter: str = "megapap") -> 
         return None, "unmatched"
     candidates = set()
     sku, ean, code = (normalize_identifier(row.get(field)) for field in ("supplier_sku", "ean", "supplier_code"))
-    if adapter == "pakoworld":
-        exact = index["sku"].get(code, set()) if code else set()
-        return (next(iter(exact)), "invoice_sku") if len(exact) == 1 else (None, "ambiguous" if exact else "unmatched")
     if sku:
         candidates |= index["sku"].get(sku, set()) | index["model"].get(sku, set())
     if ean:
@@ -137,13 +142,15 @@ def apply_catalog(db: Session, feed: SupplierCatalogFeed, rows: list[dict]) -> d
     catalog_rows = db.execute(select(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model,
                                    ProductCatalog.ean, ProductCatalog.upc, ProductCatalog.mpn)).all()
     index = build_catalog_index(catalog_rows)
+    direct_sku = db.scalar(select(Supplier.id).where(Supplier.code == feed.code,
+        Supplier.vat_number.in_(DIRECT_SKU_SUPPLIERS))) is not None
     from app.services.supplier_aade_rules import catalog_review_links, xml_identity
     reviewed = catalog_review_links(db, feed.code, catalog_rows)
     now = datetime.now(timezone.utc)
     matched = ambiguous = 0
     values = []
     for row in rows:
-        product_id, method = match_supplier_product(row, index, feed.adapter)
+        product_id, method = match_supplier_product(row, index, feed.adapter, direct_sku=direct_sku)
         links = reviewed.get(row["supplier_code"], [])
         if links:
             valid = {mapping.product_catalog_id for mapping, okay in links if okay

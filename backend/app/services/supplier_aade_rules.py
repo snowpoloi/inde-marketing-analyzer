@@ -8,7 +8,10 @@ from app.models import ProductCatalog, Supplier, SupplierProductMap
 from app.services.supplier_costing import normalize_identifier
 
 
-PAKKETO_VAT = "800749270"
+DIRECT_SKU_SUPPLIERS = {
+    "800749270": {"method": "aade_pakketo_sku", "revision": "pakketo-sku-v1:"},
+    "999214660": {"method": "aade_zougris_sku", "revision": "zougris-sku-v1:"},
+}
 
 
 def review_identity(code, mark, line_number, digest, remember):
