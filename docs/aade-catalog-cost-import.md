@@ -34,6 +34,8 @@ remain usable when they match the current source exactly, or when the original
 AADE payload still matches the saved fingerprint and verified provider detail is
 identical after this normalization. No price, mapping or financial evidence is
 rewritten to recover a formatting-only change.
+Successful upgrades retain the previous fingerprint for audit and existing
+invoice-only human confirmations; a changed fiscal source cannot reuse it.
 
 The invoice list derives the cost status from validated stored evidence rather
 than a stale worker label. A complete invoice whose source changes is checked

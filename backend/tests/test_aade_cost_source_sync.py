@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.connectors.aade_detail import META_KEY, source_fingerprint
-from app.models import AADEDocument, SupplierDocument, SupplierProductCost
+from app.models import AADEDocument, SupplierDocument, SupplierProductCost, SupplierProductMap
 from app.services.import_service import import_aade_payload
 from app.services.supplier_aade_costs import (
     _legacy_source_digest, _source_digest, accept_invoice, aade_invoices,
@@ -14,6 +14,7 @@ from app.services.supplier_aade_costs import (
 )
 from app.services.supplier_aade_jobs import process_aade_costs
 from app.services.supplier_aade_review import pending_costs
+from app.services.supplier_aade_rules import review_identity
 from app.services.supplier_catalog_pricing import latest_aade_costs
 from app.services.supplier_catalog_summary import period_summary
 from test_supplier_aade_costs import auto_policy, payload, seed
@@ -165,7 +166,7 @@ def test_legacy_upgrade_survives_later_aade_quantity_format_change(db):
     assert not invoice_preview(db, fiscal.id, supplier.id)["reasons"]
 
 
-def test_worker_upgrades_legacy_complete_evidence_without_reimporting(db):
+def test_worker_upgrades_legacy_complete_evidence_without_reimporting(db, monkeypatch):
     user, supplier, _, _, fiscal = seed(db)
     auto_policy(db, user, supplier)
     assert process_aade_costs(db)["status"] == "imported"
@@ -176,7 +177,47 @@ def test_worker_upgrades_legacy_complete_evidence_without_reimporting(db):
     fiscal.raw = provider_detail(fiscal)
     fiscal.raw = {**fiscal.raw, "_catalog_cost": {**fiscal.raw["_catalog_cost"], "next_attempt_at": None}}
     db.commit()
+    monkeypatch.setattr("app.services.supplier_aade_jobs.invoice_preview",
+                        lambda *args, **kwargs: pytest.fail("Complete evidence must not rescan the XML catalog"))
     assert process_aade_costs(db)["costs_created"] == 0
     assert document.raw_metadata["aade_source_digest_version"] == 2
     assert process_aade_costs(db) == {"processed": 0}
     assert db.scalar(select(func.count()).select_from(SupplierProductCost)) == 1
+
+
+@pytest.mark.parametrize("enriched", [False, True])
+def test_legacy_invoice_only_manual_mapping_survives_digest_upgrade(db, enriched):
+    from app.services.supplier_aade_review import confirm_line
+    from test_supplier_aade_review import request
+
+    user, supplier, product, item, fiscal = seed(db)
+    item.product_catalog_id = None
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [
+        {**fiscal.raw["invoiceDetails"][0], "itemCode": "MANUAL"}, fiscal.raw["invoiceDetails"][1]]}
+    db.flush()
+    before = invoice_preview(db, fiscal.id, supplier.id)
+    confirm_line(db, fiscal.id, request(before, product, remember_match=False), user)
+    mapping = db.scalar(select(SupplierProductMap))
+    legacy = _legacy_source_digest(fiscal)
+    mapping.identity_key = review_identity("MANUAL", fiscal.mark, "1", legacy, False)
+    document = db.scalar(select(SupplierDocument))
+    document.raw_metadata = {**document.raw_metadata, "aade_source_digest": legacy}
+    if enriched:
+        fiscal.raw = provider_detail(fiscal)
+    db.commit()
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert not preview["reasons"]
+    assert preview["lines"][0]["product_catalog_id"] == str(product.id)
+    assert not preview["lines"][0]["reasons"]
+    assert upgrade_source_digest(db, fiscal.id)
+    db.commit()
+    row = sync_row(fiscal)
+    row["raw"] = {key: value for key, value in fiscal.raw.items() if key != META_KEY}
+    row["raw"]["invoiceDetails"] = [
+        {**line, "quantity": format(Decimal(str(line["quantity"])), ".4f")} if "quantity" in line else line
+        for line in row["raw"]["invoiceDetails"]]
+    import_aade_payload(db, {"documents": [row]}, fiscal.issue_date)
+    refreshed = invoice_preview(db, fiscal.id, supplier.id)
+    assert refreshed["lines"][0]["product_catalog_id"] == str(product.id)
+    assert not refreshed["lines"][0]["reasons"]
+    assert validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())

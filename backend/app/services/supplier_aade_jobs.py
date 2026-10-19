@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.connectors.aade_detail import META_KEY, detail_info, source_fingerprint
 from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierDocument, User
 from app.schemas.suppliers import SupplierAADEAcceptRequest
-from app.services.supplier_aade_costs import accept_invoice, invoice_preview, upgrade_source_digest
+from app.services.supplier_aade_costs import _invoice_key, accept_invoice, invoice_preview, upgrade_source_digest
 from app.services.supplier_catalog_settings import pricing_settings
 from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
 
@@ -67,18 +67,23 @@ def process_aade_costs(db):
               "input_revision": input_revision}
     costs_created = 0
     try:
-        preview = invoice_preview(db, document_id, supplier.id, confirm_missing_units=confirmed)
-        if preview["can_import"]:
-            accepted = accept_invoice(db, document_id, SupplierAADEAcceptRequest(
-                supplier_id=supplier.id, fingerprint=preview["fingerprint"],
-                confirm_products_and_units=True, confirm_missing_units=confirmed), actor, automated=True)
-            costs_created = accepted["costs_created"]
-            result["status"] = "partial" if accepted.get("pending_lines") else "imported"
-        result["pending_lines"] = preview["pending_lines"]
-        if preview["imported"] and not preview["reasons"]:
-            result["status"] = "partial" if preview["pending_lines"] else "imported"
-            upgrade_source_digest(db, document_id)
-        result["reasons"] = preview["reasons"] + list(dict.fromkeys(reason for line in preview["lines"] for reason in line["reasons"]))
+        stored = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(document)))
+        # Fully costed invoices need source validation, not another XML-catalog scan.
+        if stored and not (stored.raw_metadata or {}).get("aade_partial") and upgrade_source_digest(db, document_id):
+            result.update(status="imported", pending_lines=0, reasons=[])
+        else:
+            preview = invoice_preview(db, document_id, supplier.id, confirm_missing_units=confirmed)
+            if preview["can_import"]:
+                accepted = accept_invoice(db, document_id, SupplierAADEAcceptRequest(
+                    supplier_id=supplier.id, fingerprint=preview["fingerprint"],
+                    confirm_products_and_units=True, confirm_missing_units=confirmed), actor, automated=True)
+                costs_created = accepted["costs_created"]
+                result["status"] = "partial" if accepted.get("pending_lines") else "imported"
+            result["pending_lines"] = preview["pending_lines"]
+            if preview["imported"] and not preview["reasons"]:
+                result["status"] = "partial" if preview["pending_lines"] else "imported"
+                upgrade_source_digest(db, document_id)
+            result["reasons"] = preview["reasons"] + list(dict.fromkeys(reason for line in preview["lines"] for reason in line["reasons"]))
     except (ValueError, IntegrityError):
         db.rollback()
         result["reasons"] = ["Invoice requires review; no automatic cost was saved."]

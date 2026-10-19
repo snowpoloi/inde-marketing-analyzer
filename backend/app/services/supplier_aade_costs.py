@@ -142,17 +142,20 @@ def _source_digest(document):
     return _canonical_source_digest(document, document.raw or {})
 
 
-def _source_digest_matches(document, saved):
-    if saved in {_source_digest(document), _legacy_source_digest(document)}:
-        return True
+def _legacy_source_digests(document):
+    yield _legacy_source_digest(document)
     raw = document.raw or {}
     if effective_invoice(raw) is raw:
-        return False
+        return
     original = {key: value for key, value in raw.items() if key != META_KEY}
     # Recover old evidence only when its exact original payload is still present
     # and the verified provider detail is identical after numeric normalization.
-    return (saved == _legacy_source_digest(document, original)
-            and _canonical_source_digest(document, original) == _source_digest(document))
+    if _canonical_source_digest(document, original) == _source_digest(document):
+        yield _legacy_source_digest(document, original)
+
+
+def _source_digest_matches(document, saved):
+    return saved == _source_digest(document) or saved in _legacy_source_digests(document)
 
 
 def upgrade_source_digest(db, document_id):
@@ -307,6 +310,12 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
         matching_cache[supplier.id] = (catalogs, mappings)
     from app.services.supplier_aade_rules import reviewed_mapping, mapping_valid, xml_identity
     digest = _source_digest(document)
+    previous_digests = tuple(_legacy_source_digests(document))
+    existing = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(document)))
+    metadata = (existing.raw_metadata or {}) if existing else {}
+    previous = (metadata.get("aade_digest_upgrade") or {}).get("previous")
+    if metadata.get("aade_source_digest") == digest and previous:
+        previous_digests += (previous,)
     for line in lines:
         line.update(product_catalog_id=None, inde_sku=None, supplier_sku=None, supplier_code=None, supplier_ean=None,
                     match_method=None, matched_item_code=None, mapping_id=None, xml_candidates=[])
@@ -327,7 +336,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                     candidates.update(title_matches)
         matches = sorted(candidates.values(), key=lambda row: str(row[0].id))
         line["xml_candidates"] = [{"id": str(item.id), **xml_identity(item)} for item, _ in matches]
-        manual = reviewed_mapping(mappings, line, document, digest)
+        manual = reviewed_mapping(mappings, line, document, digest, previous_digests=previous_digests)
         if manual:
             product = db.get(ProductCatalog, manual.product_catalog_id, options=[load_only(
                 ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.ean,
@@ -390,7 +399,6 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             line["unit_cost_net"] = None
     if not any(line["line_type"] == "product" for line in lines):
         reasons.append("No product lines.")
-    existing = db.scalar(select(SupplierDocument).where(SupplierDocument.identity_key == _invoice_key(document)))
     legacy_numbers = {document.aa, f"{document.series or ''}/{document.aa or ''}",
                       f"{document.series or ''} / {document.aa or ''}"}
     legacy_match = (SupplierDocument.aade_document_id.in_([row.id for row in copies]) |

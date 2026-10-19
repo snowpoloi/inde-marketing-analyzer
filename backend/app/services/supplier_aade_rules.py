@@ -29,8 +29,9 @@ def xml_identity(item):
             for field in ("supplier_code", "supplier_sku", "ean")}
 
 
-def reviewed_mapping(mappings, line, document, digest):
-    identities = [review_identity(line["item_code"], document.mark, line["line_number"], digest, False)]
+def reviewed_mapping(mappings, line, document, digest, *, previous_digests=()):
+    identities = [review_identity(line["item_code"], document.mark, line["line_number"], value, False)
+                  for value in (digest, *previous_digests)]
     if line["item_code"]:
         identities.append(review_identity(line["item_code"], document.mark, line["line_number"], digest, True))
     for identity in identities:
