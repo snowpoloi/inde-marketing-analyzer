@@ -122,6 +122,46 @@ def test_duplicate_or_unverified_product_codes_cannot_recover_numbered_costs(db)
     assert not validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())
 
 
+@pytest.mark.parametrize("partial", [False, True])
+def test_previously_enriched_invoice_costs_keep_record_identity_after_numbering_recovery(db, partial):
+    from app.models import SupplierDocumentLine
+    from app.services.supplier_aade_costs import _canonical_source_digest
+    actor, supplier, _, _, fiscal = numbered_products(db)
+    original = deepcopy(fiscal.raw)
+    # Simulate an old import that used provider line numbering, before recovery.
+    provider = ubl_numbering(fiscal)[META_KEY]["invoice"]
+    fiscal.raw = provider
+    db.commit()
+    accept_invoice(db, fiscal.id, payload(invoice_preview(db, fiscal.id, supplier.id)), actor,
+                   only_line_number="2" if partial else None)
+    stored = db.scalar(select(SupplierDocument))
+    old_digest = _canonical_source_digest(fiscal, provider)
+    stored.raw_metadata = {**stored.raw_metadata, "aade_source_digest": old_digest}
+    before = [(row.id, row.product_catalog_id, row.net_unit_cost) for row in db.scalars(select(SupplierProductCost))]
+    record_ids = {row.raw_metadata["aade_item_code"]: row.id for row in db.scalars(select(SupplierDocumentLine))}
+    fiscal.raw = {**original, META_KEY: {"status": "verified", "source_hash": source_fingerprint(original), "invoice": provider}}
+    db.commit()
+    preview = invoice_preview(db, fiscal.id, supplier.id)
+    assert not preview["reasons"] and preview["costed_lines"] == len(before)
+    assert all(not row["reasons"] for row in preview["lines"])
+    assert preview["ready_lines"] == int(partial)
+    assert len(validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())) == len(before)
+    if partial:
+        assert accept_invoice(db, fiscal.id, payload(preview), actor)["costs_created"] == 1
+        assert {row.raw_metadata["aade_item_code"]: row.id for row in db.scalars(select(SupplierDocumentLine))} == record_ids
+    else:
+        assert upgrade_source_digest(db, fiscal.id)
+    db.commit()
+    row = sync_row(fiscal)
+    row["raw"] = original
+    import_aade_payload(db, {"documents": [row]}, fiscal.issue_date)
+    db.refresh(fiscal)
+    assert not invoice_preview(db, fiscal.id, supplier.id)["reasons"]
+    assert len(validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())) == 2
+    after = [(row.id, row.product_catalog_id, row.net_unit_cost) for row in db.scalars(select(SupplierProductCost))]
+    assert all(row in after for row in before)
+
+
 def sync_row(fiscal):
     return {key: getattr(fiscal, key) for key in (
         "source_endpoint", "identity_key", "mark", "uid", "issuer_vat", "counterpart_vat",

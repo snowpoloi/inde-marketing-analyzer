@@ -183,9 +183,7 @@ def _legacy_source_digests(document):
     if _canonical_source_digest(document, original) == _source_digest(document):
         yield _legacy_source_digest(document, original)
         enriched = effective_invoice(raw)
-        identities = lambda rows: {(pick(row, "itemCode"), str(pick(row, "lineNumber"))) for row in rows}
-        if (_same_product_lines(_raw_line_rows(original), _raw_line_rows(enriched))
-                and identities(_raw_line_rows(original)) == identities(_raw_line_rows(enriched))):
+        if _same_product_lines(_raw_line_rows(original), _raw_line_rows(enriched)):
             yield _legacy_source_digest(document, enriched)
             yield _canonical_source_digest(document, enriched)
 
@@ -456,15 +454,29 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
     if legacy:
         reasons.append("This fiscal invoice already exists from another import; reconciliation required to avoid double counting.")
     costed = {}
+    costed_codes = {}
     if existing:
         if not _source_digest_matches(document, (existing.raw_metadata or {}).get("aade_source_digest")):
             reasons.append("Imported fiscal source changed; reconciliation required before adding costs.")
-        costed = dict(db.execute(select(SupplierDocumentLine.line_number, SupplierProductCost.product_catalog_id)
+        evidence = db.execute(select(SupplierDocumentLine.line_number, SupplierDocumentLine.raw_metadata,
+                                     SupplierProductCost.product_catalog_id)
             .join(SupplierProductCost, SupplierProductCost.source_line_id == SupplierDocumentLine.id)
-            .where(SupplierDocumentLine.document_id == existing.id)).all())
+            .where(SupplierDocumentLine.document_id == existing.id)).all()
+        costed = {number: product_id for number, _, product_id in evidence}
+        for _, metadata, product_id in evidence:
+            code = (metadata or {}).get("aade_item_code")
+            costed_codes.setdefault(code, []).append(product_id)
+    current_codes = [line["item_code"] for line in lines]
     for line in lines:
-        line["costed"] = line["line_number"] in costed
-        if line["costed"] and str(costed[line["line_number"]]) != line["product_catalog_id"]:
+        code = line["item_code"]
+        prior = costed_codes.get(code, [])
+        # Stable, unique product codes bridge provider line renumbering. Repeated
+        # item codes retain line-number matching; fiscal-source guards still apply.
+        by_code = (code and current_codes.count(code) == 1 and len(prior) <= 1
+                   and not any(not value for value in costed_codes))
+        product_id = (prior[0] if prior else None) if by_code else costed.get(line["line_number"])
+        line["costed"] = product_id is not None
+        if line["costed"] and str(product_id) != line["product_catalog_id"]:
             line["reasons"].append("Previously costed product mapping changed; existing evidence retained for review.")
         line["ready"] = line["line_type"] == "product" and not line["reasons"] and not line["costed"]
     fingerprint = hashlib.sha256(json.dumps({"source": _source_digest(document), "supplier": str(supplier.id),
@@ -575,11 +587,18 @@ def accept_invoice(db, document_id, payload, user, *, automated=False, only_line
     # Only ready lines receive a verified mapping and a product cost record.
     stored = {line.line_number: line for line in db.scalars(select(SupplierDocumentLine)
         .where(SupplierDocumentLine.document_id == document.id)).all()}
+    stored_codes = {}
+    for record in stored.values():
+        stored_codes.setdefault((record.raw_metadata or {}).get("aade_item_code"), []).append(record)
+    current_codes = [line["item_code"] for line in preview["lines"]]
     created = 0
     for line in preview["lines"]:
         if line["costed"]:
             continue
-        record = stored.get(line["line_number"])
+        code = line["item_code"]
+        same_code = stored_codes.get(code, [])
+        record = (same_code[0] if code and current_codes.count(code) == len(same_code) == 1 else
+                  stored.get(line["line_number"]))
         if record is None:
             record = SupplierDocumentLine(document_id=document.id, line_number=line["line_number"])
             db.add(record)
@@ -591,6 +610,7 @@ def accept_invoice(db, document_id, payload, user, *, automated=False, only_line
         record.unit_price_before_discount = record.net_unit_cost
         record.gross_total = line["net_value"] + line["vat_amount"]
         record.raw_metadata = {"aade_item_code": line["item_code"], "aade_vat_category": line["vat_category"],
+            "aade_source_line_number": line["line_number"],
             "aade_match_method": line["match_method"], "aade_matched_item_code": line["matched_item_code"],
             "aade_source_unit": line["source_unit"], "aade_unit_confirmed": line["unit_confirmed"],
             "aade_pending_reasons": line["reasons"], "vat_rate_not_supplied": True}

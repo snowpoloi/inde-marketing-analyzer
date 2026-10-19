@@ -42,6 +42,11 @@ both sources have unique product codes and every line field agrees except numeri
 quantity scale, line numbering/order and the UBL audit annotation. Corrected
 quantities, prices, VAT, units, descriptions or fiscal flags cannot use this
 recovery. Existing financial rows are never renumbered or rewritten.
+Unique invoice product codes preserve the association with previously accepted
+lines even when an earlier import used the provider's line numbers. Partial
+imports reuse existing pending records by that same code; repeated codes continue
+to require their exact original line identities. The current source line number
+is retained separately in new line audit metadata.
 
 Direct invoice-code rules are scoped by supplier AFM. Pakketo and Zougris use the
 exact INDE SKU. Gloria (094494879) requires `GL.` and Liberta (998434505) requires
