@@ -30,7 +30,8 @@ def pending_costs(db, start, end, supplier_id=None, offset=0, limit=10):
             SupplierDocument.identity_key == func.concat("aade:", supplier_vat, ":", AADEDocument.mark))\
         .where(AADEDocument.document_direction == "expense", AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3"]),
             AADEDocument.issue_date.between(start, end),
-            or_(SupplierDocument.id.is_(None), SupplierDocument.raw_metadata["aade_partial"].astext == "true"),
+            or_(SupplierDocument.id.is_(None), SupplierDocument.raw_metadata["aade_partial"].astext == "true",
+                AADEDocument.raw["_catalog_cost"]["status"].astext == "review"),
             *([Supplier.id == supplier_id] if supplier_id else [])).subquery()
     query = select(ranked.c.document_id, ranked.c.supplier_id).where(ranked.c.rank == 1)
     total = db.scalar(select(func.count()).select_from(query.subquery()))

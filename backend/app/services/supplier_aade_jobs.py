@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.connectors.aade_detail import META_KEY, detail_info, source_fingerprint
 from app.models import AADEDocument, Supplier, SupplierCatalogFeed, SupplierDocument, User
 from app.schemas.suppliers import SupplierAADEAcceptRequest
-from app.services.supplier_aade_costs import accept_invoice, invoice_preview
+from app.services.supplier_aade_costs import accept_invoice, invoice_preview, upgrade_source_digest
 from app.services.supplier_catalog_settings import pricing_settings
 from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
 
@@ -34,6 +34,10 @@ def process_aade_costs(db):
     partial = exists(select(SupplierDocument.id).where(
         SupplierDocument.identity_key == func.concat("aade:", Supplier.vat_number, ":", AADEDocument.mark),
         SupplierDocument.raw_metadata["aade_partial"].astext == "true"))
+    legacy = exists(select(SupplierDocument.id).where(
+        SupplierDocument.identity_key == func.concat("aade:", Supplier.vat_number, ":", AADEDocument.mark),
+        SupplierDocument.raw_metadata["aade_source_digest"].astext.is_not(None),
+        SupplierDocument.raw_metadata["aade_source_digest_version"].astext.is_distinct_from("2")))
     matching_version = case(*[(Supplier.vat_number == vat, rule["revision"])
         for vat, rule in DIRECT_SKU_SUPPLIERS.items()], else_="line-costs-v2:")
     revision = func.concat(matching_version, policy.get("cost_refresh_requested_at", ""), ":",
@@ -46,7 +50,8 @@ def process_aade_costs(db):
                 Supplier.vat_number.in_(DIRECT_SKU_SUPPLIERS))), Supplier.vat_number.is_not(None),
             AADEDocument.document_direction == "expense", AADEDocument.invoice_type.in_(["1.1", "1.2", "1.3"]),
             AADEDocument.issue_date <= date.today(), AADEDocument.is_cancelled.is_(False),
-            AADEDocument.cancelled_by_mark.is_(None), or_(~imported, partial),
+            AADEDocument.cancelled_by_mark.is_(None),
+            or_(~imported, partial, legacy, meta["status"].astext.is_(None), meta["status"].astext == "review"),
             func.coalesce(AADEDocument.raw["record_type"].astext, "full_document") == "full_document",
             or_(meta["input_revision"].astext.is_distinct_from(revision),
                 meta["next_attempt_at"].astext.is_(None), meta["next_attempt_at"].astext <= now.isoformat()),
@@ -70,8 +75,9 @@ def process_aade_costs(db):
             costs_created = accepted["costs_created"]
             result["status"] = "partial" if accepted.get("pending_lines") else "imported"
         result["pending_lines"] = preview["pending_lines"]
-        if preview["imported"] and preview["pending_lines"] and not preview["reasons"]:
-            result["status"] = "partial"
+        if preview["imported"] and not preview["reasons"]:
+            result["status"] = "partial" if preview["pending_lines"] else "imported"
+            upgrade_source_digest(db, document_id)
         result["reasons"] = preview["reasons"] + list(dict.fromkeys(reason for line in preview["lines"] for reason in line["reasons"]))
     except (ValueError, IntegrityError):
         db.rollback()

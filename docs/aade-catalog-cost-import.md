@@ -27,6 +27,19 @@ changes, cancellation and conflicting copies invalidate accepted evidence.
 Sales prices, VAT assumptions and OpenCart data are not modified. Margins are
 shown only when the existing net sales-price basis is known.
 
+Cost-source fingerprints normalize equivalent quantity encodings (`1`, `1.0000`)
+and header amount scale. Other invoice-line fields, including product identifiers,
+units, descriptions, amounts and fiscal flags, remain exact. Legacy fingerprints
+remain usable when they match the current source exactly, or when the original
+AADE payload still matches the saved fingerprint and verified provider detail is
+identical after this normalization. No price, mapping or financial evidence is
+rewritten to recover a formatting-only change.
+
+The invoice list derives the cost status from validated stored evidence rather
+than a stale worker label. A complete invoice whose source changes is checked
+again by the bounded worker; real changes remain blocked and appear in Pending
+Costings, including invoices with no remaining unmatched lines.
+
 ## Pending Costings
 
 Supplier catalog > **Εκκρεμείς κοστολογήσεις** lists unresolved goods invoices in

@@ -17,7 +17,7 @@ from app.models import (AADEDocument, IntegrationSetting, ProductCatalog, Suppli
 from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
-from app.connectors.aade_detail import effective_invoice, detail_info
+from app.connectors.aade_detail import META_KEY, effective_invoice, detail_info
 from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
 
 
@@ -104,12 +104,77 @@ def _invoice_key(document):
     return f"aade:{normalize_vat(document.issuer_vat)}:{document.mark}"
 
 
-def _source_digest(document):
-    return hashlib.sha256(json.dumps({"issuer": document.issuer_vat, "recipient": document.counterpart_vat,
+def _source_payload(document, raw):
+    return {"issuer": document.issuer_vat, "recipient": document.counterpart_vat,
         "date": str(document.issue_date), "mark": document.mark, "type": document.invoice_type,
         "series": document.series, "number": document.aa, "currency": document.currency,
         "net": str(document.net_value), "vat": str(document.vat_amount), "gross": str(document.gross_value),
-        "lines": line_rows(document.raw or {})}, sort_keys=True, default=str).encode()).hexdigest()
+        "lines": line_rows(raw)}
+
+
+def _legacy_source_digest(document, raw=None):
+    payload = _source_payload(document, (document.raw or {}) if raw is None else raw)
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _canonical_source_digest(document, raw):
+    payload = _source_payload(document, raw)
+    payload["version"] = 2
+    for field in ("net", "vat", "gross"):
+        value = numeric(payload[field])
+        if value is not None:
+            payload[field] = format(value.normalize(), "f")
+    lines = []
+    for row in payload["lines"]:
+        if isinstance(row, dict):
+            row = dict(row)
+            # AADE and the provider may encode the same quantity as 1 / 1.0000.
+            # Keep identifiers, units, fiscal flags and all other fields exact.
+            for key, value in row.items():
+                if str(key).lower() in {"quantity", "qty"} and numeric(value) is not None:
+                    row[key] = format(numeric(value).normalize(), "f")
+        lines.append(row)
+    payload["lines"] = lines
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _source_digest(document):
+    return _canonical_source_digest(document, document.raw or {})
+
+
+def _source_digest_matches(document, saved):
+    if saved in {_source_digest(document), _legacy_source_digest(document)}:
+        return True
+    raw = document.raw or {}
+    if effective_invoice(raw) is raw:
+        return False
+    original = {key: value for key, value in raw.items() if key != META_KEY}
+    # Recover old evidence only when its exact original payload is still present
+    # and the verified provider detail is identical after numeric normalization.
+    return (saved == _legacy_source_digest(document, original)
+            and _canonical_source_digest(document, original) == _source_digest(document))
+
+
+def upgrade_source_digest(db, document_id):
+    """Persist a proven equivalent fingerprint, never rewrite financial lines."""
+    db.execute(text("SELECT pg_advisory_xact_lock(841650721)"))
+    source = db.get(AADEDocument, document_id, with_for_update=True, populate_existing=True)
+    if source is None:
+        return False
+    document = db.scalar(select(SupplierDocument).where(
+        SupplierDocument.identity_key == _invoice_key(source)).with_for_update())
+    if document is None or not validated_documents(db, [document]):
+        return False
+    metadata = dict(document.raw_metadata or {})
+    digest = _source_digest(source)
+    if metadata.get("aade_source_digest") != digest:
+        metadata["aade_digest_upgrade"] = {
+            "previous": metadata.get("aade_source_digest"), "reason": "equivalent_numeric_encoding",
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+    document.raw_metadata = {**metadata, "aade_source_digest": digest, "aade_source_digest_version": 2}
+    db.flush()
+    return True
 
 
 def aade_invoices(db, supplier_id, start, end, offset, limit):
@@ -133,12 +198,25 @@ def aade_invoices(db, supplier_id, start, end, offset, limit):
     count = db.scalar(select(func.count()).select_from(AADEDocument).where(*filters))
     documents = db.scalars(select(AADEDocument).where(*filters).order_by(AADEDocument.issue_date.desc(), AADEDocument.id)
                            .offset(offset).limit(limit)).all()
+    stored = {row.identity_key: row for row in db.scalars(select(SupplierDocument).where(
+        SupplierDocument.supplier_id == supplier.id,
+        SupplierDocument.identity_key.in_([_invoice_key(row) for row in documents]))).all()}
+    valid = {row.id for row in validated_documents(db, list(stored.values()))}
+
+    def cost_state(row):
+        document = stored.get(_invoice_key(row))
+        if document and (row.raw or {}).get("record_type", "full_document") == "full_document":
+            metadata = document.raw_metadata or {}
+            status = "review" if document.id not in valid else "partial" if metadata.get("aade_partial") else "imported"
+            return {"cost_status": status, "pending_lines": metadata.get("aade_pending_lines", 0)}
+        metadata = (row.raw or {}).get("_catalog_cost", {})
+        return {"cost_status": metadata.get("status"), "pending_lines": metadata.get("pending_lines")}
+
     return {"total": count, "rows": [{"id": str(row.id), "date": row.issue_date, "mark": row.mark,
         "invoice_type": row.invoice_type, "number": f"{row.series or ''} / {row.aa or ''}",
         "net_value": row.net_value, "gross_value": row.gross_value,
         "cancelled": row.is_cancelled or bool(row.cancelled_by_mark),
-        "cost_status": (row.raw or {}).get("_catalog_cost", {}).get("status"),
-        "pending_lines": (row.raw or {}).get("_catalog_cost", {}).get("pending_lines"),
+        **cost_state(row),
         "record_type": (row.raw or {}).get("record_type", "full_document")} for row in documents]}
 
 
@@ -324,7 +402,7 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
         reasons.append("This fiscal invoice already exists from another import; reconciliation required to avoid double counting.")
     costed = {}
     if existing:
-        if (existing.raw_metadata or {}).get("aade_source_digest") != _source_digest(document):
+        if not _source_digest_matches(document, (existing.raw_metadata or {}).get("aade_source_digest")):
             reasons.append("Imported fiscal source changed; reconciliation required before adding costs.")
         costed = dict(db.execute(select(SupplierDocumentLine.line_number, SupplierProductCost.product_catalog_id)
             .join(SupplierProductCost, SupplierProductCost.source_line_id == SupplierDocumentLine.id)
@@ -477,6 +555,7 @@ def accept_invoice(db, document_id, payload, user, *, automated=False, only_line
     pending = sum(line["line_type"] == "product" and not line["costed"] and line["line_number"] not in mappings
                   for line in preview["lines"])
     document.raw_metadata = {**document.raw_metadata, "aade_source_digest": _source_digest(source),
+                             "aade_source_digest_version": 2,
                              "aade_reviewed_by": str(user.id), "aade_fingerprint": preview["fingerprint"],
                              "aade_confirm_missing_units": payload.confirm_missing_units,
                              "aade_automated": automated, "aade_partial": bool(pending),
@@ -558,7 +637,7 @@ def validated_documents(db, documents):
         and fiscal.invoice_type in {"1.1", "1.2", "1.3"}
         and normalize_vat(fiscal.issuer_vat) == normalize_vat(supplier.vat_number)
         and recipient and normalize_vat(fiscal.counterpart_vat) == recipient
-        and document.raw_metadata.get("aade_source_digest") == _source_digest(fiscal)}
+        and _source_digest_matches(fiscal, document.raw_metadata.get("aade_source_digest"))}
     return [row for row in documents if not (row.raw_metadata or {}).get("aade_source_digest") or row.id in valid_ids]
 
 
