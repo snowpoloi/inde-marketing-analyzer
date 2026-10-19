@@ -18,7 +18,7 @@ from app.schemas.suppliers import SupplierAADEAcceptRequest
 from app.services.supplier_costing import money, normalize_identifier, supplier_mapping_identity
 from app.services.supplier_identity import normalize_vat, fiscal_supplier_vat
 from app.connectors.aade_detail import META_KEY, effective_invoice, detail_info
-from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
+from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS, invoice_shop_identifier, invoice_product_candidates
 
 
 _ANTHEMIDIS_CATALOG_CODE = r"(?:[0-9]{5,6}-[0-9]{1,3}|[0-9]{6})"
@@ -46,14 +46,44 @@ def numeric(value):
         return None
 
 
-def line_rows(raw):
-    raw = effective_invoice(raw)
+def _raw_line_rows(raw):
     rows = pick(raw, "invoiceDetails", "invoice_details", "invoiceRows", "invoice_rows", "lineItems", "line_items", "lines")
     if isinstance(rows, dict):
         rows = pick(rows, "invoiceDetails", "invoiceDetail", "invoiceRow", "row", "line") or rows
     if rows is None:
         return []
     return rows if isinstance(rows, list) else [rows]
+
+
+def _same_product_lines(original, enriched):
+    def indexed(rows):
+        result = {}
+        numbers = set()
+        for row in rows:
+            code = pick(row, "itemCode")
+            number = pick(row, "lineNumber")
+            if (not isinstance(row, dict) or not isinstance(code, str) or not code or code in result
+                    or not isinstance(number, (str, int)) or isinstance(number, bool)
+                    or not number or str(number) in numbers):
+                return None
+            numbers.add(str(number))
+            values = {key: value for key, value in row.items() if key not in {"lineNumber", "_ubl_evidence"}}
+            for key, value in values.items():
+                if str(key).lower() in {"quantity", "qty"} and numeric(value) is not None:
+                    values[key] = format(numeric(value).normalize(), "f")
+            result[code] = values
+        return result or None
+
+    left, right = indexed(original), indexed(enriched)
+    return left is not None and right is not None and left == right
+
+
+def line_rows(raw):
+    enriched = effective_invoice(raw)
+    original, detail = _raw_line_rows(raw), _raw_line_rows(enriched)
+    # Verified UBL may renumber already identified myDATA products. Retain fiscal
+    # line identities only when every other field agrees, not when UBL corrects qty.
+    return original if enriched is not raw and _same_product_lines(original, detail) else detail
 
 
 def parse_lines(raw, *, confirm_missing_units=False):
@@ -152,6 +182,12 @@ def _legacy_source_digests(document):
     # and the verified provider detail is identical after numeric normalization.
     if _canonical_source_digest(document, original) == _source_digest(document):
         yield _legacy_source_digest(document, original)
+        enriched = effective_invoice(raw)
+        identities = lambda rows: {(pick(row, "itemCode"), str(pick(row, "lineNumber"))) for row in rows}
+        if (_same_product_lines(_raw_line_rows(original), _raw_line_rows(enriched))
+                and identities(_raw_line_rows(original)) == identities(_raw_line_rows(enriched))):
+            yield _legacy_source_digest(document, enriched)
+            yield _canonical_source_digest(document, enriched)
 
 
 def _source_digest_matches(document, saved):
@@ -297,15 +333,24 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
     mappings = cached[1] if cached else db.scalars(select(SupplierProductMap).where(SupplierProductMap.supplier_id == supplier.id)).all()
     products_by_sku = {}
     if direct_sku:
-        # These suppliers use INDE SKUs on invoices; barcode/XML drift must
-        # not redirect an invoice to a different product or block this match.
+        codes = {line["item_code"] for line in lines if line["item_code"]}
+        identifiers = {invoice_shop_identifier(code, sku_rule) for code in codes}
+        predicate = ProductCatalog.sku.in_(identifiers)
+        if sku_rule.get("prefix"):
+            upper = {value.upper() for value in identifiers}
+            predicate = or_(func.upper(ProductCatalog.sku).in_(upper), func.upper(ProductCatalog.model).in_(upper))
         product_query = select(ProductCatalog).options(load_only(
             ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model, ProductCatalog.ean,
-            ProductCatalog.upc, ProductCatalog.mpn)).where(
-                ProductCatalog.sku.in_({line["item_code"] for line in lines if line["item_code"]}))
+            ProductCatalog.upc, ProductCatalog.mpn)).where(predicate)
         if lock:
             product_query = product_query.with_for_update()
-        products_by_sku = {product.sku: product for product in db.scalars(product_query).all()}
+        products = db.scalars(product_query).all()
+        from app.services.supplier_catalog_service import build_catalog_index
+        product_index = build_catalog_index(products)
+        by_id = {product.id: product for product in products}
+        for code in codes:
+            candidates = invoice_product_candidates(code, sku_rule, product_index)
+            products_by_sku[code] = [by_id[product_id] for product_id in candidates]
     if matching_cache is not None and not lock:
         matching_cache[supplier.id] = (catalogs, mappings)
     from app.services.supplier_aade_rules import reviewed_mapping, mapping_valid, xml_identity
@@ -346,8 +391,8 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
             current_xml = next((item for item, _ in catalogs if str(item.id) == review.get("catalog_item_id")), None)
             if direct_sku and saved_xml and review.get("catalog_item_id"):
                 current_xml = db.get(SupplierCatalogProduct, review["catalog_item_id"], with_for_update=lock)
-            exact_product = products_by_sku.get(line["item_code"])
-            if direct_sku and exact_product and manual.product_catalog_id != exact_product.id:
+            exact_products = products_by_sku.get(line["item_code"], [])
+            if direct_sku and exact_products and (len(exact_products) != 1 or manual.product_catalog_id != exact_products[0].id):
                 line["reasons"].append("Reviewed mapping conflicts with the exact invoice SKU; reconciliation required.")
             elif not mapping_valid(manual, product) or (saved_xml and current_xml and xml_identity(current_xml) != saved_xml):
                 line["reasons"].append("Reviewed product identifiers changed; confirm the mapping again.")
@@ -366,7 +411,8 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                     line["unit_cost_net"] = money(line["net_value"] / line["quantity"])
             continue
         if direct_sku:
-            product = products_by_sku.get(line["item_code"])
+            exact_products = products_by_sku.get(line["item_code"], [])
+            product = exact_products[0] if len(exact_products) == 1 else None
             if product:
                 line.update(product_catalog_id=str(product.id), inde_sku=product.sku,
                     supplier_sku=line["item_code"], supplier_code=line["item_code"],
@@ -378,7 +424,8 @@ def invoice_preview(db, document_id, supplier_id, *, lock=False, confirm_missing
                        row.conversion_factor != 1 or row.pack_quantity != 1 for row in prior):
                     line["reasons"].append("Existing mapping / pack conversion conflicts with the exact invoice SKU.")
             else:
-                line["reasons"].append("No INDE product with the exact invoice SKU.")
+                line["reasons"].append("Ambiguous INDE invoice identifier." if exact_products else
+                                       "No INDE product with the exact invoice SKU / supplier prefix.")
             if line["reasons"]:
                 line["unit_cost_net"] = None
             continue
@@ -441,7 +488,7 @@ def _link_invoice_sku_catalog(db, supplier, mappings):
     """Refresh optional catalog links from accepted SKUs, never fiscal amounts."""
     if normalize_vat(supplier.vat_number) not in DIRECT_SKU_SUPPLIERS or not mappings:
         return
-    targets = {row.opencart_sku: row.product_catalog_id for row in mappings.values()}
+    targets = {row.supplier_code: row.product_catalog_id for row in mappings.values()}
     feed = db.scalar(select(SupplierCatalogFeed).where(SupplierCatalogFeed.code == supplier.code))
     if feed is None:
         return

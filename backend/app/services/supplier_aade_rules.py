@@ -11,7 +11,24 @@ from app.services.supplier_costing import normalize_identifier
 DIRECT_SKU_SUPPLIERS = {
     "800749270": {"method": "aade_pakketo_sku", "revision": "pakketo-sku-v1:"},
     "999214660": {"method": "aade_zougris_sku", "revision": "zougris-sku-v1:"},
+    "094494879": {"method": "aade_gloria_prefixed", "revision": "gloria-prefixed-v1:", "prefix": "GL."},
+    "998434505": {"method": "aade_liberta_prefixed", "revision": "liberta-prefixed-v1:", "prefix": "LIB."},
 }
+
+
+def invoice_shop_identifier(code, rule):
+    prefix = rule.get("prefix", "")
+    if prefix and code.casefold().startswith(prefix.casefold()):
+        return prefix + code[len(prefix):]
+    return prefix + code
+
+
+def invoice_product_candidates(code, rule, index):
+    identifier = normalize_identifier(invoice_shop_identifier(code, rule))
+    candidates = set(index["sku"].get(identifier, ())) if identifier else set()
+    if identifier and rule.get("prefix"):
+        candidates.update(index["model"].get(identifier, ()))
+    return candidates
 
 
 def review_identity(code, mark, line_number, digest, remember):

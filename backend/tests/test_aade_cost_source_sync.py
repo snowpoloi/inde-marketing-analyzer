@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -29,6 +29,97 @@ def provider_detail(fiscal):
             line["quantity"] = format(Decimal(str(line["quantity"])), ".4f")
     return {**raw, META_KEY: {"status": "verified", "source_hash": source_fingerprint(raw),
                              "invoice": {"invoiceDetails": lines}}}
+
+
+def numbered_products(db):
+    from app.models import ProductCatalog, SupplierCatalogProduct
+    actor, supplier, product, item, fiscal = seed(db)
+    second = ProductCatalog(sku="SECOND", name="Second product")
+    db.add(second)
+    db.flush()
+    db.add(SupplierCatalogProduct(feed_id=item.feed_id, supplier_code="SECOND", supplier_sku="SECOND",
+        name="Second product", product_catalog_id=second.id, is_current=True, last_seen_at=datetime.now(timezone.utc)))
+    fiscal.raw = {**fiscal.raw, "invoiceDetails": [fiscal.raw["invoiceDetails"][0],
+        {"lineNumber": 2, "itemCode": "SECOND", "itemDescr": "Second product", "quantity": 1,
+         "measurementUnit": 1, "netValue": 30, "vatAmount": 7.2}]}
+    fiscal.net_value, fiscal.vat_amount, fiscal.gross_value = Decimal(170), Decimal("40.8"), Decimal("210.8")
+    db.commit()
+    return actor, supplier, product, item, fiscal
+
+
+def ubl_numbering(fiscal, *, renumber=True):
+    raw = provider_detail(fiscal)
+    rows = raw[META_KEY]["invoice"]["invoiceDetails"]
+    for index, row in enumerate(rows):
+        row["_ubl_evidence"] = {"version": 1, "unit_code": "E48", "original_quantity": row["quantity"]}
+        if renumber:
+            row["lineNumber"] = len(rows) - index
+    rows.reverse()
+    return raw
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_verified_ubl_numbering_keeps_fiscal_line_identity_and_costs(db, legacy):
+    actor, supplier, _, _, fiscal = numbered_products(db)
+    accept_invoice(db, fiscal.id, payload(invoice_preview(db, fiscal.id, supplier.id)), actor)
+    stored = db.scalar(select(SupplierDocument))
+    if legacy:
+        stored.raw_metadata = {**stored.raw_metadata, "aade_source_digest": _legacy_source_digest(fiscal)}
+    before = [(row.id, row.product_catalog_id, row.net_unit_cost) for row in db.scalars(select(SupplierProductCost))]
+    original = deepcopy(fiscal.raw)
+    fiscal.raw = ubl_numbering(fiscal)
+    db.commit()
+    for _ in range(3):
+        preview = invoice_preview(db, fiscal.id, supplier.id)
+        assert not preview["reasons"] and preview["costed_lines"] == 2
+        assert all(not row["reasons"] and row["costed"] for row in preview["lines"])
+        assert [row["line_number"] for row in preview["lines"]] == ["1", "2"]
+        assert len(validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())) == 2
+        row = sync_row(fiscal)
+        row["raw"] = original
+        import_aade_payload(db, {"documents": [row]}, fiscal.issue_date)
+        db.refresh(fiscal)
+    assert [(row.id, row.product_catalog_id, row.net_unit_cost) for row in db.scalars(select(SupplierProductCost))] == before
+
+
+@pytest.mark.parametrize("field,value", [("quantity", "3"), ("itemCode", "OTHER"), ("measurementUnit", 2),
+    ("netValue", 141), ("vatAmount", 34), ("itemDescr", "Another product"), ("recType", 1), ("vatCategory", 2)])
+def test_ubl_numbering_recovery_requires_every_other_field_to_match(db, field, value):
+    actor, supplier, _, _, fiscal = numbered_products(db)
+    accept_invoice(db, fiscal.id, payload(invoice_preview(db, fiscal.id, supplier.id)), actor)
+    raw = ubl_numbering(fiscal)
+    raw[META_KEY]["invoice"]["invoiceDetails"][0][field] = value
+    fiscal.raw = raw
+    db.flush()
+    assert not validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())
+    assert any("source changed" in reason for reason in invoice_preview(db, fiscal.id, supplier.id)["reasons"])
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+def test_ubl_audit_only_upgrade_preserves_previously_enriched_cost_sources(db, canonical):
+    from app.services.supplier_aade_costs import _canonical_source_digest
+    actor, supplier, _, _, fiscal = numbered_products(db)
+    accept_invoice(db, fiscal.id, payload(invoice_preview(db, fiscal.id, supplier.id)), actor)
+    raw = ubl_numbering(fiscal, renumber=False)
+    enriched = raw[META_KEY]["invoice"]
+    stored = db.scalar(select(SupplierDocument))
+    digest = _canonical_source_digest(fiscal, enriched) if canonical else _legacy_source_digest(fiscal, enriched)
+    stored.raw_metadata = {**stored.raw_metadata, "aade_source_digest": digest}
+    fiscal.raw = raw
+    db.flush()
+    assert len(validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())) == 2
+    assert not invoice_preview(db, fiscal.id, supplier.id)["reasons"]
+
+
+def test_duplicate_or_unverified_product_codes_cannot_recover_numbered_costs(db):
+    actor, supplier, _, _, fiscal = numbered_products(db)
+    accept_invoice(db, fiscal.id, payload(invoice_preview(db, fiscal.id, supplier.id)), actor)
+    raw = ubl_numbering(fiscal)
+    rows = raw[META_KEY]["invoice"]["invoiceDetails"]
+    rows[0]["itemCode"] = rows[1]["itemCode"]
+    fiscal.raw = raw
+    db.flush()
+    assert not validated_cost_rows(db, db.scalars(select(SupplierProductCost)).all())
 
 
 def sync_row(fiscal):

@@ -20,7 +20,7 @@ from app.services.supplier_costing import normalize_identifier
 from app.services.supplier_catalog_pricing import (catalog_prices, latest_aade_costs, price_comparison,
     sale_quantity, sale_step_field, xml_sale_prices)
 from app.services.supplier_catalog_settings import pricing_settings
-from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS
+from app.services.supplier_aade_rules import DIRECT_SKU_SUPPLIERS, invoice_product_candidates
 
 
 def _cipher() -> Fernet:
@@ -105,10 +105,11 @@ def build_catalog_index(catalogs) -> dict[str, dict[str, set]]:
     return index
 
 
-def match_supplier_product(row: dict, index: dict, adapter: str = "megapap", *, direct_sku: bool = False) -> tuple[UUID | None, str]:
+def match_supplier_product(row: dict, index: dict, adapter: str = "megapap", *, direct_sku: bool = False,
+                           invoice_rule: dict | None = None) -> tuple[UUID | None, str]:
     if adapter == "pakoworld" or direct_sku:
-        code = normalize_identifier(row.get("supplier_code"))
-        exact = index["sku"].get(code, set()) if code else set()
+        code = row.get("supplier_code") or ""
+        exact = invoice_product_candidates(code, invoice_rule or {}, index)
         return (next(iter(exact)), "invoice_sku") if len(exact) == 1 else (None, "ambiguous" if exact else "unmatched")
     if adapter in FORMATS:
         details = row.get("details") or {}
@@ -142,15 +143,16 @@ def apply_catalog(db: Session, feed: SupplierCatalogFeed, rows: list[dict]) -> d
     catalog_rows = db.execute(select(ProductCatalog.id, ProductCatalog.sku, ProductCatalog.model,
                                    ProductCatalog.ean, ProductCatalog.upc, ProductCatalog.mpn)).all()
     index = build_catalog_index(catalog_rows)
-    direct_sku = db.scalar(select(Supplier.id).where(Supplier.code == feed.code,
-        Supplier.vat_number.in_(DIRECT_SKU_SUPPLIERS))) is not None
+    supplier_vat = db.scalar(select(Supplier.vat_number).where(Supplier.code == feed.code))
+    invoice_rule = DIRECT_SKU_SUPPLIERS.get(supplier_vat)
     from app.services.supplier_aade_rules import catalog_review_links, xml_identity
     reviewed = catalog_review_links(db, feed.code, catalog_rows)
     now = datetime.now(timezone.utc)
     matched = ambiguous = 0
     values = []
     for row in rows:
-        product_id, method = match_supplier_product(row, index, feed.adapter, direct_sku=direct_sku)
+        product_id, method = match_supplier_product(row, index, feed.adapter,
+                                                   direct_sku=invoice_rule is not None, invoice_rule=invoice_rule)
         links = reviewed.get(row["supplier_code"], [])
         if links:
             valid = {mapping.product_catalog_id for mapping, okay in links if okay

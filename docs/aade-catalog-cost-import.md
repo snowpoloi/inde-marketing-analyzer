@@ -37,6 +37,22 @@ rewritten to recover a formatting-only change.
 Successful upgrades retain the previous fingerprint for audit and existing
 invoice-only human confirmations; a changed fiscal source cannot reuse it.
 
+For verified provider UBL, existing myDATA line numbers remain authoritative when
+both sources have unique product codes and every line field agrees except numeric
+quantity scale, line numbering/order and the UBL audit annotation. Corrected
+quantities, prices, VAT, units, descriptions or fiscal flags cannot use this
+recovery. Existing financial rows are never renumbered or rewritten.
+
+Direct invoice-code rules are scoped by supplier AFM. Pakketo and Zougris use the
+exact INDE SKU. Gloria (094494879) requires `GL.` and Liberta (998434505) requires
+`LIB.` in the INDE model or SKU, case-insensitively, preserving code punctuation
+and leading zeroes. A bare code or shared barcode cannot substitute for this
+supplier prefix. Multiple prefixed targets and conflicting reviewed mappings
+remain pending. XML is optional for these invoice-cost rules; when present, its
+catalog links use the same rule on refresh. Costs flow into the existing INDE
+product/order profitability reports, without changing OpenCart prices or asserting
+an invoice-to-order allocation that the source does not provide.
+
 The invoice list derives the cost status from validated stored evidence rather
 than a stale worker label. A complete invoice whose source changes is checked
 again by the bounded worker; real changes remain blocked and appear in Pending
