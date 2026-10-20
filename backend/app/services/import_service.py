@@ -418,11 +418,14 @@ def import_tiktok_ads_rows(db: Session, rows: list[dict[str, Any]], fallback_dat
     )
 
     for row in rows:
-        purchases = as_decimal(row.get("purchases") or row.get("onsite_total_purchase") or row.get("conversions"))
+        purchases = as_decimal(
+            row.get("complete_payment", row.get("purchases", row.get("onsite_total_purchase") or row.get("conversions")))
+        )
         purchase_value = as_decimal(
-            row.get("purchase_value")
-            or row.get("onsite_total_purchase_value_day29")
-            or row.get("conversion_value")
+            row.get(
+                "total_complete_payment_rate",
+                row.get("purchase_value", row.get("onsite_total_purchase_value_day29") or row.get("conversion_value")),
+            )
         )
         db.add(
             CampaignDailyMetric(
@@ -470,7 +473,13 @@ _TIKTOK_CSV_HEADER_ALIASES = {
     "conversion": "conversions",
     "purchase": "purchases",
     "purchases": "purchases",
+    "complete_payment": "complete_payment",
+    "complete payment": "complete_payment",
+    "purchases (website)": "complete_payment",
     "purchase value": "purchase_value",
+    "total_complete_payment_rate": "total_complete_payment_rate",
+    "total complete payment rate": "total_complete_payment_rate",
+    "purchase value (website)": "total_complete_payment_rate",
     "conversion value": "conversion_value",
     "onsite total purchase": "purchases",
     "onsite total purchase value day29": "purchase_value",

@@ -20,8 +20,8 @@ class TikTokAdsConnector:
         "ctr",
         "cpc",
         "cpm",
-        "onsite_total_purchase",
-        "onsite_total_purchase_value_day29",
+        "complete_payment",
+        "total_complete_payment_rate",
     ]
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -34,7 +34,8 @@ class TikTokAdsConnector:
         self.max_days_per_request = min(max(self._positive_int(config.get("max_days_per_request"), 30), 1), 30)
         self.currency = str(config.get("currency") or "EUR").upper()
         configured_metrics = config.get("metrics")
-        self.metrics = [str(metric).strip() for metric in configured_metrics if str(metric).strip()] if isinstance(configured_metrics, list) else self.DEFAULT_METRICS
+        metrics = [str(metric).strip() for metric in configured_metrics if str(metric).strip()] if isinstance(configured_metrics, list) else self.DEFAULT_METRICS
+        self.metrics = list(dict.fromkeys([*metrics, "complete_payment", "total_complete_payment_rate"]))
 
     @staticmethod
     def _positive_int(value: Any, default: int) -> int:
@@ -149,8 +150,9 @@ class TikTokAdsConnector:
                     return row[key]
             return None
 
-        purchases = value("onsite_total_purchase", "conversion", "total_purchase")
-        purchase_value = value("onsite_total_purchase_value_day29", "conversion_value", "total_purchase_value")
+        # Website purchases must not fall back to TikTok onsite or app purchases.
+        purchases = value("complete_payment")
+        purchase_value = value("total_complete_payment_rate")
         return {
             "date": value("stat_time_day") or fallback_date.isoformat(),
             "campaign_id": value("campaign_id"),
