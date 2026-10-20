@@ -1,4 +1,5 @@
 import type { ShippingContext, ShippingInputs, ShippingParcel, ShippingResult, ShippingSettings } from "./orderShipping";
+import type { BusinessReview, ReviewEvidence, ReviewJobs, ReviewParameters } from "./businessReview";
 
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
@@ -522,6 +523,18 @@ export type ConfirmCostLine = {
 };
 
 export const api = {
+  businessReview: (payload: ReviewParameters) => request<BusinessReview>("/business-review/compare", { method: "POST", body: JSON.stringify(payload) }),
+  reviewHistory: (payload: {date_from:string; date_to:string; providers:string[]}) =>
+    request<{queued:number}>("/business-review/history", {method:"POST", body:JSON.stringify(payload)}),
+  reviewJobs: () => request<ReviewJobs>("/business-review/jobs"),
+  reviewRetry: () => request<{queued:number}>("/business-review/jobs/retry", {method:"POST"}),
+  reviewPause: () => request<{paused:number}>("/business-review/jobs/pause", {method:"POST"}),
+  reviewEvidence: (payload: ReviewEvidence) => request<{created:number}>("/business-review/events", {method:"POST", body:JSON.stringify(payload)}),
+  reviewImport: (file: File) => { const form = new FormData(); form.append("file",file);
+    return request<{created:number; duplicates:number}>("/business-review/events/import", {method:"POST",body:form}); },
+  reviewSave: (payload: ReviewParameters) => request<{id:string}>("/business-review/reports", {method:"POST",body:JSON.stringify(payload)}),
+  reviewReports: () => request<{rows:Array<{id:string;title:string;created_at:string}>}>("/business-review/reports"),
+  reviewReport: (id:string) => request<BusinessReview>(`/business-review/reports/${encodeURIComponent(id)}`),
   pendingSupplierCosts: (filters: Record<string, string>) => request<{data: PendingCostResult}>(`/suppliers/aade/pending-costs?${new URLSearchParams(filters)}`),
   confirmSupplierCostLine: (id: string, payload: ConfirmCostLine) => request<{data:{duplicate:boolean; costs_created:number; pending_lines:number}}>(
     `/suppliers/aade/invoices/${id}/confirm-line`, {method:"POST", body:JSON.stringify(payload)}),

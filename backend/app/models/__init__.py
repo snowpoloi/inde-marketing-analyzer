@@ -29,7 +29,10 @@ from app.models.entities import (
     User,
 )
 
+from app.models.business_review import ReviewEvent, ReviewJob, ReviewReport
+
 __all__ = [
+    "ReviewEvent", "ReviewJob", "ReviewReport",
     "AADEDocument",
     "AADESummaryMetric",
     "Base",

@@ -1,6 +1,7 @@
 import {
   Banknote,
   BarChart3,
+  GitCompareArrows,
   FileClock,
   Landmark,
   ListChecks,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "business-review" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -48,6 +49,9 @@ export function Layout({
             <SearchCheck size={18} />
             Audit
           </button>
+          {isAdmin ? <button className={active === "business-review" ? "active" : ""} onClick={() => onNavigate("business-review")}>
+            <GitCompareArrows size={18} />Business review
+          </button> : null}
           <button className={active === "aade" ? "active" : ""} onClick={() => onNavigate("aade")}>
             <Landmark size={18} />
             AADE

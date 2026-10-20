@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.connectors.aade import AADEConnector, AADERateLimitError
@@ -247,7 +247,22 @@ def run_provider_sync(
 ) -> SyncRun:
     if provider not in PROVIDERS:
         raise ValueError(f"Unsupported provider: {provider}")
+    # Importers commit in stages; use a dedicated connection to retain the lock.
+    # A historical import must never delete/reinsert a provider's days concurrently.
+    lock_key = 80103000 + sorted(PROVIDERS).index(provider)
+    with db.get_bind().engine.connect() as lock:
+        if not lock.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}):
+            a, b = default_sync_window()
+            run = start_run(db, provider, sync_type, date_from or a, date_to or b)
+            return finish_run(db, run, "skipped", error="Provider sync already running; retry later.",
+                              meta={"reason": "provider_busy"})
+        try:
+            return _run_provider_sync(db, provider, date_from, date_to, sync_type)
+        finally:
+            lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
 
+
+def _run_provider_sync(db, provider, date_from, date_to, sync_type):
     window_from, window_to = default_sync_window()
     date_from = date_from or window_from
     date_to = date_to or window_to
@@ -274,7 +289,7 @@ def run_provider_sync(
                     db.rollback()
                     order_error = str(exc)
             should_fetch_product_feed = bool(connector.product_feed_url)
-            if sync_type == "manual" and connector.endpoint_url and not config.get("sync_product_feed_on_manual"):
+            if sync_type == "backfill" or (sync_type == "manual" and connector.endpoint_url and not config.get("sync_product_feed_on_manual")):
                 should_fetch_product_feed = False
             if should_fetch_product_feed:
                 try:
@@ -310,7 +325,7 @@ def run_provider_sync(
             meta = search_console_sync_meta(rows)
         elif provider == "aade":
             connector_config = dict(config)
-            if sync_type == "manual":
+            if sync_type in {"manual", "backfill"}:
                 connector_config["ignore_document_cursor"] = True
             try:
                 payload = AADEConnector(connector_config).fetch_documents(date_from, date_to)
@@ -364,7 +379,7 @@ def run_provider_sync(
         if provider in {"opencart", "aade"}:
             queue_cost_refresh(db)
             meta = {**(meta or {}), "supplier_cost_refresh_queued": True}
-            if provider == "opencart":
+            if provider == "opencart" and sync_type != "backfill":
                 db.execute(update(SupplierCatalogFeed).where(SupplierCatalogFeed.is_enabled.is_(True),
                     SupplierCatalogFeed.status != "running").values(
                         requested_at=datetime.now(timezone.utc), status="queued", error=None))

@@ -1,0 +1,39 @@
+.business-review { min-width: 0; }
+.business-review .page-header { flex-wrap: wrap; gap: 12px; }
+.business-review h1 { font-size: 25px; }
+.business-review h2 { font-size: 17px; margin: 0 0 14px; }
+.business-review small { display: block; font-size: 12px; color: #606e70; overflow-wrap: anywhere; }
+.review-actions { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.review-actions button, .review-pagination button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; }
+.review-actions label, .review-form label { display: grid; gap: 6px; font-size: 13px; min-width: 0; }
+.review-actions select { max-width: 440px; }
+.review-periods { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid #d8e1df; }
+.review-periods strong { display: block; font-size: 13px; margin-bottom: 8px; }
+.review-periods > label { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.review-swap { width: 36px; height: 36px; padding: 8px; }
+.review-section { margin: 0; padding: 22px 0; border-bottom: 1px solid #d8e1df; background: transparent; box-shadow: none; border-radius: 0; }
+.review-basis { color: #5a6a70; font-size: 13px; line-height: 1.5; }
+.review-finding { border-left: 3px solid #347882; padding: 10px 14px; margin: 10px 0; background: #edf4f5; }
+.review-finding.warning { border-left-color: #ae6835; background: #fbf5ee; }
+.review-finding p { margin: 5px 0 0; }
+.review-section li { margin: 7px 0; line-height: 1.5; }
+.review-pagination { display: flex; justify-content: end; gap: 12px; align-items: center; margin-top: 12px; }
+.review-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.review-form input, .review-form select, .review-form textarea { width: 100%; min-width: 0; }
+.review-wide { grid-column: 1 / -1; }
+.review-editor { margin: 22px 0; }
+.review-editor summary { cursor: pointer; font-weight: 600; }
+.business-review pre { max-height: 300px; max-width: 650px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-upload { display: flex !important; align-items: center; flex-wrap: wrap; }
+.review-providers { display: flex; gap: 12px 20px; flex-wrap: wrap; padding: 12px 0; }
+.business-review td { vertical-align: top; max-width: 650px; overflow-wrap: anywhere; }
+.business-review td p { margin: 6px 0; }
+.business-review input[type=checkbox] { width: auto; }
+.business-review button:disabled { opacity: .55; cursor: default; }
+@media(max-width: 720px) {
+  .review-form { grid-template-columns: minmax(0, 1fr); }
+  .review-actions select { max-width: 100%; }
+  .review-periods { align-items: start; flex-direction: column; }
+  .review-swap { display: none; }
+  .business-review .view-tabs { overflow: auto; flex-wrap: nowrap; }
+}

@@ -131,3 +131,26 @@ class MetaAdsConnector:
             for window_from, window_to in self._date_windows(date_from, date_to):
                 rows.extend(self._fetch_window(client, window_from, window_to))
         return rows
+
+    def fetch_changes(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
+        if not self.access_token or not self.account_id:
+            raise ValueError("Meta Ads access_token and ad_account_id are required.")
+        url = f"https://graph.facebook.com/{self.graph_version}/act_{self.account_id}/activities"
+        params = {
+            "access_token": self.access_token, "since": date_from.isoformat(),
+            "until": (date_to + timedelta(days=1)).isoformat(), "limit": 500,
+            "fields": "event_time,event_type,actor_id,actor_name,object_id,object_name,extra_data,application_name",
+        }
+        rows, cursors = [], set()
+        with httpx.Client(timeout=self.timeout) as client:
+            while True:
+                payload = self._request(client, url, params)
+                rows.extend(payload.get("data") or [])
+                paging = payload.get("paging") or {}
+                after = (paging.get("cursors") or {}).get("after")
+                if not paging.get("next"):
+                    return rows
+                if not after or after in cursors or len(rows) >= 50000:
+                    raise ValueError("Meta activity pagination incomplete; narrow the date window.")
+                cursors.add(after)
+                params["after"] = after
