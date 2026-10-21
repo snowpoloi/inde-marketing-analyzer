@@ -16,6 +16,8 @@ services:
 
   backend:
     mem_limit: 2g
+    volumes:
+      - promotion_media:/app/promotion-media
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -98,3 +100,4 @@ services:
 
 volumes:
   pgdata:
+  promotion_media:

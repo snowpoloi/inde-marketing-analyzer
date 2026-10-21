@@ -6,6 +6,7 @@ import {
   Landmark,
   ListChecks,
   LogOut,
+  Clapperboard,
   PackageSearch,
   SearchCheck,
   Settings,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "business-review" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -51,6 +52,9 @@ export function Layout({
           </button>
           {isAdmin ? <button className={active === "business-review" ? "active" : ""} onClick={() => onNavigate("business-review")}>
             <GitCompareArrows size={18} />Business review
+          </button> : null}
+          {isAdmin ? <button className={active === "promotions" ? "active" : ""} onClick={() => onNavigate("promotions")}>
+            <Clapperboard size={18} />Προώθηση
           </button> : null}
           <button className={active === "aade" ? "active" : ""} onClick={() => onNavigate("aade")}>
             <Landmark size={18} />

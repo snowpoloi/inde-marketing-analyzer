@@ -17,14 +17,16 @@ import { TikTokCallbackPage } from "./pages/TikTokCallbackPage";
 import { RecordDetailPage } from "./pages/RecordDetailPage";
 import { DateRangeProvider } from "./components/DateRangeControls";
 import { BusinessReviewPage } from "./pages/BusinessReviewPage";
+import { PromotionsPage } from "./pages/PromotionsPage";
 
-type View = "dashboard" | "business-review" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "").split("/")[0];
   if (
     hash === "audit" ||
     hash === "business-review" ||
+    hash === "promotions" ||
     hash === "aade" ||
     hash === "banks" ||
     hash === "orders" ||
@@ -91,6 +93,7 @@ export function App() {
       {view === "dashboard" ? <DashboardPage /> : null}
       {view === "audit" ? <AuditPage /> : null}
       {view === "business-review" ? (isAdmin ? <BusinessReviewPage /> : <div className="notice">Admin access required.</div>) : null}
+      {view === "promotions" ? (isAdmin ? <PromotionsPage /> : <div className="notice">Admin access required.</div>) : null}
       {recordMatch ? <RecordDetailPage kind={view === "aade" ? "invoice" : "order"} id={recordMatch[2]} onBack={()=>navigate(view)}/> : null}
       {view === "aade" && !recordMatch ? <AadePage /> : null}
       {view === "banks" ? <BanksPage /> : null}

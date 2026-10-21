@@ -1,5 +1,6 @@
 import type { ShippingContext, ShippingInputs, ShippingParcel, ShippingResult, ShippingSettings } from "./orderShipping";
 import type { BusinessReview, ReviewEvidence, ReviewJobs, ReviewParameters } from "./businessReview";
+import type { PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionProduct, PromotionReview } from "./promotions";
 
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
@@ -523,6 +524,16 @@ export type ConfirmCostLine = {
 };
 
 export const api = {
+  promotionProducts: (date_from:string, date_to:string, search:string, minimum_margin:number, only_eligible:boolean) =>
+    request<{rows:PromotionProduct[]}>(`/promotions/products?${new URLSearchParams({date_from,date_to,search,minimum_margin:String(minimum_margin),only_eligible:String(only_eligible)})}`),
+  promotionCampaigns: () => request<{rows:PromotionCampaignSummary[]}>("/promotions/campaigns"),
+  promotionCampaign: (id:string) => request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}`),
+  promotionCreate: (payload:PromotionInput) => request<PromotionCampaign>("/promotions/campaigns",{method:"POST",body:JSON.stringify(payload)}),
+  promotionPackage: (id:string) => requestResponse(`/promotions/campaigns/${encodeURIComponent(id)}/package`).then(r=>r.blob()),
+  promotionUpload: (id:string, aspect:PromotionFormat, file:File) => { const body=new FormData(); body.append("aspect_ratio",aspect); body.append("file",file);
+    return request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/assets`,{method:"POST",body}); },
+  promotionMedia: (id:string) => requestResponse(`/promotions/assets/${encodeURIComponent(id)}/content`).then(r=>r.blob()),
+  promotionApprove: (id:string,payload:PromotionReview) => request<PromotionCampaign>(`/promotions/assets/${encodeURIComponent(id)}/approve`,{method:"POST",body:JSON.stringify(payload)}),
   businessReview: (payload: ReviewParameters) => request<BusinessReview>("/business-review/compare", { method: "POST", body: JSON.stringify(payload) }),
   reviewHistory: (payload: {date_from:string; date_to:string; providers:string[]}) =>
     request<{queued:number}>("/business-review/history", {method:"POST", body:JSON.stringify(payload)}),

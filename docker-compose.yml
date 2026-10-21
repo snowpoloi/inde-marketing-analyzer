@@ -15,6 +15,8 @@ services:
       retries: 5
 
   backend:
+    volumes:
+      - promotion_media:/app/promotion-media
     mem_limit: 2g
     build:
       context: .
@@ -98,3 +100,4 @@ services:
 
 volumes:
   pgdata:
+  promotion_media:

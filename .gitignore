@@ -10,3 +10,4 @@ pgdata/
 .test-postgres/
 .test-gmail-postgres/
 test-results/
+promotion-media/
