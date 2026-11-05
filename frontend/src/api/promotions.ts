@@ -25,7 +25,7 @@ export type PromotionRender = {id:string; status:"queued"|"running"|"success"|"f
   prices:Record<string,string>; error:string|null; soundtrack_id:string|null};
 export type PromotionSoundtrack = {id:string; title:string; artist:string; genre:string; license:string};
 export type PromotionPriceCheck = {rows:Array<{sku:string; name:string; price_gross:string; image_url:string; gallery:string[]}>;
-  checked_at:string; soundtracks:PromotionSoundtrack[]};
+  checked_at:string; soundtracks:PromotionSoundtrack[]; max_photos:number};
 export type PromotionCampaign = PromotionCampaignSummary & {updated_at:string; brief:PromotionBrief; assets:PromotionAsset[];
   render:PromotionRender|null};
 export type PromotionReview = {product_identity:boolean; cta_and_text:boolean; image_and_audio_rights:boolean; platform_format:boolean};

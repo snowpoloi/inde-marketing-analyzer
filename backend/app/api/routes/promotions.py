@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import PromotionAsset, PromotionCampaign, PromotionRenderJob, User
 from app.schemas.promotions import Aspect, PromotionInput, PromotionRenderInput, PromotionReview
+from app.services.promotion_creative import photo_capacity
 from app.services.promotion_music import music_catalog, track_path
 from app.services.promotion_render import CENT, MAX_VIDEO_BYTES, RenderError, inde_client, inde_url, live_products
 from app.services.promotion_render_jobs import ACTIVE_RENDER
@@ -102,7 +103,8 @@ def render_prices(campaign_id: UUID, user: User = Depends(require_admin), db: Se
     except RenderError as exc:
         raise HTTPException(422, detail=str(exc)) from None
     return {"rows": [{k: row[k] for k in ("sku", "name", "price_gross", "image_url", "gallery")} for row in rows],
-            "checked_at": datetime.now(timezone.utc), "soundtracks": music_catalog()}
+            "checked_at": datetime.now(timezone.utc), "soundtracks": music_catalog(),
+            "max_photos": photo_capacity(brief["parameters"]["duration"])}
 
 
 @router.post("/campaigns/{campaign_id}/render", status_code=202)
@@ -114,6 +116,9 @@ def queue_render(campaign_id: UUID, payload: PromotionRenderInput, user: User = 
         raise HTTPException(422, detail="Δεν επιβεβαιώθηκαν οι τιμές για όλα τα προϊόντα και την αναλογία.")
     if any(not inde_url(url, image=True) for urls in payload.photo_selections.values() for url in urls):
         raise HTTPException(422, detail="Επίλεξε φωτογραφίες από τη συλλογή της INDE.")
+    duration = campaign.brief["parameters"]["duration"]
+    if sum(map(len, payload.photo_selections.values())) > photo_capacity(duration):
+        raise HTTPException(422, detail="Οι φωτογραφίες δεν χωρούν στη διάρκεια του βίντεο. Επίλεξε λιγότερες.")
     if payload.soundtrack_id is not None and not track_path(payload.soundtrack_id):
         raise HTTPException(422, detail="Επίλεξε διαθέσιμο κομμάτι από τη βιβλιοθήκη μουσικής.")
     if db.scalar(select(PromotionRenderJob.id).where(PromotionRenderJob.campaign_id == campaign_id,

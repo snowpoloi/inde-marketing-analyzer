@@ -43,7 +43,7 @@ class PromotionRenderInput(BaseModel):
     soundtrack_id: str | None = Field(default=None, min_length=1, max_length=64)
     prices: dict[str, Decimal] = Field(min_length=1, max_length=3)
     photo_selections: dict[str, Annotated[list[Annotated[str, Field(min_length=1, max_length=2048)]],
-                                         Field(min_length=1, max_length=2)]] = Field(default_factory=dict, max_length=3)
+                                         Field(min_length=1)]] = Field(default_factory=dict, max_length=3)
 
     @model_validator(mode="after")
     def validate_prices(self):
@@ -52,5 +52,5 @@ class PromotionRenderInput(BaseModel):
             raise ValueError("Invalid confirmed product prices.")
         if self.photo_selections and (set(self.photo_selections) != set(self.prices) or any(
                 len(set(urls)) != len(urls) for urls in self.photo_selections.values())):
-            raise ValueError("Choose one or two distinct photos per product.")
+            raise ValueError("Choose at least one distinct photo per product.")
         return self

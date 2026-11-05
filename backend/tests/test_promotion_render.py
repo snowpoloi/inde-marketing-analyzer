@@ -13,13 +13,14 @@ from app.api.routes import promotions
 from app.models import PromotionAsset
 from app.services import promotion_render as render
 from app.services import promotion_render_jobs as jobs
-from app.services.promotion_creative import FPS, Beat, creative_frame, timeline
+from app.services.promotion_creative import FPS, MIN_PHOTO_FRAMES, Beat, creative_frame, photo_capacity, timeline
 from app.services.promotion_music import TRACKS, sync_cuts, track_path
 from app.services.promotion_service import END_CARD, FORMATS, end_card
 from test_promotions import client, parameters, product, user
 
 PHOTO = "https://inde.gr/image/catalog/chair.jpg"
 PHOTO_TWO = "https://inde.gr/image/catalog/chair-in-room.jpg"
+MORE_PHOTOS = [f"https://inde.gr/image/catalog/chair-{number}.jpg" for number in range(3, 28)]
 
 
 def offer_html(price="19.50", sku="SKU-1", **overrides):
@@ -35,7 +36,7 @@ def storefront(price="19.50"):
 
 
 def gallery_storefront():
-    urls = [PHOTO, PHOTO_TWO, PHOTO, "https://other.test/image/unknown.jpg"]
+    urls = [PHOTO, PHOTO_TWO, PHOTO, *MORE_PHOTOS, "https://other.test/image/unknown.jpg"]
     data = escape(json.dumps([{"src": url} for url in urls]), quote=True)
     body = offer_html() + f'<div class="lightgallery lightgallery-product-images" data-images="{data}"></div>'.encode()
     return httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=body)))
@@ -116,7 +117,7 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
 
     def encode(_, brief, products, ratio, folder, *, soundtrack_id):
         assert products[0]["price_gross"] == "19.50"
-        assert products[0]["selected_images"] == [PHOTO_TWO, PHOTO]
+        assert products[0]["selected_images"] == [PHOTO_TWO, *MORE_PHOTOS[:2], PHOTO]
         assert soundtrack_id == "sleepless"
         target = folder / "render.mp4"
         target.write_bytes(b"\x00\x00\x00\x20ftypisom")
@@ -126,7 +127,8 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
     with client(db, person) as http:
         base = f"/api/promotions/campaigns/{make_campaign(http, p)}"
         quote = http.get(f"{base}/render-prices").json()
-        assert quote["rows"][0]["gallery"] == [PHOTO, PHOTO_TWO]
+        assert quote["rows"][0]["gallery"] == [PHOTO, PHOTO_TWO, *MORE_PHOTOS]
+        assert quote["max_photos"] == photo_capacity(15)
         assert len(quote["soundtracks"]) == 15
         preview = http.get("/api/promotions/soundtracks/sleepless")
         assert preview.headers["content-type"] == "audio/mpeg"
@@ -136,6 +138,7 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
             assert unauthenticated.get("/api/promotions/soundtracks/sleepless").status_code == 401
         body = {"aspect_ratio": "9:16", "prices": {p.sku: "19.50"}}
         assert http.post(f"{base}/render", json={**body, "soundtrack_id": "unknown"}).status_code == 422
+        assert http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: MORE_PHOTOS}}).status_code == 422
         for photos in ([PHOTO, PHOTO], ["https://external.test/image/chair.jpg"]):
             assert http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: photos}}).status_code == 422
         unknown = "https://inde.gr/image/catalog/different-product.jpg"
@@ -143,7 +146,7 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
         jobs._process_locked(db)
         assert http.get(base).json()["render"]["status"] == "failed"
         base = f"/api/promotions/campaigns/{make_campaign(http, p)}"
-        queued = http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: [PHOTO_TWO, PHOTO]},
+        queued = http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: [PHOTO_TWO, *MORE_PHOTOS[:2], PHOTO]},
                                                    "soundtrack_id": "sleepless"}).json()
         jobs._process_locked(db)
         row = http.get(base).json()
@@ -176,6 +179,19 @@ def test_two_selected_photos_fit_even_the_short_editorial_cut():
         assert [beat.photo for beat in beats if beat.kind in {"product", "detail"} and beat.product == product] == [0, 1]
 
 
+@pytest.mark.parametrize("duration", [15, 30])
+def test_maximum_photo_montage_keeps_all_photos_even_after_sync(duration):
+    counts = [photo_capacity(duration) - 5, 4, 1]
+    beats = timeline(duration, 3, "cinematic", counts)
+    beats = sync_cuts(beats, TRACKS["sleepless"]["accent_frames"])
+    assert sum(beat.frames for beat in beats) == duration * FPS
+    assert min(beat.frames for beat in beats) >= MIN_PHOTO_FRAMES
+    assert beats[-1].frames >= 3 * FPS
+    assert [(b.product, b.photo) for b in beats[1:-2]] == [
+        (product, photo) for product, count in enumerate(counts) for photo in range(count)
+    ]
+
+
 def test_music_library_has_distinct_licensed_tracks_and_preserves_duration():
     assert len(TRACKS) == 15
     checksums = {sha256(track_path(track_id).read_bytes()).hexdigest() for track_id in TRACKS}
@@ -201,10 +217,8 @@ def test_room_photo_fills_shot_but_white_background_product_stays_whole(ratio):
     floor = (150, 112, 88)
     ImageDraw.Draw(room).rectangle((0, 200, 399, 399), fill=floor)
     products = [{"name": "Lamp", "price_gross": "19.50"}]
-    photos = [[room, studio]]
-
-    _, (room_frame, _, _), _ = creative_frame(Beat("product", 45), photos, products, {}, ratio)
-    _, (studio_frame, _, _), _ = creative_frame(Beat("detail", 45, photo=1), photos, products, {}, ratio)
+    _, (room_frame, _, _), _ = creative_frame(Beat("product", 45), room, products, {}, ratio)
+    _, (studio_frame, _, _), _ = creative_frame(Beat("detail", 45, photo=1), studio, products, {}, ratio)
 
     assert room_frame.getpixel((0, room_frame.height - 1)) == floor
     assert room_frame.getpixel((room_frame.width - 1, room_frame.height - 1)) == floor
@@ -235,7 +249,7 @@ def test_ffmpeg_renders_full_product_video_and_final_card(ratio, duration, count
         with Image.open(io.BytesIO(frame)) as decoded:
             return decoded.convert("RGB")
 
-    _, _, (stamp, x, y) = creative_frame(Beat("product", 45), [[photo]] * count, products, brief["parameters"], ratio)
+    _, _, (stamp, x, y) = creative_frame(Beat("product", 45), photo, products, brief["parameters"], ratio)
     stamp_area = (x, y, x + stamp.width, y + stamp.height)
     beats = timeline(duration, count, "cinematic")
     if track_id:
@@ -250,3 +264,29 @@ def test_ffmpeg_renders_full_product_video_and_final_card(ratio, duration, count
         decoded = frame_at(time)
         assert decoded.size == (FORMATS[ratio]["width"], FORMATS[ratio]["height"])
         assert max(ImageStat.Stat(ImageChops.difference(expected, decoded)).mean) < 4
+
+
+def test_batched_render_shows_each_selected_photo_in_order(tmp_path, monkeypatch):
+    ffmpeg = shutil.which(render.settings.promotion_ffmpeg_path)
+    if not ffmpeg:
+        pytest.skip("Install FFmpeg or set PROMOTION_FFMPEG_PATH.")
+    colors = [(45 + i * 14, 80, 135 - i * 7) for i in range(12)]
+    urls = MORE_PHOTOS[:len(colors)]
+    monkeypatch.setattr(render, "product_photo", lambda _, url: Image.new("RGB", (150, 150), colors[urls.index(url)]))
+    products = [{"name": "Lamp", "price_gross": "19.50", "image_url": urls[0], "selected_images": urls}]
+    brief = {"parameters": {"duration": 15, "cta": "inde.gr", "hook": "INDE", "style": "cinematic"}}
+    track_id = "sleepless"
+    beats = sync_cuts(timeline(15, 1, "cinematic", [len(urls)]), TRACKS[track_id]["accent_frames"])
+    video = render.render_video(None, brief, products, "9:16", tmp_path, soundtrack_id=track_id)
+    cut_frames, elapsed = [], 0
+    for beat in beats:
+        if beat.kind in {"product", "detail", "offer"}:
+            cut_frames.append(elapsed + beat.frames // 2)
+        elapsed += beat.frames
+    expression = "+".join(f"eq(n,{n})" for n in cut_frames)
+    pixels = subprocess.check_output([ffmpeg, "-v", "error", "-i", str(video), "-vf",
+                                      f"select='{expression}',crop=2:2:540:650",
+                                      "-fps_mode", "passthrough", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+    assert len(pixels) == 12 * len(colors)
+    for expected, frame in zip(colors, range(len(colors))):
+        assert max(abs(actual - channel) for actual, channel in zip(pixels[12*frame:12*frame+3], expected)) <= 6

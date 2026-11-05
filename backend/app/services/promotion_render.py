@@ -3,8 +3,10 @@ import io
 import json
 import subprocess
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import monotonic
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
@@ -12,12 +14,13 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
-from app.services.promotion_creative import FPS, PLUM, STAMP_LAND, creative_frame, price_text, soundtrack, timeline
+from app.services.promotion_creative import FPS, PLUM, STAMP_LAND, creative_frame, photo_capacity, price_text, soundtrack, timeline
 from app.services.promotion_music import TRACKS, sync_cuts, track_path
 from app.services.promotion_service import end_card
 
 CENT = Decimal("0.01")
 MAX_VIDEO_BYTES = 64 * 1024 * 1024
+SCENES_PER_BATCH = 8
 
 
 class RenderError(ValueError):
@@ -160,7 +163,7 @@ def live_products(client, brief):
         photo = photo or inde_url(product["image_url"], image=True)
         gallery = list(dict.fromkeys(
             url for url in parser.gallery if isinstance(url, str) and len(url) <= 2048 and inde_url(url, image=True)
-        ))[:24]
+        ))
         if not gallery and photo:
             gallery = [photo]
         if not gallery:
@@ -181,21 +184,14 @@ def product_photo(client, url):
         with Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"]) as photo:
             if photo.width * photo.height > 16_000_000:
                 raise RenderError("Η φωτογραφία ξεπερνά το όριο ανάλυσης.")
-            return ImageOps.exif_transpose(photo).convert("RGB")
+            image = ImageOps.exif_transpose(photo)
+            image.thumbnail((1920, 1920), Image.Resampling.LANCZOS)
+            return image.convert("RGB")
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
         raise RenderError("Η φωτογραφία προϊόντος δεν μπόρεσε να διαβαστεί.") from None
 
 
-def render_video(client, brief, products, ratio, folder: Path, *, soundtrack_id=None):
-    parameters = brief["parameters"]
-    music = track_path(soundtrack_id)
-    if soundtrack_id is not None and music is None:
-        raise RenderError("Το επιλεγμένο κομμάτι δεν είναι διαθέσιμο.")
-    photos = [[product_photo(client, url) for url in product.get("selected_images", [product["image_url"]])]
-              for product in products]
-    beats = timeline(parameters["duration"], len(products), parameters["style"], [len(group) for group in photos])
-    if music:
-        beats = sync_cuts(beats, TRACKS[soundtrack_id]["accent_frames"])
+def scene_graph(beats, frame_for, folder):
     inputs, filters = [], []
 
     def still(frame, label, frames):
@@ -208,8 +204,14 @@ def render_video(client, brief, products, ratio, folder: Path, *, soundtrack_id=
                        f"setsar=1,format={pixel_format}[{label}]")
 
     for i, beat in enumerate(beats):
-        frame, layer, stamp = (end_card(ratio), None, None) if beat.kind == "end" else creative_frame(
-            beat, photos, products, parameters, ratio)
+        frame, layer, stamp = frame_for(beat)
+        if stamp and beat.frames < 24:
+            # Short photo cuts show the whole image and price from the first frame.
+            photo, x, y = layer
+            frame.paste(photo, (x, y))
+            art, x, y = stamp
+            frame.paste(art, (x, y), art)
+            layer = stamp = None
         still(frame, f"base{i}" if layer else f"v{i}", beat.frames)
         if layer:
             photo, x, y = layer
@@ -234,23 +236,65 @@ def render_video(client, brief, products, ratio, folder: Path, *, soundtrack_id=
             rebound = f"8*max(0,1-abs(t-{STAMP_LAND + 1 / FPS:.6f})*{FPS})"
             filters.append(f"[shot{i}][stamp{i}]overlay={x}:y='{y}-{fall}+{rebound}':"
                            f"enable='gte(t,0.06)':shortest=1[v{i}]")
-    audio_input = len(inputs) // 4
-    audio_filters = []
-    if music:
-        inputs.extend(["-i", str(music)])
-        audio_filters = ["-af", f"afade=t=out:st={parameters['duration'] - 0.7}:d=0.7"]
-    else:
-        inputs.extend(["-f", "lavfi", "-i", soundtrack(beats)])
     filters.append("".join(f"[v{i}]" for i in range(len(beats)))
                    + f"concat=n={len(beats)}:v=1:a=0,settb=1/{FPS},setpts=N[video]")
+    return inputs, ["-filter_complex", ";".join(filters), "-map", "[video]"]
+
+
+def render_video(client, brief, products, ratio, folder: Path, *, soundtrack_id=None):
+    parameters = brief["parameters"]
+    duration = parameters["duration"]
+    music = track_path(soundtrack_id)
+    if soundtrack_id is not None and music is None:
+        raise RenderError("Το επιλεγμένο κομμάτι δεν είναι διαθέσιμο.")
+    urls = [product.get("selected_images", [product["image_url"]]) for product in products]
+    photo_counts = [len(group) for group in urls]
+    if sum(photo_counts) > photo_capacity(duration):
+        raise RenderError("Οι φωτογραφίες δεν χωρούν στη διάρκεια του βίντεο.")
+    beats = timeline(duration, len(products), parameters["style"], photo_counts)
+    if music:
+        beats = sync_cuts(beats, TRACKS[soundtrack_id]["accent_frames"])
+
+    deadline = monotonic() + 240
+    load_photo = lru_cache(maxsize=4)(lambda url: product_photo(client, url))
+
+    def frame_for(beat):
+        if monotonic() >= deadline:
+            raise RenderError("Η δημιουργία βίντεο άργησε. Δοκίμασε λιγότερες φωτογραφίες.")
+        if beat.kind == "end":
+            return end_card(ratio), None, None
+        return creative_frame(beat, load_photo(urls[beat.product][beat.photo]), products, parameters, ratio)
+
+    def run(*args):
+        subprocess.run([settings.promotion_ffmpeg_path, "-nostdin", "-v", "error", "-filter_complex_threads", "1",
+                        *args], check=True, capture_output=True, timeout=max(0.1, deadline - monotonic()))
+
+    audio_input = ["-i", str(music)] if music else ["-f", "lavfi", "-i", soundtrack(beats)]
+    audio_filters = ["-af", f"afade=t=out:st={duration - 0.7}:d=0.7"] if music else []
+    audio_encode = [*audio_filters, "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-t", str(duration),
+                    "-movflags", "+faststart"]
+    video_encode = ["-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "20",
+                    "-pix_fmt", "yuv420p", "-r", str(FPS)]
     target = folder / "render.mp4"
     try:
-        subprocess.run([settings.promotion_ffmpeg_path, "-nostdin", "-v", "error", "-filter_complex_threads", "1",
-                        *inputs, "-filter_complex", ";".join(filters), "-map", "[video]", "-map", f"{audio_input}:a",
-                        *audio_filters, "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-c:v", "libx264",
-                        "-threads", "2", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-                        "-r", str(FPS), "-t", str(parameters["duration"]), "-movflags", "+faststart", str(target)],
-                       check=True, capture_output=True, timeout=150)
+        if len(beats) <= SCENES_PER_BATCH:
+            inputs, graph = scene_graph(beats, frame_for, folder)
+            run(*inputs, *audio_input, *graph, "-map", f"{len(inputs) // 4}:a",
+                *video_encode, *audio_encode, str(target))
+        else:
+            # Bound decoder memory and input count independently of the number of photos.
+            segments = []
+            for index in range(0, len(beats), SCENES_PER_BATCH):
+                batch = beats[index:index + SCENES_PER_BATCH]
+                segment = folder / f"segment-{index}.mp4"
+                with TemporaryDirectory(dir=folder) as stills:
+                    inputs, graph = scene_graph(batch, frame_for, Path(stills))
+                    run(*inputs, *graph, *video_encode, "-an", str(segment))
+                segments.extend([f"file {segment.name}", f"duration {sum(beat.frames for beat in batch) / FPS:.6f}"])
+            playlist = folder / "segments.ffconcat"
+            playlist.write_text("ffconcat version 1.0\n" + "\n".join(segments) + "\n", encoding="ascii")
+            run("-f", "concat", "-safe", "1", "-i", str(playlist), *audio_input, "-map", "0:v", "-map", "1:a",
+                "-c:v", "copy", *audio_encode, str(target))
     except (OSError, subprocess.SubprocessError):
         raise RenderError("Η εξαγωγή MP4 απέτυχε. Δοκίμασε ξανά.") from None
     if not target.is_file() or not 0 < target.stat().st_size <= MAX_VIDEO_BYTES:

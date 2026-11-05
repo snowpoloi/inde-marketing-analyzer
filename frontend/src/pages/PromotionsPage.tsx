@@ -148,7 +148,7 @@ export function PromotionsPage() {
   function togglePhoto(sku:string,url:string) {
     setPhotoSelections(previous=>{
       const current=previous[sku]||[];
-      if(!current.includes(url)&&current.length===2) return previous;
+      if(!current.includes(url)&&Object.values(previous).reduce((total, photos)=>total+photos.length,0)>=(priceCheck?.max_photos??0)) return previous;
       return {...previous,[sku]:current.includes(url)?current.filter(photo=>photo!==url):[...current,url]};
     });
   }
@@ -158,6 +158,7 @@ export function PromotionsPage() {
   const variant=campaign?.brief.variants.find(v=>v.aspect_ratio===activeFormat);
   const currentAsset=campaign?.assets.find(a=>a.id===media?.id);
   const selectedSoundtrack=priceCheck?.soundtracks.find(track=>track.id===soundtrackId);
+  const photoCount=Object.values(photoSelections).reduce((total, photos)=>total+photos.length,0);
 
   return <div className="page-stack promotions-page">
     <header className="page-header"><div><h1>Προώθηση</h1></div>
@@ -251,8 +252,8 @@ export function PromotionsPage() {
                 return <div className="promotion-photo-choice" key={row.sku}>
                   <div className="promotion-photo-title"><strong>{row.name}</strong><span>{money(Number(row.price_gross))}</span></div>
                   <div className="promotion-photo-tools">
-                    <span>Λήψεις {chosen.length}/2</span>
-                    {chosen.length===2?<button className="icon-button" disabled={busy}
+                    <span>Λήψεις: {chosen.length}</span>
+                    {chosen.length>1?<button className="icon-button" disabled={busy}
                       title="Αντιστροφή σειράς" aria-label={`Αντιστροφή σειράς ${row.sku}`}
                       onClick={()=>setPhotoSelections(previous=>({...previous,[row.sku]:[...previous[row.sku]].reverse()}))}>
                       <ArrowLeftRight size={15}/>
@@ -263,7 +264,7 @@ export function PromotionsPage() {
                       const order=chosen.indexOf(url)+1;
                       return <button type="button" key={url} className="promotion-photo-option" aria-pressed={order>0}
                         aria-label={`Φωτογραφία ${index+1}${order?`, λήψη ${order}`:""}`}
-                        disabled={busy||(!order&&chosen.length===2)} onClick={()=>togglePhoto(row.sku,url)}>
+                        disabled={busy||(!order&&photoCount>=priceCheck.max_photos)} onClick={()=>togglePhoto(row.sku,url)}>
                         <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer"/>
                         {order?<span aria-hidden="true">{order}</span>:null}
                       </button>;
@@ -271,6 +272,7 @@ export function PromotionsPage() {
                   </div>
                 </div>;
               })}
+              <p>Σύνολο λήψεων: {photoCount}/{priceCheck.max_photos} · {campaign.brief.parameters.duration}″</p>
               <div className="promotion-soundtrack">
                 <label htmlFor="promotion-soundtrack">Μουσική</label>
                 <div className="promotion-soundtrack-picker">

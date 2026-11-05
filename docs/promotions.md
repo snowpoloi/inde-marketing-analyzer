@@ -14,12 +14,13 @@ publish ads or spend advertising budget. Higgsfield remains an optional external
 2. Choose direction, formats, duration, hook, and CTA; save the campaign in PostgreSQL.
    Products, photos, prices, and source timestamps are snapshotted. No AI has run yet.
 3. Open the campaign, choose an aspect ratio and click **Δημιουργία βίντεο**. Choose
-   one or two ordered photos from each product's INDE gallery, audition and select a soundtrack,
+   one or more ordered photos from each product's INDE gallery, audition and select a soundtrack,
    and confirm the VAT-inclusive EUR offers read for the exact SKUs. The worker rechecks prices and photo membership
    before rendering. A changed price or a removed selection stops the job.
 4. The local render uses INDE plum and white for graphics, a hook with an animated photo
-   reveal, an animated stamp with the confirmed retail price, then the saved CTA. If two
-   photos were selected for a product, the second shot uses the second photo instead of a crop.
+   reveal, an animated stamp with the confirmed retail price, then the saved CTA. Every selected
+   photo appears in order. The total allowance depends on duration (22 for 15 s, 60 for 30 s),
+   with brief cuts holding both image and price from the first frame.
    Image changes can move to nearby musical accents. The supplied purple INDE card stays visible
    for at least three seconds without cropping
    its contents. The MP4 appears for review and download in the campaign.

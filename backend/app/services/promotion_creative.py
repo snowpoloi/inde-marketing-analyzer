@@ -9,6 +9,10 @@ from app.services.promotion_service import FORMATS, font
 
 FPS = 30
 STAMP_LAND = 7 / FPS
+OPENING_FRAMES = 45
+ACTION_FRAMES = 45
+ENDING_FRAMES = 90
+MIN_PHOTO_FRAMES = 12
 PLUM = "#4a2d57"
 WHITE = "#ffffff"
 
@@ -21,20 +25,27 @@ class Beat:
     photo: int = 0
 
 
+def photo_capacity(duration):
+    return (duration * FPS - OPENING_FRAMES - ACTION_FRAMES - ENDING_FRAMES) // MIN_PHOTO_FRAMES
+
+
 def timeline(duration, count, style, photo_counts=None):
-    opening, action, ending = 45, 45, 90
     photo_counts = photo_counts or [1] * count
+    if sum(photo_counts) > photo_capacity(duration):
+        raise ValueError("Too many photos for the selected video duration.")
     passes = min(3, 6 // count)
     if style == "editorial" and duration == 15:
         passes -= 1
+    while sum(max(photos, passes) for photos in photo_counts) > photo_capacity(duration):
+        passes -= 1
     shots = [(product, shot) for product, photos in enumerate(photo_counts)
              for shot in range(max(photos, passes))]
-    frames, remainder = divmod(duration * FPS - opening - action - ending, len(shots))
-    beats = [Beat("hook", opening)]
+    frames, remainder = divmod(duration * FPS - OPENING_FRAMES - ACTION_FRAMES - ENDING_FRAMES, len(shots))
+    beats = [Beat("hook", OPENING_FRAMES)]
     for i, (product, shot) in enumerate(shots):
-        kind = ("product", "detail", "offer")[shot]
+        kind = "product" if shot == 0 else "detail" if shot % 2 else "offer"
         beats.append(Beat(kind, frames + int(i < remainder), product, shot % photo_counts[product]))
-    return [*beats, Beat("cta", action), Beat("end", ending)]
+    return [*beats, Beat("cta", ACTION_FRAMES), Beat("end", ENDING_FRAMES)]
 
 
 def price_text(value):
@@ -118,7 +129,7 @@ def price_stamp(value, *, wide=False):
     return stamp.rotate(4, resample=Image.Resampling.BICUBIC, expand=True)
 
 
-def creative_frame(beat, photos, products, parameters, ratio):
+def creative_frame(beat, photo, products, parameters, ratio):
     """Compose a shot and its separately animated photo and price stamp."""
     w, h = (FORMATS[ratio][key] for key in ("width", "height"))
     vertical, wide = ratio == "9:16", ratio == "16:9"
@@ -130,7 +141,6 @@ def creative_frame(beat, photos, products, parameters, ratio):
     draw.line((margin, top + 48, w - margin, top + 48), fill=WHITE, width=2)
 
     if beat.kind in {"hook", "cta"}:
-        lead = photos[0][0]
         line = parameters["hook"] if beat.kind == "hook" else parameters["cta"]
         if beat.kind == "hook" and line == "Ο χώρος σου, αλλιώς.":
             line = "Μια κίνηση αλλάζει τον χώρο."
@@ -145,10 +155,9 @@ def creative_frame(beat, photos, products, parameters, ratio):
         else:
             headline(draw, line, margin, 207, w - 2 * margin, 85, WHITE, 2, serif=True)
             xy, size = (295, 425), (490, 568)
-        return canvas, (photo_plate(lead, size, aperture=True), *xy), None
+        return canvas, (photo_plate(photo, size, aperture=True), *xy), None
 
     product = products[beat.product]
-    photo = photos[beat.product][beat.photo]
     studio = has_white_background(photo)
     draw.text((w - margin - (40 if vertical else 0), top), f"{beat.product + 1:02d} / {len(products):02d}",
               font=display_font(25), fill=WHITE, anchor="rt")

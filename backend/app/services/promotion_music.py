@@ -25,7 +25,10 @@ def sync_cuts(beats, accents):
     total = boundaries[-1]
     for i in range(1, len(beats)):
         original = boundaries[i]
+        left = boundaries[i - 1] + min(12, beats[i - 1].frames)
+        right = boundaries[i + 1] - min(12, beats[i].frames)
         eligible = (frame for frame in accents if abs(frame - original) <= 9
+                    and left <= frame <= right
                     and (beats[i].kind != "end" or frame <= total - beats[i].frames))
         boundaries[i] = min(eligible, key=lambda frame: abs(frame - original), default=original)
     return [replace(beat, frames=end - start) for beat, start, end in zip(beats, boundaries, boundaries[1:])]
