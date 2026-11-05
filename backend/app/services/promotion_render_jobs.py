@@ -38,6 +38,7 @@ def _process_locked(db):
         return
     job.status, job.started_at = "running", now
     job_id, campaign_id, ratio, prices = job.id, job.campaign_id, job.aspect_ratio, job.prices
+    photo_selections = job.photo_selections
     campaign = db.get(PromotionCampaign, campaign_id)
     brief, queued_at = campaign.brief, job.created_at
     db.commit()
@@ -52,6 +53,11 @@ def _process_locked(db):
             products = live_products(client, brief)
             if {p["sku"]: p["price_gross"] for p in products} != prices:
                 raise RenderError("Η τιμή άλλαξε στην INDE. Έλεγξε ξανά την τιμή πριν τη δημιουργία.")
+            for product in products:
+                chosen = photo_selections.get(product["sku"], [product["image_url"]])
+                if not all(url in product["gallery"] for url in chosen):
+                    raise RenderError("Μια επιλεγμένη φωτογραφία δεν υπάρχει πια στη συλλογή του προϊόντος. Επίλεξε ξανά.")
+                product["selected_images"] = chosen
             video = render_video(client, brief, products, ratio, Path(work))
             with video.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()

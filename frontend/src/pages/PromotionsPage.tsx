@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, Clapperboard, Copy, Download, ExternalLink, Film, Loader2, Play, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Check, Clapperboard, Copy, Download, ExternalLink, Film, Loader2, Play, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { api } from "../api/client";
 import type { PromotionAsset, PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionPriceCheck, PromotionProduct, PromotionReview } from "../api/promotions";
 import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
@@ -40,6 +40,7 @@ export function PromotionsPage() {
   const [uploadFormat,setUploadFormat]=useState<PromotionFormat>("9:16");
   const [mediaError,setMediaError]=useState(false);
   const [priceCheck,setPriceCheck]=useState<PromotionPriceCheck|null>(null);
+  const [photoSelections,setPhotoSelections]=useState<Record<string,string[]>>({});
   const [brandCard,setBrandCard]=useState<string|null>(null);
   const requestSequence=useRef(0);
   const historySequence=useRef(0);
@@ -95,7 +96,7 @@ export function PromotionsPage() {
   }
   function showCampaign(next:PromotionCampaign) {
     setCampaign(next);setActiveFormat(next.brief.parameters.formats[0]);setUploadFormat(next.brief.parameters.formats[0]);
-    setMedia(null);setReview({...emptyReview});setMediaError(false);setPriceCheck(null);
+    setMedia(null);setReview({...emptyReview});setMediaError(false);setPriceCheck(null);setPhotoSelections({});
   }
   async function openCampaign(id:string) {
     const sequence=++historySequence.current;
@@ -113,11 +114,25 @@ export function PromotionsPage() {
       setReview({...emptyReview});setMediaError(false);});
   }
   async function startRender() {
-    if(!campaign||!priceCheck) return;
+    if(!campaign||!priceCheck||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)) return;
     await action(async()=>{
       const prices=Object.fromEntries(priceCheck.rows.map(row=>[row.sku,row.price_gross]));
-      setCampaign(await api.promotionRender(campaign.id,activeFormat,prices));
+      setCampaign(await api.promotionRender(campaign.id,activeFormat,prices,photoSelections));
       setPriceCheck(null);
+    });
+  }
+  async function prepareRender(id:string) {
+    await action(async()=>{
+      const quote=await api.promotionRenderPrices(id);
+      setPhotoSelections(Object.fromEntries(quote.rows.map(row=>[row.sku,[row.image_url]])));
+      setPriceCheck(quote);
+    });
+  }
+  function togglePhoto(sku:string,url:string) {
+    setPhotoSelections(previous=>{
+      const current=previous[sku]||[];
+      if(!current.includes(url)&&current.length===2) return previous;
+      return {...previous,[sku]:current.includes(url)?current.filter(photo=>photo!==url):[...current,url]};
     });
   }
   async function copy(value:string) {
@@ -205,20 +220,41 @@ export function PromotionsPage() {
           <div className="promotion-section-heading"><h2>Τελικά βίντεο</h2><span>{campaign.assets.length}</span></div>
           <div className="promotion-render">
             <button className="primary-action" disabled={busy||renderPending||Boolean(priceCheck)}
-              onClick={()=>void action(async()=>setPriceCheck(await api.promotionRenderPrices(campaign.id)))}>
+              onClick={()=>void prepareRender(campaign.id)}>
               {renderPending?<Loader2 size={17} className="promotion-spin"/>:<Clapperboard size={17}/>}Δημιουργία βίντεο
             </button>
             {renderPending?<p role="status">{campaign.render?.status==="queued"?"Σε αναμονή":"Δημιουργία MP4"} · {campaign.render?.aspect_ratio}</p>:null}
             {campaign.render?.status==="failed"?<p role="alert" className="promotion-warning">{campaign.render.error}</p>:null}
             {campaign.render?.status==="success"?<p role="status">Έτοιμο για έλεγχο · {campaign.render.aspect_ratio}</p>:null}
             {priceCheck?<section className="promotion-price-check" aria-label="Επιβεβαίωση τιμών INDE">
-              <div className="promotion-section-heading"><h3>Τιμές INDE με ΦΠΑ</h3><span>{activeFormat}</span></div>
-              {priceCheck.rows.map(row=><div className="promotion-price-row" key={row.sku}>
-                <img src={row.image_url} alt="" referrerPolicy="no-referrer"/><span>{row.name}</span>
-                <strong>{money(Number(row.price_gross))}</strong>
-              </div>)}
-              <button className="primary-action" disabled={busy||renderPending} onClick={()=>void startRender()}>
-                <Check size={16}/>Επιβεβαίωση τιμών
+              <div className="promotion-section-heading"><h3>Φωτογραφίες &amp; τιμές με ΦΠΑ</h3><span>{activeFormat}</span></div>
+              {priceCheck.rows.map(row=>{
+                const chosen=photoSelections[row.sku]||[];
+                return <div className="promotion-photo-choice" key={row.sku}>
+                  <div className="promotion-photo-title"><strong>{row.name}</strong><span>{money(Number(row.price_gross))}</span></div>
+                  <div className="promotion-photo-tools">
+                    <span>Λήψεις {chosen.length}/2</span>
+                    {chosen.length===2?<button className="icon-button" disabled={busy}
+                      title="Αντιστροφή σειράς" aria-label={`Αντιστροφή σειράς ${row.sku}`}
+                      onClick={()=>setPhotoSelections(previous=>({...previous,[row.sku]:[...previous[row.sku]].reverse()}))}>
+                      <ArrowLeftRight size={15}/>
+                    </button>:null}
+                  </div>
+                  <div className="promotion-photo-grid" role="group" aria-label={`Φωτογραφίες ${row.name}`}>
+                    {(row.gallery||[row.image_url]).map((url,index)=>{
+                      const order=chosen.indexOf(url)+1;
+                      return <button type="button" key={url} className="promotion-photo-option" aria-pressed={order>0}
+                        aria-label={`Φωτογραφία ${index+1}${order?`, λήψη ${order}`:""}`}
+                        disabled={busy||(!order&&chosen.length===2)} onClick={()=>togglePhoto(row.sku,url)}>
+                        <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer"/>
+                        {order?<span aria-hidden="true">{order}</span>:null}
+                      </button>;
+                    })}
+                  </div>
+                </div>;
+              })}
+              <button className="primary-action" disabled={busy||renderPending||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)} onClick={()=>void startRender()}>
+                <Check size={16}/>Επιβεβαίωση &amp; δημιουργία
               </button>
               <button className="secondary-action" disabled={busy} onClick={()=>setPriceCheck(null)}><X size={16}/>Ακύρωση</button>
             </section>:null}

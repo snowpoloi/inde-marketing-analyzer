@@ -2,6 +2,7 @@ import io
 import json
 import shutil
 import subprocess
+from html import escape
 
 import httpx
 import pytest
@@ -11,10 +12,12 @@ from app.api.routes import promotions
 from app.models import PromotionAsset
 from app.services import promotion_render as render
 from app.services import promotion_render_jobs as jobs
+from app.services.promotion_creative import FPS, timeline
 from app.services.promotion_service import END_CARD, FORMATS, end_card
 from test_promotions import client, parameters, product, user
 
 PHOTO = "https://inde.gr/image/catalog/chair.jpg"
+PHOTO_TWO = "https://inde.gr/image/catalog/chair-in-room.jpg"
 
 
 def offer_html(price="19.50", sku="SKU-1", **overrides):
@@ -27,6 +30,13 @@ def offer_html(price="19.50", sku="SKU-1", **overrides):
 def storefront(price="19.50"):
     return httpx.Client(transport=httpx.MockTransport(
         lambda _: httpx.Response(200, content=offer_html(price))))
+
+
+def gallery_storefront():
+    urls = [PHOTO, PHOTO_TWO, PHOTO, "https://other.test/image/unknown.jpg"]
+    data = escape(json.dumps([{"src": url} for url in urls]), quote=True)
+    body = offer_html() + f'<div class="lightgallery lightgallery-product-images" data-images="{data}"></div>'.encode()
+    return httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=body)))
 
 
 @pytest.mark.parametrize("body", [
@@ -99,10 +109,12 @@ def test_queue_owner_and_price_changes(db, tmp_path, monkeypatch):
 def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeypatch):
     person, p = user(db), product(db)
     monkeypatch.setattr(jobs.settings, "promotion_media_dir", str(tmp_path))
-    monkeypatch.setattr(jobs, "inde_client", storefront)
+    monkeypatch.setattr(jobs, "inde_client", gallery_storefront)
+    monkeypatch.setattr(promotions, "inde_client", gallery_storefront)
 
     def encode(_, brief, products, ratio, folder):
         assert products[0]["price_gross"] == "19.50"
+        assert products[0]["selected_images"] == [PHOTO_TWO, PHOTO]
         target = folder / "render.mp4"
         target.write_bytes(b"\x00\x00\x00\x20ftypisom")
         return target
@@ -110,7 +122,16 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
     monkeypatch.setattr(jobs, "render_video", encode)
     with client(db, person) as http:
         base = f"/api/promotions/campaigns/{make_campaign(http, p)}"
-        queued = http.post(f"{base}/render", json={"aspect_ratio": "9:16", "prices": {p.sku: "19.50"}}).json()
+        quote = http.get(f"{base}/render-prices").json()
+        assert quote["rows"][0]["gallery"] == [PHOTO, PHOTO_TWO]
+        body = {"aspect_ratio": "9:16", "prices": {p.sku: "19.50"}}
+        for photos in ([PHOTO, PHOTO], ["https://external.test/image/chair.jpg"]):
+            assert http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: photos}}).status_code == 422
+        unknown = "https://inde.gr/image/catalog/different-product.jpg"
+        assert http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: [unknown]}}).status_code == 202
+        jobs._process_locked(db)
+        assert http.get(base).json()["render"]["status"] == "failed"
+        queued = http.post(f"{base}/render", json={**body, "photo_selections": {p.sku: [PHOTO_TWO, PHOTO]}}).json()
         jobs._process_locked(db)
         row = http.get(base).json()
         assert row["render"]["status"] == "success"
@@ -121,7 +142,26 @@ def test_completed_render_becomes_private_reviewable_asset(db, tmp_path, monkeyp
         assert db.query(PromotionAsset).count() == 1
 
 
-@pytest.mark.parametrize("ratio,duration,count", [("9:16", 15, 1), ("1:1", 15, 2), ("16:9", 30, 3)])
+@pytest.mark.parametrize("duration", [15, 30])
+@pytest.mark.parametrize("count", [1, 2, 3])
+@pytest.mark.parametrize("style", ["cinematic", "editorial", "detail"])
+def test_creative_timeline_preserves_each_product_and_end_card(duration, count, style):
+    beats = timeline(duration, count, style)
+    assert sum(beat.frames for beat in beats) == duration * FPS
+    assert beats[0].kind == "hook" and beats[0].frames == 45
+    assert beats[-2].kind == "cta"
+    assert beats[-1].kind == "end" and beats[-1].frames == 3 * FPS
+    assert list(dict.fromkeys(beat.product for beat in beats if beat.kind == "product")) == list(range(count))
+    assert all(beat.frames >= FPS for beat in beats)
+
+
+def test_two_selected_photos_fit_even_the_short_editorial_cut():
+    beats = timeline(15, 3, "editorial", [2, 2, 1])
+    for product in (0, 1):
+        assert [beat.photo for beat in beats if beat.kind in {"product", "detail"} and beat.product == product] == [0, 1]
+
+
+@pytest.mark.parametrize("ratio,duration,count", [("9:16", 15, 3), ("1:1", 15, 2), ("16:9", 30, 1)])
 def test_ffmpeg_renders_full_product_video_and_final_card(ratio, duration, count, tmp_path, monkeypatch):
     ffmpeg = shutil.which(render.settings.promotion_ffmpeg_path)
     if not ffmpeg:
@@ -130,6 +170,11 @@ def test_ffmpeg_renders_full_product_video_and_final_card(ratio, duration, count
     products = [{"name": "INDE floor lamp", "price_gross": "19.50", "image_url": PHOTO}] * count
     brief = {"parameters": {"duration": duration, "cta": "inde.gr", "hook": "INDE", "style": "cinematic"}}
     path = render.render_video(None, brief, products, ratio, tmp_path)
+    subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-t", "0.5", "-f", "null", "-"],
+                   check=True, capture_output=True)
+    stats = subprocess.check_output([ffmpeg, "-v", "error", "-nostats", "-progress", "pipe:1", "-i", str(path),
+                                     "-map", "0:v:0", "-f", "null", "-"], text=True)
+    assert f"frame={duration * FPS}\n" in stats
     expected = end_card(ratio)
     for time in (duration - 3, duration - 0.04):
         frame = subprocess.check_output([ffmpeg, "-v", "error", "-ss", str(time), "-i", str(path),

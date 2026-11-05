@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,7 @@ class PromotionRenderJob(TimestampMixin, Base):
     aspect_ratio: Mapped[str] = mapped_column(String(8))
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     prices: Mapped[dict] = mapped_column(JSONB)
+    photo_selections: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

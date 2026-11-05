@@ -13,14 +13,16 @@ publish ads or spend advertising budget. Higgsfield remains an optional external
    silently treated as one. Missing or conflicting costs are excluded by default.
 2. Choose direction, formats, duration, hook, and CTA; save the campaign in PostgreSQL.
    Products, photos, prices, and source timestamps are snapshotted. No AI has run yet.
-3. Open the campaign, choose an aspect ratio and click **Δημιουργία βίντεο**. Confirm
-   the VAT-inclusive EUR offers read from the public INDE product pages for the exact SKUs.
-   The worker rechecks the confirmed amounts before rendering; an unavailable, ambiguous
-   or changed price stops the job. The old catalog snapshot is never used as a fallback.
-4. The local render uses product photos, the saved hook and CTA, the confirmed amounts
-   and the supplied purple INDE card for the last three seconds. The card is fitted
-   without cropping or changing its contents. The MP4 is silent and appears for review
-   and download in the campaign.
+3. Open the campaign, choose an aspect ratio and click **Δημιουργία βίντεο**. Choose
+   one or two ordered photos from each product's INDE gallery and confirm the VAT-inclusive
+   EUR offers read for the exact SKUs. The worker rechecks prices and photo membership
+   before rendering. A changed price or a removed selection stops the job.
+4. The local render uses INDE plum and white for graphics, a hook with an animated photo
+   reveal, product shots with VAT-inclusive prices, and the saved CTA. If two photos
+   were selected for a product, the second shot uses the second photo instead of a crop.
+   An original instrumental cue accents the cuts; no external music or voice API is
+   used. The supplied purple INDE card fills the last three seconds without cropping
+   its contents. The MP4 appears for review and download in the campaign.
 5. Alternatively, download the preparation ZIP. It contains English shot prompts, reference photo URLs,
    a storyboard, branded final-card PNGs at exact target dimensions, and per-channel INDE UTM
    destinations. It does not contain purchase costs, customer/order records, or secrets.
@@ -33,6 +35,7 @@ publish ads or spend advertising budget. Higgsfield remains an optional external
 ## Storage And Safety
 
 - Migration `0014_promotion_render` adds the persisted render queue and confirmed prices.
+  `0015_promotion_gallery` stores the ordered photo selections for each job.
   One worker encodes at a time, with a bounded timeout and two encoder threads.
 - The renderer reads only public HTTPS INDE product pages and INDE catalog images. It
   checks the SKU, currency, stock and price and validates redirects and image size.

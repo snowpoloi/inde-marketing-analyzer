@@ -9,15 +9,14 @@ from time import monotonic
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 import httpx
-from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
-from app.services.promotion_service import FORMATS, end_card, font
+from app.services.promotion_creative import FPS, PLUM, creative_frame, price_text, soundtrack, timeline
+from app.services.promotion_service import end_card
 
 CENT = Decimal("0.01")
 MAX_VIDEO_BYTES = 64 * 1024 * 1024
-PLUM = "#452d4f"
-FPS = 30
 
 
 class RenderError(ValueError):
@@ -74,10 +73,19 @@ class ProductData(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.script = None
         self.documents = []
+        self.gallery = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "script" and dict(attrs).get("type") == "application/ld+json":
+        attrs = dict(attrs)
+        if tag == "script" and attrs.get("type") == "application/ld+json":
             self.script = []
+        if tag == "div" and "lightgallery-product-images" in (attrs.get("class") or "").split():
+            try:
+                images = json.loads(attrs.get("data-images") or "[]")
+            except (ValueError, RecursionError):
+                return
+            if isinstance(images, list):
+                self.gallery.extend(item.get("src") for item in images if isinstance(item, dict))
 
     def handle_data(self, data):
         if self.script is not None:
@@ -107,6 +115,10 @@ def product_nodes(document):
 def product_offer(body, sku):
     parser = ProductData()
     parser.feed(body.decode("utf-8", errors="replace"))
+    return parsed_offer(parser, sku)
+
+
+def parsed_offer(parser, sku):
     offers = []
     for doc in parser.documents:
         for node in product_nodes(doc):
@@ -141,11 +153,18 @@ def product_offer(body, sku):
 def live_products(client, brief):
     products = []
     for product in brief["products"]:
-        price, photo = product_offer(read_inde(client, product["link"]), product["sku"])
+        parser = ProductData()
+        parser.feed(read_inde(client, product["link"]).decode("utf-8", errors="replace"))
+        price, photo = parsed_offer(parser, product["sku"])
         photo = photo or inde_url(product["image_url"], image=True)
-        if not photo:
+        gallery = list(dict.fromkeys(
+            url for url in parser.gallery if isinstance(url, str) and len(url) <= 2048 and inde_url(url, image=True)
+        ))[:24]
+        if not gallery and photo:
+            gallery = [photo]
+        if not gallery:
             raise RenderError(f"Δεν βρέθηκε δημόσια φωτογραφία INDE για {product['sku']}.")
-        products.append({**product, "price_gross": str(price), "image_url": photo})
+        products.append({**product, "price_gross": str(price), "image_url": gallery[0], "gallery": gallery})
     return products
 
 
@@ -166,98 +185,50 @@ def product_photo(client, url):
         raise RenderError("Η φωτογραφία προϊόντος δεν μπόρεσε να διαβαστεί.") from None
 
 
-def price_text(value):
-    return f"{Decimal(value):,.2f}".translate(str.maketrans(",.", ".,")) + " \u20ac"
-
-
-def fit_lines(draw, text, face, width, maximum):
-    words = " ".join(text.split()).split()
-    lines = [""]
-    for word in words:
-        candidate = f"{lines[-1]} {word}".strip()
-        if draw.textlength(candidate, font=face) <= width:
-            lines[-1] = candidate
-        elif len(lines) < maximum and lines[-1]:
-            lines.append(word)
-        else:
-            lines[-1] = candidate
-            break
-    for i, line in enumerate(lines):
-        if draw.textlength(line, font=face) > width:
-            while line and draw.textlength(line.rstrip() + "\u2026", font=face) > width:
-                line = line[:-1]
-            lines[i] = line.rstrip() + "\u2026"
-    return lines
-
-
-def product_frame(photo, product, parameters, ratio):
-    w, h = (FORMATS[ratio][key] for key in ("width", "height"))
-    portrait = ratio == "9:16"
-    canvas = Image.new("RGB", (w, h), "#faf8f7")
-    draw = ImageDraw.Draw(canvas)
-    if portrait:
-        box = (84, 98, w - 84, 1140)
-        x, y, width = 95, 1200, w - 190
-    else:
-        box = (w // 2, 84, w - 74, h - 84)
-        x, y, width = 74, 174, w // 2 - 118
-    hook_font = font(30)
-    hook = fit_lines(draw, parameters["hook"], hook_font, w - 180, 1)[0]
-    draw.text((x, 42), hook, font=hook_font, fill=PLUM, anchor="lt")
-    draw.rectangle(box, fill="white")
-    contained = ImageOps.contain(photo, (box[2] - box[0] - 32, box[3] - box[1] - 32),
-                                 Image.Resampling.LANCZOS)
-    canvas.paste(contained, ((box[0] + box[2] - contained.width) // 2,
-                            (box[1] + box[3] - contained.height) // 2))
-    draw.rectangle((x, y, x + 50, y + 4), fill=PLUM)
-    draw.text((x, y + 22), "INDE", font=font(27), fill=PLUM, anchor="lt")
-    y += 72
-    title_font = font(42 if w == h else 55)
-    for line in fit_lines(draw, product["name"], title_font, width, 3):
-        draw.text((x, y), line, font=title_font, fill="#251f27", anchor="lt")
-        y += title_font.size + 12
-    y += 22
-    amount = price_text(product["price_gross"])
-    size = 81 if w != h else 67
-    while draw.textlength(amount, font=font(size)) > width:
-        size -= 2
-    draw.text((x, y), amount, font=font(size), fill=PLUM, anchor="lt")
-    y += size + 14
-    draw.text((x, y), "\u03bc\u03b5 \u03a6\u03a0\u0391", font=font(27), fill=PLUM, anchor="lt")
-    y += 54
-    for line in fit_lines(draw, parameters["cta"], font(28), width, 2):
-        draw.text((x, y), line, font=font(28), fill="#534759", anchor="lt")
-        y += 35
-    return canvas
-
-
 def render_video(client, brief, products, ratio, folder: Path):
     parameters = brief["parameters"]
-    seconds, remainder = divmod(parameters["duration"] - 3, len(products))
+    photos = [[product_photo(client, url) for url in product.get("selected_images", [product["image_url"]])]
+              for product in products]
+    beats = timeline(parameters["duration"], len(products), parameters["style"], [len(group) for group in photos])
     inputs, filters = [], []
-    motion = {"cinematic": 0.028, "editorial": 0.012, "detail": 0.04}[parameters["style"]]
-    w, h = (FORMATS[ratio][key] for key in ("width", "height"))
-    for i, product in enumerate(products):
-        path = folder / f"scene-{i}.png"
-        product_frame(product_photo(client, product["image_url"]), product, parameters, ratio).save(path)
-        inputs += ["-i", str(path)]
-        frames = (seconds + int(i < remainder)) * FPS
-        # Keep the entire product in frame with a shallow push-in.
-        filters.append(f"[{i}:v]scale=iw*2:ih*2,zoompan=z='1+{motion}*on/{frames-1}':"
-                       f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d={frames}:s={w}x{h}:fps={FPS},"
-                       f"setsar=1,format=yuv420p[v{i}]")
-    card = folder / "end-card.png"
-    end_card(ratio).save(card)
-    i = len(products)
-    inputs += ["-loop", "1", "-framerate", str(FPS), "-i", str(card)]
-    filters.append(f"[{i}:v]trim=duration=3,setpts=PTS-STARTPTS,setsar=1,format=yuv420p[v{i}]")
-    filters.append("".join(f"[v{k}]" for k in range(i + 1)) + f"concat=n={i+1}:v=1:a=0[video]")
+
+    def still(frame, label, frames):
+        source = len(inputs) // 4
+        path = folder / f"{label}.png"
+        frame.save(path)
+        inputs.extend(["-framerate", str(FPS), "-i", str(path)])
+        filters.append(f"[{source}:v]loop={frames-1}:1:0,setpts=N/({FPS}*TB),"
+                       f"setsar=1,format=yuv420p[{label}]")
+
+    for i, beat in enumerate(beats):
+        frame, layer = (end_card(ratio), None) if beat.kind == "end" else creative_frame(
+            beat, photos, products, parameters, ratio)
+        still(frame, f"base{i}" if layer else f"v{i}", beat.frames)
+        if layer:
+            photo, x, y = layer
+            still(photo, f"photo{i}", beat.frames)
+            still(Image.new("RGB", photo.size, PLUM), f"stage{i}", beat.frames)
+            length = 0.46 if beat.kind in {"hook", "cta"} else 0.28
+            axis = "y" if beat.kind in {"hook", "cta", "offer"} else "x"
+            dimension = "h" if axis == "y" else "w"
+            direction = "-" if beat.kind != "detail" else ""
+            start = 0.16 if beat.kind == "hook" else 0.0
+            displacement = f"{direction}{dimension}*pow(max(0,1-(t+{start})/{length}),3)"
+            filters.extend([
+                f"[stage{i}][photo{i}]overlay={axis}='{displacement}':shortest=1[window{i}]",
+                f"[base{i}][window{i}]overlay={x}:{y}:shortest=1[v{i}]",
+            ])
+    audio_input = len(inputs) // 4
+    inputs.extend(["-f", "lavfi", "-i", soundtrack(beats)])
+    filters.append("".join(f"[v{i}]" for i in range(len(beats)))
+                   + f"concat=n={len(beats)}:v=1:a=0,settb=1/{FPS},setpts=N[video]")
     target = folder / "render.mp4"
     try:
         subprocess.run([settings.promotion_ffmpeg_path, "-nostdin", "-v", "error", "-filter_complex_threads", "1",
-                        *inputs, "-filter_complex", ";".join(filters), "-map", "[video]", "-an", "-c:v", "libx264",
+                        *inputs, "-filter_complex", ";".join(filters), "-map", "[video]", "-map", f"{audio_input}:a",
+                        "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-c:v", "libx264",
                         "-threads", "2", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-                        "-frames:v", str(parameters["duration"] * FPS), "-movflags", "+faststart", str(target)],
+                        "-r", str(FPS), "-t", str(parameters["duration"]), "-movflags", "+faststart", str(target)],
                        check=True, capture_output=True, timeout=150)
     except (OSError, subprocess.SubprocessError):
         raise RenderError("Η εξαγωγή MP4 απέτυχε. Δοκίμασε ξανά.") from None

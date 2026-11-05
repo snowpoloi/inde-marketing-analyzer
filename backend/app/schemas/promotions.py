@@ -1,6 +1,6 @@
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -41,10 +41,15 @@ class PromotionReview(BaseModel):
 class PromotionRenderInput(BaseModel):
     aspect_ratio: Aspect
     prices: dict[str, Decimal] = Field(min_length=1, max_length=3)
+    photo_selections: dict[str, Annotated[list[Annotated[str, Field(min_length=1, max_length=2048)]],
+                                         Field(min_length=1, max_length=2)]] = Field(default_factory=dict, max_length=3)
 
     @model_validator(mode="after")
     def validate_prices(self):
         if any(not sku or len(sku) > 255 or not value.is_finite() or not 0 < value <= Decimal("99999999.99")
                or value != value.quantize(Decimal("0.01")) for sku, value in self.prices.items()):
             raise ValueError("Invalid confirmed product prices.")
+        if self.photo_selections and (set(self.photo_selections) != set(self.prices) or any(
+                len(set(urls)) != len(urls) for urls in self.photo_selections.values())):
+            raise ValueError("Choose one or two distinct photos per product.")
         return self

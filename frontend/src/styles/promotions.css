@@ -87,9 +87,17 @@
 .promotion-price-check { display: grid; gap: 10px; border-block: 1px solid #d5d7d2; padding: 12px 0; }
 .promotion-price-check .promotion-section-heading { margin: 0; }
 .promotion-price-check h3 { margin: 0; font-size: 13px; }
-.promotion-price-row { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 8px; align-items: center; font-size: 12px; overflow-wrap: anywhere; }
-.promotion-price-row img { width: 38px; height: 38px; object-fit: contain; background: #fff; }
-.promotion-price-row strong { white-space: nowrap; }
+.promotion-photo-choice { display: grid; gap: 8px; padding-block: 8px; border-bottom: 1px solid #d5d7d2; }
+.promotion-photo-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12px; }
+.promotion-photo-title strong { overflow-wrap: anywhere; }
+.promotion-photo-title span { white-space: nowrap; }
+.promotion-photo-tools { display: flex; align-items: center; justify-content: space-between; min-height: 32px; font-size: 12px; }
+.promotion-photo-tools .icon-button { width: 32px; height: 32px; }
+.promotion-photo-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(64px,1fr)); gap: 6px; max-height: 256px; overflow: auto; padding: 2px; }
+.promotion-photo-option { position: relative; min-width: 0; aspect-ratio: 1; padding: 2px; border: 2px solid transparent; border-radius: 6px; background: #fff; cursor: pointer; }
+.promotion-photo-option[aria-pressed="true"] { border-color: #4a2d57; }
+.promotion-photo-option img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.promotion-photo-option span { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; background: #4a2d57; color: #fff; font-size: 12px; }
 .promotion-asset-row { display: flex; gap: 7px; align-items: center; padding: 12px 0; border-bottom: 1px solid #d5d7d2; }
 .promotion-asset-row > span { flex: 1; font-size: 12px; }
 .promotion-asset-row small { display: block; font-size: 10px; color: #66706a; margin-top: 4px; }

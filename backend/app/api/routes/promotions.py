@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import PromotionAsset, PromotionCampaign, PromotionRenderJob, User
 from app.schemas.promotions import Aspect, PromotionInput, PromotionRenderInput, PromotionReview
-from app.services.promotion_render import CENT, MAX_VIDEO_BYTES, RenderError, inde_client, live_products
+from app.services.promotion_render import CENT, MAX_VIDEO_BYTES, RenderError, inde_client, inde_url, live_products
 from app.services.promotion_render_jobs import ACTIVE_RENDER
 from app.services.promotion_service import END_CARD, candidates, export_package, make_brief, serialize_campaign
 
@@ -92,7 +92,7 @@ def render_prices(campaign_id: UUID, user: User = Depends(require_admin), db: Se
             rows = live_products(client, brief)
     except RenderError as exc:
         raise HTTPException(422, detail=str(exc)) from None
-    return {"rows": [{k: row[k] for k in ("sku", "name", "price_gross", "image_url")} for row in rows],
+    return {"rows": [{k: row[k] for k in ("sku", "name", "price_gross", "image_url", "gallery")} for row in rows],
             "checked_at": datetime.now(timezone.utc)}
 
 
@@ -103,11 +103,14 @@ def queue_render(campaign_id: UUID, payload: PromotionRenderInput, user: User = 
     if (payload.aspect_ratio not in campaign.brief["parameters"]["formats"]
             or set(payload.prices) != {p["sku"] for p in campaign.brief["products"]}):
         raise HTTPException(422, detail="Δεν επιβεβαιώθηκαν οι τιμές για όλα τα προϊόντα και την αναλογία.")
+    if any(not inde_url(url, image=True) for urls in payload.photo_selections.values() for url in urls):
+        raise HTTPException(422, detail="Επίλεξε φωτογραφίες από τη συλλογή της INDE.")
     if db.scalar(select(PromotionRenderJob.id).where(PromotionRenderJob.campaign_id == campaign_id,
                   PromotionRenderJob.status.in_(ACTIVE_RENDER)).limit(1)):
         raise HTTPException(409, detail="Δημιουργείται ήδη βίντεο για την καμπάνια.")
     db.add(PromotionRenderJob(campaign_id=campaign_id, aspect_ratio=payload.aspect_ratio,
-                             status="queued", prices={sku: str(price.quantize(CENT)) for sku, price in payload.prices.items()}))
+                             status="queued", prices={sku: str(price.quantize(CENT)) for sku, price in payload.prices.items()},
+                             photo_selections=payload.photo_selections))
     db.commit()
     return serialize_campaign(db, campaign)
 

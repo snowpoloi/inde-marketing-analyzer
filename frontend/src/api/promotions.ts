@@ -23,7 +23,7 @@ export type PromotionAsset = {id:string; aspect_ratio:PromotionFormat; filename:
 export type PromotionCampaignSummary = {id:string; title:string; status:string; created_at:string};
 export type PromotionRender = {id:string; status:"queued"|"running"|"success"|"failed"; aspect_ratio:PromotionFormat;
   prices:Record<string,string>; error:string|null};
-export type PromotionPriceCheck = {rows:Array<{sku:string; name:string; price_gross:string; image_url:string}>; checked_at:string};
+export type PromotionPriceCheck = {rows:Array<{sku:string; name:string; price_gross:string; image_url:string; gallery:string[]}>; checked_at:string};
 export type PromotionCampaign = PromotionCampaignSummary & {updated_at:string; brief:PromotionBrief; assets:PromotionAsset[];
   render:PromotionRender|null};
 export type PromotionReview = {product_identity:boolean; cta_and_text:boolean; image_and_audio_rights:boolean; platform_format:boolean};
