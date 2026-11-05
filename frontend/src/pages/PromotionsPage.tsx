@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowLeftRight, Check, Clapperboard, Copy, Download, ExternalLink, Film, Loader2, Play, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Check, Clapperboard, Copy, Download, ExternalLink, Film, Headphones, Loader2, Play, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import { api } from "../api/client";
 import type { PromotionAsset, PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionPriceCheck, PromotionProduct, PromotionReview } from "../api/promotions";
 import { DateRangeControls, useReportPeriod } from "../components/DateRangeControls";
@@ -40,13 +40,17 @@ export function PromotionsPage() {
   const [uploadFormat,setUploadFormat]=useState<PromotionFormat>("9:16");
   const [mediaError,setMediaError]=useState(false);
   const [priceCheck,setPriceCheck]=useState<PromotionPriceCheck|null>(null);
+  const [soundtrackId,setSoundtrackId]=useState("");
+  const [soundtrackPreview,setSoundtrackPreview]=useState<string|null>(null);
   const [photoSelections,setPhotoSelections]=useState<Record<string,string[]>>({});
   const [brandCard,setBrandCard]=useState<string|null>(null);
   const requestSequence=useRef(0);
   const historySequence=useRef(0);
   const uploadInput=useRef<HTMLInputElement>(null);
+  const videoRef=useRef<HTMLVideoElement>(null);
   useEffect(()=>()=>{requestSequence.current++;historySequence.current++;},[]);
   useEffect(()=>()=>{if(media) URL.revokeObjectURL(media.url);},[media]);
+  useEffect(()=>()=>{if(soundtrackPreview) URL.revokeObjectURL(soundtrackPreview);},[soundtrackPreview]);
   const campaignId=campaign?.id;
   const renderPending=campaign?.render?.status==="queued"||campaign?.render?.status==="running";
   useEffect(()=>{
@@ -96,7 +100,7 @@ export function PromotionsPage() {
   }
   function showCampaign(next:PromotionCampaign) {
     setCampaign(next);setActiveFormat(next.brief.parameters.formats[0]);setUploadFormat(next.brief.parameters.formats[0]);
-    setMedia(null);setReview({...emptyReview});setMediaError(false);setPriceCheck(null);setPhotoSelections({});
+    setMedia(null);setReview({...emptyReview});setMediaError(false);closeRenderOptions();setPhotoSelections({});
   }
   async function openCampaign(id:string) {
     const sequence=++historySequence.current;
@@ -110,15 +114,17 @@ export function PromotionsPage() {
     });
   }
   async function preview(asset:PromotionAsset) {
+    setSoundtrackPreview(null);
     await action(async()=>{const blob=await api.promotionMedia(asset.id);setMedia({id:asset.id,url:URL.createObjectURL(blob)});
       setReview({...emptyReview});setMediaError(false);});
   }
   async function startRender() {
-    if(!campaign||!priceCheck||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)) return;
+    if(!campaign||!priceCheck||!soundtrackId||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)) return;
+    setSoundtrackPreview(null);
     await action(async()=>{
       const prices=Object.fromEntries(priceCheck.rows.map(row=>[row.sku,row.price_gross]));
-      setCampaign(await api.promotionRender(campaign.id,activeFormat,prices,photoSelections));
-      setPriceCheck(null);
+      setCampaign(await api.promotionRender(campaign.id,activeFormat,prices,photoSelections,soundtrackId));
+      closeRenderOptions();
     });
   }
   async function prepareRender(id:string) {
@@ -127,6 +133,17 @@ export function PromotionsPage() {
       setPhotoSelections(Object.fromEntries(quote.rows.map(row=>[row.sku,[row.image_url]])));
       setPriceCheck(quote);
     });
+  }
+  function closeRenderOptions() {
+    setPriceCheck(null);
+    setSoundtrackId("");
+    setSoundtrackPreview(null);
+  }
+  async function listenToSoundtrack() {
+    if(!soundtrackId) return;
+    if(soundtrackPreview) {setSoundtrackPreview(null);return;}
+    videoRef.current?.pause();
+    await action(async()=>setSoundtrackPreview(URL.createObjectURL(await api.promotionSoundtrack(soundtrackId))));
   }
   function togglePhoto(sku:string,url:string) {
     setPhotoSelections(previous=>{
@@ -140,6 +157,7 @@ export function PromotionsPage() {
   }
   const variant=campaign?.brief.variants.find(v=>v.aspect_ratio===activeFormat);
   const currentAsset=campaign?.assets.find(a=>a.id===media?.id);
+  const selectedSoundtrack=priceCheck?.soundtracks.find(track=>track.id===soundtrackId);
 
   return <div className="page-stack promotions-page">
     <header className="page-header"><div><h1>Προώθηση</h1></div>
@@ -195,7 +213,7 @@ export function PromotionsPage() {
         </aside>
       </div>}
     </>:<>
-      <div className="promotion-campaign-header"><button className="secondary-action" disabled={busy} onClick={()=>{historySequence.current++;setCampaign(null);setTab("campaigns");setMedia(null);setNotice("");void loadCampaigns();}}><ArrowLeft size={16}/>Καμπάνιες</button>
+      <div className="promotion-campaign-header"><button className="secondary-action" disabled={busy} onClick={()=>{historySequence.current++;setCampaign(null);setTab("campaigns");setMedia(null);closeRenderOptions();setNotice("");void loadCampaigns();}}><ArrowLeft size={16}/>Καμπάνιες</button>
         <h2>{campaign.title}</h2><span className="promotion-badge">{status[campaign.status]||campaign.status}</span>
         <button className="secondary-action" disabled={busy} onClick={()=>void action(async()=>{download(await api.promotionPackage(campaign.id),`inde-promotion-${campaign.id}.zip`);})}><Download size={16}/>Πακέτο Higgsfield</button>
         <button className="icon-button" title="Ανανέωση καμπάνιας" aria-label="Ανανέωση καμπάνιας" disabled={busy} onClick={()=>void openCampaign(campaign.id)}><RefreshCw size={16}/></button>
@@ -203,7 +221,7 @@ export function PromotionsPage() {
       <section className="promotion-storyboard" aria-label="Storyboard">{campaign.brief.storyboard.map(scene=><div key={scene.label}><span>{scene.time}</span><h3>{scene.label}</h3><p>{scene.copy}</p></div>)}</section>
       <div className="promotion-campaign-workspace">
         <section className="promotion-direction" aria-label="Πλάνα Higgsfield">
-          <div className="promotion-format-tabs" role="tablist" aria-label="Αναλογίες βίντεο">{campaign.brief.variants.map(v=><button key={v.aspect_ratio} role="tab" disabled={busy} aria-selected={activeFormat===v.aspect_ratio} onClick={()=>{setActiveFormat(v.aspect_ratio);setPriceCheck(null);}}>{v.aspect_ratio}<small>{v.channels.join(" · ")}</small></button>)}</div>
+          <div className="promotion-format-tabs" role="tablist" aria-label="Αναλογίες βίντεο">{campaign.brief.variants.map(v=><button key={v.aspect_ratio} role="tab" disabled={busy} aria-selected={activeFormat===v.aspect_ratio} onClick={()=>{setActiveFormat(v.aspect_ratio);closeRenderOptions();}}>{v.aspect_ratio}<small>{v.channels.join(" · ")}</small></button>)}</div>
           {variant?<><div className="promotion-shot-list">{variant.shots.map((shot,index)=>{const p=campaign.brief.products.find(p=>p.sku===shot.sku);return <article key={shot.sku} className="promotion-shot">
             <img src={shot.image_url} alt={p?.name||shot.sku}/><div><span>Πλάνο {index+1} · {shot.seconds}s</span><h3>{p?.name}</h3>
               <details><summary>Σκηνοθετικό prompt</summary><textarea aria-label={`Prompt ${shot.sku}`} readOnly value={shot.prompt}/></details>
@@ -253,10 +271,27 @@ export function PromotionsPage() {
                   </div>
                 </div>;
               })}
-              <button className="primary-action" disabled={busy||renderPending||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)} onClick={()=>void startRender()}>
+              <div className="promotion-soundtrack">
+                <label htmlFor="promotion-soundtrack">Μουσική</label>
+                <div className="promotion-soundtrack-picker">
+                  <select id="promotion-soundtrack" value={soundtrackId} disabled={busy} onChange={e=>{setSoundtrackId(e.target.value);setSoundtrackPreview(null);}}>
+                    <option value="" disabled>Επίλεξε κομμάτι</option>
+                    {priceCheck.soundtracks.map(track=><option key={track.id} value={track.id}>{track.title} · {track.genre}</option>)}
+                  </select>
+                  <button className="icon-button" type="button" disabled={busy||!soundtrackId}
+                    aria-label={soundtrackPreview?"Κλείσιμο ακρόασης":"Ακρόαση μουσικής"}
+                    title={soundtrackPreview?"Κλείσιμο ακρόασης":"Ακρόαση μουσικής"} onClick={()=>void listenToSoundtrack()}>
+                    {soundtrackPreview?<X size={16}/>:<Headphones size={16}/>}
+                  </button>
+                </div>
+                {selectedSoundtrack?<small>{selectedSoundtrack.artist} · CC0</small>:null}
+                {soundtrackPreview?<audio key={soundtrackPreview} src={soundtrackPreview} controls autoPlay
+                  aria-label="Προεπισκόπηση μουσικής" onError={()=>{setSoundtrackPreview(null);setError("Το κομμάτι δεν αναπαράγεται.");}}/>:null}
+              </div>
+              <button className="primary-action" disabled={busy||renderPending||!soundtrackId||priceCheck.rows.some(row=>!photoSelections[row.sku]?.length)} onClick={()=>void startRender()}>
                 <Check size={16}/>Επιβεβαίωση &amp; δημιουργία
               </button>
-              <button className="secondary-action" disabled={busy} onClick={()=>setPriceCheck(null)}><X size={16}/>Ακύρωση</button>
+              <button className="secondary-action" disabled={busy} onClick={closeRenderOptions}><X size={16}/>Ακύρωση</button>
             </section>:null}
           </div>
           <div className="promotion-upload"><select aria-label="Αναλογία εισαγωγής" value={uploadFormat} disabled={busy} onChange={e=>setUploadFormat(e.target.value as PromotionFormat)}>
@@ -265,11 +300,11 @@ export function PromotionsPage() {
               else void action(async()=>{showCampaign(await api.promotionUpload(campaign.id,uploadFormat,file));setNotice("Το βίντεο αποθηκεύτηκε και περιμένει έλεγχο.");});}e.target.value="";}}/>
             <button className="secondary-action" disabled={busy} onClick={()=>uploadInput.current?.click()}><Upload size={16}/>Εισαγωγή MP4</button></div>
           {!campaign.assets.length?<div className="promotion-empty">Δεν υπάρχουν ακόμη βίντεο.</div>:campaign.assets.map(asset=><div className="promotion-asset-row" key={asset.id}>
-            <span><strong>{asset.aspect_ratio}</strong><small>{status[asset.status]||asset.status}</small></span>
+            <span><strong>{asset.aspect_ratio}</strong><small>{status[asset.status]||asset.status}{asset.soundtrack?` · ${asset.soundtrack}`:""}</small></span>
             <button className="icon-button" title="Προεπισκόπηση βίντεο" aria-label={`Προεπισκόπηση ${asset.aspect_ratio}`} disabled={busy} onClick={()=>void preview(asset)}><Play size={16}/></button>
             <button className="icon-button" title="Λήψη MP4" aria-label={`Λήψη ${asset.aspect_ratio}`} disabled={busy} onClick={()=>void action(async()=>{download(await api.promotionMedia(asset.id),`inde-${asset.aspect_ratio.replace(":","x")}.mp4`);})}><Download size={16}/></button>
           </div>)}
-          {media&&currentAsset?<div className="promotion-review"><video key={media.url} src={media.url} controls preload="metadata" onError={()=>setMediaError(true)} aria-label="Προεπισκόπηση τελικού βίντεο"/>
+          {media&&currentAsset?<div className="promotion-review"><video ref={videoRef} key={media.url} src={media.url} controls preload="metadata" onPlay={()=>setSoundtrackPreview(null)} onError={()=>setMediaError(true)} aria-label="Προεπισκόπηση τελικού βίντεο"/>
             {mediaError?<p className="promotion-warning">Το αρχείο δεν αναπαράγεται στον browser. Δεν μπορεί να εγκριθεί.</p>:null}
             {currentAsset.status==="approved"?<span className="promotion-badge">Εγκεκριμένο</span>:<><h3>Έλεγχος πριν τη χρήση</h3>
               {(Object.keys(reviewLabels) as Array<keyof PromotionReview>).map(key=><label className="promotion-check" key={key}><input type="checkbox" checked={review[key]} onChange={e=>setReview({...review,[key]:e.target.checked})}/>{reviewLabels[key]}</label>)}

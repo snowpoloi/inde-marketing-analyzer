@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import PromotionAsset, PromotionCampaign, PromotionRenderJob, User
 from app.schemas.promotions import Aspect, PromotionInput, PromotionRenderInput, PromotionReview
+from app.services.promotion_music import music_catalog, track_path
 from app.services.promotion_render import CENT, MAX_VIDEO_BYTES, RenderError, inde_client, inde_url, live_products
 from app.services.promotion_render_jobs import ACTIVE_RENDER
 from app.services.promotion_service import END_CARD, candidates, export_package, make_brief, serialize_campaign
@@ -83,6 +84,14 @@ def brand_card(_: User = Depends(require_admin)):
     return FileResponse(END_CARD, media_type="image/png", headers={"Cache-Control": "private, no-cache"})
 
 
+@router.get("/soundtracks/{track_id}")
+def preview_soundtrack(track_id: str, _: User = Depends(require_admin)):
+    path = track_path(track_id)
+    if not path:
+        raise HTTPException(404, detail="Το κομμάτι δεν βρέθηκε.")
+    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.get("/campaigns/{campaign_id}/render-prices")
 def render_prices(campaign_id: UUID, user: User = Depends(require_admin), db: Session = Depends(get_db)):
     brief = owned_campaign(db, campaign_id, user).brief
@@ -93,7 +102,7 @@ def render_prices(campaign_id: UUID, user: User = Depends(require_admin), db: Se
     except RenderError as exc:
         raise HTTPException(422, detail=str(exc)) from None
     return {"rows": [{k: row[k] for k in ("sku", "name", "price_gross", "image_url", "gallery")} for row in rows],
-            "checked_at": datetime.now(timezone.utc)}
+            "checked_at": datetime.now(timezone.utc), "soundtracks": music_catalog()}
 
 
 @router.post("/campaigns/{campaign_id}/render", status_code=202)
@@ -105,12 +114,14 @@ def queue_render(campaign_id: UUID, payload: PromotionRenderInput, user: User = 
         raise HTTPException(422, detail="Δεν επιβεβαιώθηκαν οι τιμές για όλα τα προϊόντα και την αναλογία.")
     if any(not inde_url(url, image=True) for urls in payload.photo_selections.values() for url in urls):
         raise HTTPException(422, detail="Επίλεξε φωτογραφίες από τη συλλογή της INDE.")
+    if payload.soundtrack_id is not None and not track_path(payload.soundtrack_id):
+        raise HTTPException(422, detail="Επίλεξε διαθέσιμο κομμάτι από τη βιβλιοθήκη μουσικής.")
     if db.scalar(select(PromotionRenderJob.id).where(PromotionRenderJob.campaign_id == campaign_id,
                   PromotionRenderJob.status.in_(ACTIVE_RENDER)).limit(1)):
         raise HTTPException(409, detail="Δημιουργείται ήδη βίντεο για την καμπάνια.")
     db.add(PromotionRenderJob(campaign_id=campaign_id, aspect_ratio=payload.aspect_ratio,
                              status="queued", prices={sku: str(price.quantize(CENT)) for sku, price in payload.prices.items()},
-                             photo_selections=payload.photo_selections))
+                             photo_selections=payload.photo_selections, soundtrack_id=payload.soundtrack_id))
     db.commit()
     return serialize_campaign(db, campaign)
 

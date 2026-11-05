@@ -532,8 +532,9 @@ export const api = {
   promotionPackage: (id:string) => requestResponse(`/promotions/campaigns/${encodeURIComponent(id)}/package`).then(r=>r.blob()),
   promotionEndCard: () => requestResponse("/promotions/end-card").then(r=>r.blob()),
   promotionRenderPrices: (id:string) => request<PromotionPriceCheck>(`/promotions/campaigns/${encodeURIComponent(id)}/render-prices`),
-  promotionRender: (id:string, aspect_ratio:PromotionFormat, prices:Record<string,string>, photo_selections:Record<string,string[]>) =>
-    request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/render`, {method:"POST", body:JSON.stringify({aspect_ratio, prices, photo_selections})}),
+  promotionSoundtrack: (id:string) => requestResponse(`/promotions/soundtracks/${encodeURIComponent(id)}`).then(r=>r.blob()),
+  promotionRender: (id:string, aspect_ratio:PromotionFormat, prices:Record<string,string>, photo_selections:Record<string,string[]>, soundtrack_id:string) =>
+    request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/render`, {method:"POST", body:JSON.stringify({aspect_ratio, prices, photo_selections, soundtrack_id})}),
   promotionUpload: (id:string, aspect:PromotionFormat, file:File) => { const body=new FormData(); body.append("aspect_ratio",aspect); body.append("file",file);
     return request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/assets`,{method:"POST",body}); },
   promotionMedia: (id:string) => requestResponse(`/promotions/assets/${encodeURIComponent(id)}/content`).then(r=>r.blob()),

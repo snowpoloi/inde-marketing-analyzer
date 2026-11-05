@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from app.services.promotion_service import FORMATS, font
 
 FPS = 30
+STAMP_LAND = 7 / FPS
 PLUM = "#4a2d57"
 WHITE = "#ffffff"
 
@@ -74,6 +75,14 @@ def headline(draw, text, x, y, width, size, fill, maximum=2, *, serif=False):
         y += round(face.size * 1.13)
 
 
+def has_white_background(photo):
+    # Sample every edge so a bright wall alone does not trigger studio framing.
+    red, green, blue = photo.resize((48, 48), Image.Resampling.BOX).convert("RGB").split()
+    minimum_channel = ImageChops.darker(ImageChops.darker(red, green), blue)
+    edges = ((0, 0, 48, 2), (0, 46, 48, 48), (0, 0, 2, 48), (46, 0, 48, 48))
+    return all(sum(minimum_channel.crop(edge).histogram()[245:]) >= 87 for edge in edges)
+
+
 def photo_plate(photo, size, *, aperture=False, full=False):
     if full:
         w, h = size
@@ -95,8 +104,22 @@ def photo_plate(photo, size, *, aperture=False, full=False):
     return result
 
 
+def price_stamp(value, *, wide=False):
+    amount = price_text(value)
+    width, height = (410, 124) if wide else (336, 114)
+    stamp = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(stamp)
+    face = display_font(90 if wide else 78)
+    while draw.textlength(amount, font=face) > width - 44:
+        face = display_font(face.size - 2)
+    draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=10, fill=PLUM, outline=WHITE, width=4)
+    draw.rounded_rectangle((10, 10, width - 11, height - 11), radius=5, outline=WHITE, width=1)
+    draw.text((width / 2, height / 2), amount, font=face, fill=WHITE, anchor="mm")
+    return stamp.rotate(4, resample=Image.Resampling.BICUBIC, expand=True)
+
+
 def creative_frame(beat, photos, products, parameters, ratio):
-    """Compose the text and the independently revealed photo for a shot."""
+    """Compose a shot and its separately animated photo and price stamp."""
     w, h = (FORMATS[ratio][key] for key in ("width", "height"))
     vertical, wide = ratio == "9:16", ratio == "16:9"
     margin = 96 if vertical else 80
@@ -122,48 +145,52 @@ def creative_frame(beat, photos, products, parameters, ratio):
         else:
             headline(draw, line, margin, 207, w - 2 * margin, 85, WHITE, 2, serif=True)
             xy, size = (295, 425), (490, 568)
-        return canvas, (photo_plate(lead, size, aperture=True), *xy)
+        return canvas, (photo_plate(lead, size, aperture=True), *xy), None
 
     product = products[beat.product]
+    photo = photos[beat.product][beat.photo]
+    studio = has_white_background(photo)
     draw.text((w - margin - (40 if vertical else 0), top), f"{beat.product + 1:02d} / {len(products):02d}",
               font=display_font(25), fill=WHITE, anchor="rt")
     if wide:
         xy, size = (976, 217), (864, 712)
-        title_y, title_width, price_y, price_x = 340, 800, 688, 835
+        title_y, title_width, price_y, price_x = 340, 800, 683, 835
         rail_y = 649
     elif vertical:
-        xy, size = (0, 347), (w, 790)
-        title_y, title_width, price_y, price_x = 1212, 525, 1206, 930
-        rail_y = 1174
+        height = 790 if studio else min(1040, max(790, round(w * photo.height / photo.width)))
+        extra = height - 790
+        xy, size = (0, 347), (w, height)
+        title_y, title_width, price_y, price_x = 1212 + extra, 450, 1206 + extra, 930
+        rail_y = 1174 + extra
     else:
         xy, size = (0, 204), (w, 532)
-        title_y, title_width, price_y, price_x = 799, 550, 793, 1000
+        title_y, title_width, price_y, price_x = 799, 540, 793, 1000
         rail_y = 765
     draw.line((margin, rail_y, price_x, rail_y), fill=WHITE, width=2)
     headline(draw, product["name"], margin, title_y, title_width, 44 if not wide else 68, WHITE, 2, serif=True)
-    amount = price_text(product["price_gross"])
-    point = 77 if wide else 66
-    while draw.textlength(amount, font=display_font(point)) > (630 if wide else 295):
-        point -= 2
-    draw.text((price_x, price_y), amount, font=display_font(point), fill=WHITE, anchor="rt")
-    draw.text((price_x, price_y + point + 8), "με ΦΠΑ", font=display_font(24), fill=WHITE, anchor="rt")
-    photo = photos[beat.product][beat.photo]
-    # A second selected photo is shown as a new shot, not a crop of the first.
-    full = beat.kind != "detail" or len(photos[beat.product]) > 1
-    return canvas, (photo_plate(photo, size, full=full), *xy)
+    stamp = price_stamp(product["price_gross"], wide=wide)
+    return canvas, (photo_plate(photo, size, full=studio), *xy), (stamp, price_x - stamp.width, price_y)
 
 
 def soundtrack(beats):
-    """An original, restrained low pulse with soft edit accents."""
-    pulse = "0.11*sin(2*PI*58*t)*exp(-14*mod(t,0.5))"
-    phase = "mod(t,1)"
-    tone = f"0.018*(sin(2*PI*146.83*t)+sin(2*PI*220*t))*sin(PI*{phase})^2"
+    """An original 120 BPM groove with accents on the price stamp."""
+    quarter, eighth = "mod(t,0.5)", "mod(t,0.25)"
+    chord = "mod(floor(t/2),4)"
+    root = f"if(eq({chord},0),110,if(eq({chord},1),87.31,if(eq({chord},2),130.81,98)))"
+    step = "mod(floor(t*4),4)"
+    interval = f"if(eq({step},0),2,if(eq({step},1),if(eq({chord},0),2.3784,2.5198),if(eq({step},2),3,4)))"
+    lead_phase = f"2*PI*{root}*{interval}*{eighth}"
+    kick = f"0.19*sin(2*PI*(52*{quarter}+1.6*(1-exp(-40*{quarter}))))*exp(-13*{quarter})"
+    bass = f"0.10*sin(2*PI*{root}*{quarter})*exp(-7*{quarter})"
+    pluck = f"0.074*(sin({lead_phase})+0.28*sin(2*{lead_phase}))*exp(-12*{eighth})"
+    hat = f"0.037*(2*random(0)-1)*exp(-52*{eighth})"
+    clap = "0.055*(2*random(1)-1)*exp(-21*mod(t+0.5,1))"
     elapsed, hits = 0, []
     for beat in beats:
-        if elapsed:
-            tail = f"max(t-{elapsed / FPS:.6f},0)"
-            hits.append(f"0.055*(sin(2*PI*181*{tail})+sin(2*PI*361*{tail}))*exp(-14*{tail})")
+        if beat.kind in {"product", "detail", "offer"}:
+            tail = f"max(t-{elapsed / FPS + STAMP_LAND:.6f},0)"
+            hits.append(f"0.085*(sin(2*PI*137*{tail})+0.35*sin(2*PI*415*{tail}))*exp(-25*{tail})")
         elapsed += beat.frames
     duration = elapsed / FPS
-    sound = "+".join([pulse, tone, *hits])
-    return f"aevalsrc=exprs='1.8*({sound})*min((({duration}-t)/0.7),1)':s=48000:d={duration}"
+    sound = "+".join([kick, bass, pluck, hat, clap, *hits])
+    return f"aevalsrc=exprs='1.6*({sound})*min((({duration}-t)/0.7),1)':s=48000:d={duration}"

@@ -14,14 +14,14 @@ publish ads or spend advertising budget. Higgsfield remains an optional external
 2. Choose direction, formats, duration, hook, and CTA; save the campaign in PostgreSQL.
    Products, photos, prices, and source timestamps are snapshotted. No AI has run yet.
 3. Open the campaign, choose an aspect ratio and click **Δημιουργία βίντεο**. Choose
-   one or two ordered photos from each product's INDE gallery and confirm the VAT-inclusive
-   EUR offers read for the exact SKUs. The worker rechecks prices and photo membership
+   one or two ordered photos from each product's INDE gallery, audition and select a soundtrack,
+   and confirm the VAT-inclusive EUR offers read for the exact SKUs. The worker rechecks prices and photo membership
    before rendering. A changed price or a removed selection stops the job.
 4. The local render uses INDE plum and white for graphics, a hook with an animated photo
-   reveal, product shots with VAT-inclusive prices, and the saved CTA. If two photos
-   were selected for a product, the second shot uses the second photo instead of a crop.
-   An original instrumental cue accents the cuts; no external music or voice API is
-   used. The supplied purple INDE card fills the last three seconds without cropping
+   reveal, an animated stamp with the confirmed retail price, then the saved CTA. If two
+   photos were selected for a product, the second shot uses the second photo instead of a crop.
+   Image changes can move to nearby musical accents. The supplied purple INDE card stays visible
+   for at least three seconds without cropping
    its contents. The MP4 appears for review and download in the campaign.
 5. Alternatively, download the preparation ZIP. It contains English shot prompts, reference photo URLs,
    a storyboard, branded final-card PNGs at exact target dimensions, and per-channel INDE UTM
@@ -36,7 +36,12 @@ publish ads or spend advertising budget. Higgsfield remains an optional external
 
 - Migration `0014_promotion_render` adds the persisted render queue and confirmed prices.
   `0015_promotion_gallery` stores the ordered photo selections for each job.
+  `0016_promotion_soundtrack` stores the music choice per job.
   One worker encodes at a time, with a bounded timeout and two encoder threads.
+- The 15 bundled excerpts are from the [Open Music Academy CC0 collection](https://openmusic.academy/docs/PhjRHKrMCa9wXaMeFwhQrK/cc0-hintergrundmusik).
+  `backend/app/assets/promotion-soundtracks/catalog.json` records titles, creators, licenses,
+  source URLs and edit points. The worker reads the files locally. Older jobs without a selection
+  retain the original generated instrumental.
 - The renderer reads only public HTTPS INDE product pages and INDE catalog images. It
   checks the SKU, currency, stock and price and validates redirects and image size.
 - Every campaign, ZIP, upload, video download and approval requires an admin login and

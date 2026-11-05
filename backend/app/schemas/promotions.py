@@ -40,6 +40,7 @@ class PromotionReview(BaseModel):
 
 class PromotionRenderInput(BaseModel):
     aspect_ratio: Aspect
+    soundtrack_id: str | None = Field(default=None, min_length=1, max_length=64)
     prices: dict[str, Decimal] = Field(min_length=1, max_length=3)
     photo_selections: dict[str, Annotated[list[Annotated[str, Field(min_length=1, max_length=2048)]],
                                          Field(min_length=1, max_length=2)]] = Field(default_factory=dict, max_length=3)

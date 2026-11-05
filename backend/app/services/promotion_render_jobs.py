@@ -39,6 +39,7 @@ def _process_locked(db):
     job.status, job.started_at = "running", now
     job_id, campaign_id, ratio, prices = job.id, job.campaign_id, job.aspect_ratio, job.prices
     photo_selections = job.photo_selections
+    soundtrack_id = job.soundtrack_id
     campaign = db.get(PromotionCampaign, campaign_id)
     brief, queued_at = campaign.brief, job.created_at
     db.commit()
@@ -58,7 +59,7 @@ def _process_locked(db):
                 if not all(url in product["gallery"] for url in chosen):
                     raise RenderError("Μια επιλεγμένη φωτογραφία δεν υπάρχει πια στη συλλογή του προϊόντος. Επίλεξε ξανά.")
                 product["selected_images"] = chosen
-            video = render_video(client, brief, products, ratio, Path(work))
+            video = render_video(client, brief, products, ratio, Path(work), soundtrack_id=soundtrack_id)
             with video.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             size = video.stat().st_size

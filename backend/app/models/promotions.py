@@ -37,6 +37,7 @@ class PromotionRenderJob(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     prices: Mapped[dict] = mapped_column(JSONB)
     photo_selections: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    soundtrack_id: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

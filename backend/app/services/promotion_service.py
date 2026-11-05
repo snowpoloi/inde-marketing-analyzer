@@ -15,6 +15,7 @@ from sqlalchemy.orm import load_only
 
 from app.models import ProductCatalog, PromotionAsset, PromotionRenderJob, Supplier
 from app.services.dashboard_service import product_performance
+from app.services.promotion_music import TRACKS
 from app.services.supplier_catalog_pricing import catalog_prices, catalog_sale_quantities, latest_aade_costs, price_comparison
 from app.services.supplier_catalog_settings import pricing_settings
 
@@ -197,13 +198,17 @@ def export_package(brief):
 
 
 def serialize_campaign(db, campaign):
-    assets = db.scalars(select(PromotionAsset).where(PromotionAsset.campaign_id == campaign.id)
+    assets = db.execute(select(PromotionAsset, PromotionRenderJob.soundtrack_id)
+                        .outerjoin(PromotionRenderJob, PromotionRenderJob.id == PromotionAsset.id)
+                        .where(PromotionAsset.campaign_id == campaign.id)
                         .order_by(PromotionAsset.created_at.desc())).all()
     job = db.scalar(select(PromotionRenderJob).where(PromotionRenderJob.campaign_id == campaign.id)
                     .order_by(PromotionRenderJob.created_at.desc(), PromotionRenderJob.id).limit(1))
     return {"id": str(campaign.id), "title": campaign.title, "status": campaign.status,
             "brief": campaign.brief, "created_at": campaign.created_at, "updated_at": campaign.updated_at,
             "render": {"id": str(job.id), "status": job.status, "aspect_ratio": job.aspect_ratio,
-                       "error": job.error, "prices": job.prices} if job else None,
+                       "error": job.error, "prices": job.prices, "soundtrack_id": job.soundtrack_id} if job else None,
             "assets": [{"id": str(a.id), "aspect_ratio": a.aspect_ratio, "filename": a.filename,
-                        "byte_size": a.byte_size, "status": a.status, "review": a.review} for a in assets]}
+                        "byte_size": a.byte_size, "status": a.status, "review": a.review,
+                        "soundtrack": TRACKS[track_id]["title"] if track_id in TRACKS else None}
+                       for a, track_id in assets]}

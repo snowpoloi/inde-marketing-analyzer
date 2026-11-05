@@ -12,7 +12,8 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
-from app.services.promotion_creative import FPS, PLUM, creative_frame, price_text, soundtrack, timeline
+from app.services.promotion_creative import FPS, PLUM, STAMP_LAND, creative_frame, price_text, soundtrack, timeline
+from app.services.promotion_music import TRACKS, sync_cuts, track_path
 from app.services.promotion_service import end_card
 
 CENT = Decimal("0.01")
@@ -185,11 +186,16 @@ def product_photo(client, url):
         raise RenderError("Η φωτογραφία προϊόντος δεν μπόρεσε να διαβαστεί.") from None
 
 
-def render_video(client, brief, products, ratio, folder: Path):
+def render_video(client, brief, products, ratio, folder: Path, *, soundtrack_id=None):
     parameters = brief["parameters"]
+    music = track_path(soundtrack_id)
+    if soundtrack_id is not None and music is None:
+        raise RenderError("Το επιλεγμένο κομμάτι δεν είναι διαθέσιμο.")
     photos = [[product_photo(client, url) for url in product.get("selected_images", [product["image_url"]])]
               for product in products]
     beats = timeline(parameters["duration"], len(products), parameters["style"], [len(group) for group in photos])
+    if music:
+        beats = sync_cuts(beats, TRACKS[soundtrack_id]["accent_frames"])
     inputs, filters = [], []
 
     def still(frame, label, frames):
@@ -197,11 +203,12 @@ def render_video(client, brief, products, ratio, folder: Path):
         path = folder / f"{label}.png"
         frame.save(path)
         inputs.extend(["-framerate", str(FPS), "-i", str(path)])
+        pixel_format = "yuva420p" if frame.mode == "RGBA" else "yuv420p"
         filters.append(f"[{source}:v]loop={frames-1}:1:0,setpts=N/({FPS}*TB),"
-                       f"setsar=1,format=yuv420p[{label}]")
+                       f"setsar=1,format={pixel_format}[{label}]")
 
     for i, beat in enumerate(beats):
-        frame, layer = (end_card(ratio), None) if beat.kind == "end" else creative_frame(
+        frame, layer, stamp = (end_card(ratio), None, None) if beat.kind == "end" else creative_frame(
             beat, photos, products, parameters, ratio)
         still(frame, f"base{i}" if layer else f"v{i}", beat.frames)
         if layer:
@@ -214,19 +221,33 @@ def render_video(client, brief, products, ratio, folder: Path):
             direction = "-" if beat.kind != "detail" else ""
             start = 0.16 if beat.kind == "hook" else 0.0
             displacement = f"{direction}{dimension}*pow(max(0,1-(t+{start})/{length}),3)"
+            output = f"shot{i}" if stamp else f"v{i}"
             filters.extend([
                 f"[stage{i}][photo{i}]overlay={axis}='{displacement}':shortest=1[window{i}]",
-                f"[base{i}][window{i}]overlay={x}:{y}:shortest=1[v{i}]",
+                f"[base{i}][window{i}]overlay={x}:{y}:shortest=1[{output}]",
             ])
+        if stamp:
+            art, x, y = stamp
+            still(art, f"stamp{i}", beat.frames)
+            # Drop, overshoot for one frame, then settle on the beat.
+            fall = f"38*max(0,1-pow(max(0,t-0.06)/{STAMP_LAND - 0.06:.6f},2))"
+            rebound = f"8*max(0,1-abs(t-{STAMP_LAND + 1 / FPS:.6f})*{FPS})"
+            filters.append(f"[shot{i}][stamp{i}]overlay={x}:y='{y}-{fall}+{rebound}':"
+                           f"enable='gte(t,0.06)':shortest=1[v{i}]")
     audio_input = len(inputs) // 4
-    inputs.extend(["-f", "lavfi", "-i", soundtrack(beats)])
+    audio_filters = []
+    if music:
+        inputs.extend(["-i", str(music)])
+        audio_filters = ["-af", f"afade=t=out:st={parameters['duration'] - 0.7}:d=0.7"]
+    else:
+        inputs.extend(["-f", "lavfi", "-i", soundtrack(beats)])
     filters.append("".join(f"[v{i}]" for i in range(len(beats)))
                    + f"concat=n={len(beats)}:v=1:a=0,settb=1/{FPS},setpts=N[video]")
     target = folder / "render.mp4"
     try:
         subprocess.run([settings.promotion_ffmpeg_path, "-nostdin", "-v", "error", "-filter_complex_threads", "1",
                         *inputs, "-filter_complex", ";".join(filters), "-map", "[video]", "-map", f"{audio_input}:a",
-                        "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-c:v", "libx264",
+                        *audio_filters, "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-c:v", "libx264",
                         "-threads", "2", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
                         "-r", str(FPS), "-t", str(parameters["duration"]), "-movflags", "+faststart", str(target)],
                        check=True, capture_output=True, timeout=150)

@@ -98,6 +98,12 @@
 .promotion-photo-option[aria-pressed="true"] { border-color: #4a2d57; }
 .promotion-photo-option img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .promotion-photo-option span { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; background: #4a2d57; color: #fff; font-size: 12px; }
+.promotion-soundtrack { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.promotion-soundtrack-picker { display: grid; grid-template-columns: minmax(0,1fr) 36px; gap: 6px; align-items: center; }
+.promotion-soundtrack select { width: 100%; min-width: 0; height: 36px; text-overflow: ellipsis; }
+.promotion-soundtrack-picker .icon-button { width: 36px; height: 36px; }
+.promotion-soundtrack small { color: #66706a; }
+.promotion-soundtrack audio { display: block; width: 100%; height: 40px; }
 .promotion-asset-row { display: flex; gap: 7px; align-items: center; padding: 12px 0; border-bottom: 1px solid #d5d7d2; }
 .promotion-asset-row > span { flex: 1; font-size: 12px; }
 .promotion-asset-row small { display: block; font-size: 10px; color: #66706a; margin-top: 4px; }
