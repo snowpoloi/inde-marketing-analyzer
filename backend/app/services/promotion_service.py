@@ -9,11 +9,11 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont, ImageOps
 from sqlalchemy import select
 from sqlalchemy.orm import load_only
 
-from app.models import ProductCatalog, PromotionAsset, Supplier
+from app.models import ProductCatalog, PromotionAsset, PromotionRenderJob, Supplier
 from app.services.dashboard_service import product_performance
 from app.services.supplier_catalog_pricing import catalog_prices, catalog_sale_quantities, latest_aade_costs, price_comparison
 from app.services.supplier_catalog_settings import pricing_settings
@@ -21,6 +21,7 @@ from app.services.supplier_catalog_settings import pricing_settings
 FORMATS = {"9:16": {"width": 1080, "height": 1920, "channels": ["TikTok", "Meta Reels", "YouTube Shorts"]},
            "16:9": {"width": 1920, "height": 1080, "channels": ["YouTube", "Google Ads"]},
            "1:1": {"width": 1080, "height": 1080, "channels": ["Meta Feed"]}}
+END_CARD = Path(__file__).resolve().parents[1] / "assets" / "inde-end-card.png"
 STYLE = {
     "cinematic": "A cinematic product film: controlled dolly-in, tactile close-ups, motivated studio light and a deliberate match cut. Sophisticated contemporary art direction; no excessive effects.",
     "editorial": "A contemporary design editorial: architectural framing, strong composition, soft natural light, considered camera movement and clean cuts.",
@@ -165,21 +166,12 @@ def font(size):
     raise ValueError("A Greek-capable font is required for the end card.")
 
 
-def end_card(ratio, cta):
+def end_card(ratio):
     width, height = FORMATS[ratio]["width"], FORMATS[ratio]["height"]
-    canvas = Image.new("RGB", (width, height), "#f4f6f5")
-    draw = ImageDraw.Draw(canvas)
-    draw.rectangle((0, height - 26, width, height), fill="#166b57")
-    center = width / 2
-    draw.text((center, height * 0.35), "INDE", font=font(112), fill="#1f2328", anchor="mm")
-    size = 48
-    while size > 8 and draw.textbbox((0, 0), cta, font=font(size))[2] > width - 100:
-        size -= 2
-    draw.text((center, height * 0.53), cta, font=font(size), fill="#1f2328", anchor="mm")
-    draw.text((center, height * 0.68), "inde.gr", font=font(56), fill="#166b57", anchor="mm")
-    output = io.BytesIO()
-    canvas.save(output, "PNG")
-    return output.getvalue()
+    with Image.open(END_CARD) as source:
+        original = source.convert("RGB")
+    return ImageOps.pad(original, (width, height), method=Image.Resampling.LANCZOS,
+                        color=original.getpixel((0, 0)))
 
 
 def export_package(brief):
@@ -189,7 +181,9 @@ def export_package(brief):
         archive.writestr("ad-links.txt", "\n".join(f"{k}: {v}" for k, v in brief["ad_links"].items()))
         for variant in brief["variants"]:
             folder = variant["aspect_ratio"].replace(":", "x")
-            archive.writestr(f"{folder}/end-card.png", end_card(variant["aspect_ratio"], brief["parameters"]["cta"]))
+            card = io.BytesIO()
+            end_card(variant["aspect_ratio"]).save(card, "PNG")
+            archive.writestr(f"{folder}/end-card.png", card.getvalue())
             for index, shot in enumerate(variant["shots"], 1):
                 archive.writestr(f"{folder}/shot-{index}.txt", f"Reference: {shot['image_url']}\n\n{shot['prompt']}")
         archive.writestr("READ-ME.txt", "Preparation package only. No AI video has been generated or charged.\n"
@@ -205,7 +199,11 @@ def export_package(brief):
 def serialize_campaign(db, campaign):
     assets = db.scalars(select(PromotionAsset).where(PromotionAsset.campaign_id == campaign.id)
                         .order_by(PromotionAsset.created_at.desc())).all()
+    job = db.scalar(select(PromotionRenderJob).where(PromotionRenderJob.campaign_id == campaign.id)
+                    .order_by(PromotionRenderJob.created_at.desc(), PromotionRenderJob.id).limit(1))
     return {"id": str(campaign.id), "title": campaign.title, "status": campaign.status,
             "brief": campaign.brief, "created_at": campaign.created_at, "updated_at": campaign.updated_at,
+            "render": {"id": str(job.id), "status": job.status, "aspect_ratio": job.aspect_ratio,
+                       "error": job.error, "prices": job.prices} if job else None,
             "assets": [{"id": str(a.id), "aspect_ratio": a.aspect_ratio, "filename": a.filename,
                         "byte_size": a.byte_size, "status": a.status, "review": a.review} for a in assets]}

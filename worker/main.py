@@ -12,11 +12,17 @@ from app.services.supplier_catalog_service import process_supplier_catalog
 from app.services.aade_detail_jobs import process_aade_details
 from app.services.supplier_aade_jobs import process_aade_cost_batch
 from app.services.business_review_jobs import process_review_job, schedule_recent_history
+from app.services.promotion_render_jobs import process_render_job
 
 
 def review_history_sync() -> None:
     with SessionLocal() as db:
         process_review_job(db)
+
+
+def promotion_render_sync() -> None:
+    with SessionLocal() as db:
+        process_render_job(db)
 
 
 def supplier_gmail_sync() -> None:
@@ -51,6 +57,8 @@ def main() -> None:
     scheduler = BlockingScheduler(timezone=settings.sync_timezone)
     scheduler.add_job(daily_sync, "cron", hour=settings.sync_daily_hour, minute=0, id="daily-marketing-sync")
     scheduler.add_job(review_history_sync, "interval", seconds=60, id="business-review-history",
+                      max_instances=1, coalesce=True)
+    scheduler.add_job(promotion_render_sync, "interval", seconds=5, id="promotion-local-render",
                       max_instances=1, coalesce=True)
     scheduler.add_job(supplier_gmail_sync, "interval", seconds=45, id="supplier-gmail-readonly",
                       max_instances=1, coalesce=True, next_run_time=datetime.now(ZoneInfo(settings.sync_timezone)))

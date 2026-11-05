@@ -1,6 +1,6 @@
 import type { ShippingContext, ShippingInputs, ShippingParcel, ShippingResult, ShippingSettings } from "./orderShipping";
 import type { BusinessReview, ReviewEvidence, ReviewJobs, ReviewParameters } from "./businessReview";
-import type { PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionProduct, PromotionReview } from "./promotions";
+import type { PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionPriceCheck, PromotionProduct, PromotionReview } from "./promotions";
 
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
@@ -530,6 +530,10 @@ export const api = {
   promotionCampaign: (id:string) => request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}`),
   promotionCreate: (payload:PromotionInput) => request<PromotionCampaign>("/promotions/campaigns",{method:"POST",body:JSON.stringify(payload)}),
   promotionPackage: (id:string) => requestResponse(`/promotions/campaigns/${encodeURIComponent(id)}/package`).then(r=>r.blob()),
+  promotionEndCard: () => requestResponse("/promotions/end-card").then(r=>r.blob()),
+  promotionRenderPrices: (id:string) => request<PromotionPriceCheck>(`/promotions/campaigns/${encodeURIComponent(id)}/render-prices`),
+  promotionRender: (id:string, aspect_ratio:PromotionFormat, prices:Record<string,string>) =>
+    request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/render`, {method:"POST", body:JSON.stringify({aspect_ratio, prices})}),
   promotionUpload: (id:string, aspect:PromotionFormat, file:File) => { const body=new FormData(); body.append("aspect_ratio",aspect); body.append("file",file);
     return request<PromotionCampaign>(`/promotions/campaigns/${encodeURIComponent(id)}/assets`,{method:"POST",body}); },
   promotionMedia: (id:string) => requestResponse(`/promotions/assets/${encodeURIComponent(id)}/content`).then(r=>r.blob()),

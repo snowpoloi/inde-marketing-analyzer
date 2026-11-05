@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     sync_daily_hour: int = 4
     sync_timezone: str = "Europe/Athens"
     promotion_media_dir: str = "promotion-media"
+    promotion_ffmpeg_path: str = "ffmpeg"
     supplier_gmail_enabled: bool = False
     supplier_gmail_client_id: str | None = None
     supplier_gmail_client_secret: str | None = None

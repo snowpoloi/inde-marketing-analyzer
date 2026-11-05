@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -35,3 +36,15 @@ class PromotionReview(BaseModel):
     cta_and_text: Literal[True]
     image_and_audio_rights: Literal[True]
     platform_format: Literal[True]
+
+
+class PromotionRenderInput(BaseModel):
+    aspect_ratio: Aspect
+    prices: dict[str, Decimal] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_prices(self):
+        if any(not sku or len(sku) > 255 or not value.is_finite() or not 0 < value <= Decimal("99999999.99")
+               or value != value.quantize(Decimal("0.01")) for sku, value in self.prices.items()):
+            raise ValueError("Invalid confirmed product prices.")
+        return self

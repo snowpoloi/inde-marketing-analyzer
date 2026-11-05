@@ -30,10 +30,10 @@ from app.models.entities import (
 )
 
 from app.models.business_review import ReviewEvent, ReviewJob, ReviewReport
-from app.models.promotions import PromotionCampaign, PromotionAsset
+from app.models.promotions import PromotionCampaign, PromotionAsset, PromotionRenderJob
 
 __all__ = [
-    "PromotionCampaign", "PromotionAsset",
+    "PromotionCampaign", "PromotionAsset", "PromotionRenderJob",
     "ReviewEvent", "ReviewJob", "ReviewReport",
     "AADEDocument",
     "AADESummaryMetric",

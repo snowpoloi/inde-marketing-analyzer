@@ -1,6 +1,7 @@
 from uuid import UUID, uuid4
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,3 +27,15 @@ class PromotionAsset(TimestampMixin, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="needs_review")
     review: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class PromotionRenderJob(TimestampMixin, Base):
+    __tablename__ = "promotion_render_jobs"
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    campaign_id: Mapped[UUID] = mapped_column(ForeignKey("promotion_campaigns.id", ondelete="CASCADE"), index=True)
+    aspect_ratio: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    prices: Mapped[dict] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
