@@ -248,9 +248,13 @@ Dashboard:
 - `GET /api/dashboard/funnel`
 - `GET /api/dashboard/landing-pages`
 - `GET /api/dashboard/meta-ads`
+- `GET /api/dashboard/google-search-terms`
+- `GET /api/dashboard/google-products`
+- `GET /api/dashboard/google-asset-groups`
+- `GET /api/dashboard/merchant-issues`
 - `GET /api/dashboard/freshness`
 
-Dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD` (except `freshness`, which takes none). The funnel, landing-page, per-ad Meta and freshness reports are described in [docs/detail-reports.md](docs/detail-reports.md).
+Dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD` (except `freshness` and `merchant-issues`, which take none). The funnel, landing-page, per-ad Meta and freshness reports are described in [docs/detail-reports.md](docs/detail-reports.md). Google Ads search terms, products, asset groups and Merchant Center issues are described in [docs/google-ads-merchant-reports.md](docs/google-ads-merchant-reports.md).
 
 ## CSV Imports
 
@@ -297,7 +301,11 @@ Initial Alembic migration creates:
 - `ga4_daily_metrics`
 - `ga4_funnel_daily_metrics` (migration 0018)
 - `ga4_landing_page_daily_metrics` (migration 0019)
+- `google_ads_search_term_daily_metrics` (migration 0020)
+- `google_ads_product_daily_metrics` (migration 0021)
+- `google_ads_asset_group_daily_metrics` (migration 0022)
 - `merchant_product_metrics`
+- `merchant_product_statuses` and `merchant_product_issues` (migration 0023)
 - `search_console_daily_metrics`
 - `opencart_orders`
 - `opencart_order_changes`

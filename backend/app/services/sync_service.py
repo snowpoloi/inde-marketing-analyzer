@@ -20,6 +20,8 @@ from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun, SupplierCatalogFeed
 from app.services.supplier_catalog_settings import queue_cost_refresh
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
+from app.services.google_ads_reports import import_asset_group_rows, import_product_rows, import_search_term_rows
+from app.services.merchant_issues import import_product_statuses
 from app.services.import_service import (
     import_aade_payload,
     import_ga4_funnel_rows,
@@ -38,6 +40,19 @@ from app.services.parsing import as_decimal, as_int
 from app.services.product_catalog_service import enrich_order_products_from_catalog
 
 INTRADAY_SYNC_TYPE = "intraday"
+# Merchant statuses are a snapshot of today, so historical backfills and intraday runs leave them as they are.
+MERCHANT_STATUS_SYNC_TYPES = frozenset({"scheduled", "manual"})
+# Google Ads detail reports: (meta name, label, connector method, importer). Not run by intraday syncs.
+GOOGLE_ADS_DETAIL_REPORTS = (
+    ("search_terms", "search terms", "fetch_search_terms", import_search_term_rows),
+    ("products", "products", "fetch_products", import_product_rows),
+    ("asset_groups", "asset groups", "fetch_asset_groups", import_asset_group_rows),
+)
+PARTIAL_ERROR_LENGTH = 1000
+
+
+def _partial_error(exc: Exception) -> str:
+    return (redact_sensitive(str(exc)) or exc.__class__.__name__)[:PARTIAL_ERROR_LENGTH]
 
 
 def default_sync_window() -> tuple[date, date]:
@@ -144,6 +159,66 @@ def sync_ga4(db: Session, config: dict[str, Any], date_from: date, date_to: date
             count += stored
     meta["ga4_quota"] = dict(connector.quota)
     return count, meta, "; ".join(errors) or None
+
+
+def sync_google_ads(
+    db: Session, config: dict[str, Any], date_from: date, date_to: date, sync_type: str
+) -> tuple[int, dict[str, Any], str | None]:
+    """Import Google Ads campaign metrics, then (except intraday) search terms, products and asset groups.
+
+    The campaign metrics decide success. A failed detail report keeps the run successful but is named in the
+    run's error and meta, and leaves that table's stored days as they were.
+    """
+    connector = GoogleAdsConnector(config)
+    rows = connector.fetch_campaign_metrics(date_from, date_to)
+    count = import_google_ads_rows(db, rows, date_from)
+    meta: dict[str, Any] = {}
+    errors = []
+    if sync_type == INTRADAY_SYNC_TYPE:
+        meta["google_ads_detail_reports"] = "skipped: intraday runs read campaign metrics only"
+    else:
+        for name, label, fetch, store in GOOGLE_ADS_DETAIL_REPORTS:
+            try:
+                stored = store(db, getattr(connector, fetch)(date_from, date_to), date_from, date_to)
+            except Exception as exc:
+                db.rollback()
+                message = _partial_error(exc)
+                meta[f"google_ads_{name}_error"] = message
+                errors.append(f"Google Ads {label} report failed: {message}")
+            else:
+                meta[f"google_ads_{name}_rows"] = stored
+                count += stored
+    meta["google_ads_api_requests"] = connector.requests
+    return count, meta, "; ".join(errors) or None
+
+
+def sync_merchant_center(
+    db: Session, config: dict[str, Any], date_from: date, date_to: date, sync_type: str
+) -> tuple[int, dict[str, Any], str | None]:
+    """Import Merchant product metrics, then (scheduled and manual runs, Merchant API only) the snapshot of
+    product statuses and issues. A failed status read keeps the run successful and the previous snapshot."""
+    connector = MerchantCenterConnector(config)
+    rows = connector.fetch_product_metrics(date_from, date_to)
+    count = import_merchant_rows(db, rows, date_from)
+    meta: dict[str, Any] = merchant_sync_meta(rows)
+    error = None
+    if sync_type not in MERCHANT_STATUS_SYNC_TYPES:
+        meta["merchant_statuses"] = f"skipped: {sync_type} runs keep the latest snapshot"
+    elif not connector.uses_api:
+        meta["merchant_statuses"] = "skipped: product statuses need the Merchant API; a CSV export has none"
+    else:
+        try:
+            stored = import_product_statuses(db, connector.fetch_product_statuses(), datetime.now(timezone.utc))
+        except Exception as exc:
+            db.rollback()
+            message = _partial_error(exc)
+            meta["merchant_statuses_error"] = message
+            error = f"Merchant product statuses failed: {message}"
+        else:
+            meta.update(stored)
+            count += stored["merchant_status_products"]
+    meta["merchant_api_requests"] = connector.requests
+    return count, meta, error
 
 
 def merchant_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -350,8 +425,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
             rows = MetaAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
             count = import_meta_ads_rows(db, rows, date_from)
         elif provider == "google_ads":
-            rows = GoogleAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
-            count = import_google_ads_rows(db, rows, date_from)
+            count, meta, partial_error = sync_google_ads(db, config, date_from, date_to, sync_type)
         elif provider == "tiktok_ads":
             rows = TikTokAdsConnector(config).fetch_campaign_metrics(date_from, date_to)
             count = import_tiktok_ads_rows(db, rows, date_from)
@@ -359,9 +433,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
         elif provider == "ga4":
             count, meta, partial_error = sync_ga4(db, config, date_from, date_to)
         elif provider == "merchant_center":
-            rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
-            count = import_merchant_rows(db, rows, date_from)
-            meta = merchant_sync_meta(rows)
+            count, meta, partial_error = sync_merchant_center(db, config, date_from, date_to, sync_type)
         elif provider == "search_console":
             rows = SearchConsoleConnector(config).fetch_search_analytics(date_from, date_to)
             count = import_search_console_rows(db, rows, date_from)

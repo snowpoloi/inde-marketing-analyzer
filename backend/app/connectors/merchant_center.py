@@ -1,8 +1,12 @@
 from datetime import date
 from typing import Any
 
+# The Merchant API has no read-only scope. This connector only lists products and runs report searches.
 CONTENT_SCOPE = "https://www.googleapis.com/auth/content"
 MERCHANT_API_BASE = "https://merchantapi.googleapis.com"
+# products.list returns at most 1,000 products per page; the cap stops a runaway listing.
+PRODUCTS_PAGE_SIZE = 1000
+MAX_PRODUCT_PAGES = 200
 
 LEVELS = range(1, 6)
 CUSTOM_LABELS = range(5)
@@ -27,10 +31,56 @@ def custom_labels(view: dict[str, Any]) -> dict[str, str | None]:
     return {f"custom_label_{index}": view.get(f"customLabel{index}") or None for index in CUSTOM_LABELS}
 
 
+def product_status(product: dict[str, Any]) -> dict[str, Any]:
+    """The approval status per destination and the item-level issues of one Merchant API product."""
+    attributes = product.get("productAttributes") or product.get("attributes") or {}
+    status = product.get("productStatus") or {}
+    return {
+        "offer_id": product.get("offerId"),
+        "feed_label": product.get("feedLabel"),
+        "content_language": product.get("contentLanguage"),
+        "title": attributes.get("title"),
+        "destinations": [
+            {
+                "reporting_context": destination.get("reportingContext"),
+                "approved_countries": list(destination.get("approvedCountries") or []),
+                "pending_countries": list(destination.get("pendingCountries") or []),
+                "disapproved_countries": list(destination.get("disapprovedCountries") or []),
+            }
+            for destination in status.get("destinationStatuses") or []
+        ],
+        "issues": [
+            {
+                "code": issue.get("code"),
+                "severity": issue.get("severity"),
+                "resolution": issue.get("resolution"),
+                "attribute": issue.get("attribute"),
+                "reporting_context": issue.get("reportingContext"),
+                "description": issue.get("description"),
+                "detail": issue.get("detail"),
+                "documentation": issue.get("documentation"),
+                "applicable_countries": list(issue.get("applicableCountries") or []),
+            }
+            for issue in status.get("itemLevelIssues") or []
+        ],
+    }
+
+
 class MerchantCenterConnector:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self._token: str | None = None
+        # HTTP requests to the Merchant API, for the run meta.
+        self.requests = 0
+
+    @property
+    def uses_api(self) -> bool:
+        """OAuth credentials configured; without them only the CSV export is read."""
+        credentials_json = self.config.get("credentials_json")
+        return bool(
+            self.config.get("refresh_token")
+            or (isinstance(credentials_json, dict) and credentials_json.get("refresh_token"))
+        )
 
     def _access_token(self) -> str:
         if self._token:
@@ -62,16 +112,25 @@ class MerchantCenterConnector:
         self._token = credentials.token
         return self._token
 
-    def _request(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         import httpx
 
         timeout = float(self.config.get("timeout_seconds", 60))
         for attempt in range(2):
+            self.requests += 1
             response = httpx.request(
                 method,
                 f"{MERCHANT_API_BASE}{path}",
                 headers={"Authorization": f"Bearer {self._access_token()}"},
                 json=json,
+                params=params,
                 timeout=timeout,
             )
             if response.status_code == 401 and attempt == 0:
@@ -222,11 +281,24 @@ class MerchantCenterConnector:
         response.raise_for_status()
         return list(csv.DictReader(io.StringIO(response.text)))
 
+    def fetch_product_statuses(self) -> list[dict[str, Any]]:
+        """Every product's approval status per destination and its item-level issues (products.list, GET only)."""
+        account_id = self._account_id()
+        products: list[dict[str, Any]] = []
+        page_token = ""
+        for _ in range(MAX_PRODUCT_PAGES):
+            params: dict[str, Any] = {"pageSize": PRODUCTS_PAGE_SIZE}
+            if page_token:
+                params["pageToken"] = page_token
+            response = self._request("GET", f"/products/v1/accounts/{account_id}/products", params=params)
+            products.extend(product_status(product) for product in response.get("products") or [])
+            page_token = response.get("nextPageToken") or ""
+            if not page_token:
+                return products
+        raise RuntimeError(f"Merchant product list has more than {MAX_PRODUCT_PAGES} pages; statuses were not stored.")
+
     def fetch_product_metrics(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
-        if not (
-            self.config.get("refresh_token")
-            or (isinstance(self.config.get("credentials_json"), dict) and self.config["credentials_json"].get("refresh_token"))
-        ):
+        if not self.uses_api:
             return self._fetch_csv_export()
 
         account_id = self._account_id()
