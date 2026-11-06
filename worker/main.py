@@ -6,7 +6,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.constants import PROVIDERS
-from app.services.sync_service import run_many
+from app.services.sync_service import run_intraday_sync, run_many
 from app.services.supplier_gmail_jobs import process_gmail_jobs
 from app.services.supplier_catalog_service import process_supplier_catalog
 from app.services.aade_detail_jobs import process_aade_details
@@ -38,6 +38,16 @@ def daily_sync() -> None:
         run_many(db, list(PROVIDERS.keys()), target_day, target_day, sync_type="scheduled")
 
 
+def intraday_sync() -> None:
+    """Today's ads, orders and GA4 during the day; the 04:00 daily sync still re-reads yesterday in full."""
+    today = datetime.now(ZoneInfo(settings.sync_timezone)).date()
+    with SessionLocal() as db:
+        if {"google_ads", "meta_ads"} & set(settings.sync_intraday_provider_list):
+            # Cheap (a handful of API calls per provider), and same-day account changes show up.
+            schedule_recent_history(db)
+        run_intraday_sync(db, today)
+
+
 def supplier_catalog_sync() -> None:
     with SessionLocal() as db:
         process_supplier_catalog(db)
@@ -56,6 +66,14 @@ def aade_cost_sync() -> None:
 def main() -> None:
     scheduler = BlockingScheduler(timezone=settings.sync_timezone)
     scheduler.add_job(daily_sync, "cron", hour=settings.sync_daily_hour, minute=0, id="daily-marketing-sync")
+    intraday_hours = settings.sync_intraday_hour_list
+    if intraday_hours and settings.sync_intraday_provider_list:
+        scheduler.add_job(intraday_sync, "cron", hour=",".join(str(hour) for hour in intraday_hours), minute=0,
+                          id="intraday-marketing-sync", max_instances=1, coalesce=True)
+        print(f"Intraday sync at {intraday_hours} {settings.sync_timezone} for "
+              f"{', '.join(settings.sync_intraday_provider_list)}.", flush=True)
+    else:
+        print("Intraday sync is off.", flush=True)
     scheduler.add_job(review_history_sync, "interval", seconds=60, id="business-review-history",
                       max_instances=1, coalesce=True)
     scheduler.add_job(promotion_render_sync, "interval", seconds=5, id="promotion-local-render",

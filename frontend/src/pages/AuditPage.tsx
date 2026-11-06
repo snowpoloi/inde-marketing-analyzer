@@ -112,6 +112,9 @@ type FeedAuditRow = {
   audit_action: string;
   severity: string;
   reason: string;
+  category_levels?: string[];
+  product_type_levels?: string[];
+  custom_labels?: Record<string, string>;
 };
 
 type AadeSummary = {
@@ -254,6 +257,17 @@ const emptyAudit: AuditData = {
 
 function pct(value: number) {
   return `${number.format(value)}%`;
+}
+
+function feedCategory(row: FeedAuditRow) {
+  const levels = row.product_type_levels?.length ? row.product_type_levels : row.category_levels ?? [];
+  return levels.join(" > ");
+}
+
+function feedLabels(row: FeedAuditRow) {
+  return Object.entries(row.custom_labels ?? {})
+    .map(([key, value]) => `${key.replace("custom_label_", "")}: ${value}`)
+    .join(" · ");
 }
 
 function metricId(row: ProductAuditRow) {
@@ -543,6 +557,8 @@ const productSorters: SortAccessors<ProductAuditRow> = {
 const feedSorters: SortAccessors<FeedAuditRow> = {
   title: (row) => row.title || row.item_id,
   item: (row) => row.item_id,
+  category: (row) => feedCategory(row),
+  labels: (row) => feedLabels(row),
   clicks: (row) => row.clicks,
   impressions: (row) => row.impressions,
   ctr: (row) => row.ctr,
@@ -790,11 +806,13 @@ export function AuditPage() {
     () => [
       { key: "title", header: "Feed item", ...sortable("feed", "title"), render: (row) => <strong>{row.title || row.item_id}</strong> },
       { key: "item", header: "Item ID", ...sortable("feed", "item"), render: (row) => row.item_id },
+      { key: "category", header: "Category", ...sortable("feed", "category"), render: (row) => feedCategory(row) || "-" },
       { key: "clicks", header: "Clicks", align: "right", ...sortable("feed", "clicks"), render: (row) => number.format(row.clicks) },
       { key: "impressions", header: "Impressions", align: "right", ...sortable("feed", "impressions"), render: (row) => number.format(row.impressions) },
       { key: "ctr", header: "CTR", align: "right", ...sortable("feed", "ctr"), render: (row) => pct(row.ctr) },
       { key: "availability", header: "Availability", ...sortable("feed", "availability"), render: (row) => row.availability || "-" },
       { key: "status", header: "Status", ...sortable("feed", "status"), render: (row) => row.merchant_status || "-" },
+      { key: "labels", header: "Custom labels", ...sortable("feed", "labels"), render: (row) => feedLabels(row) || "-" },
       { key: "sales", header: "Sales match", ...sortable("feed", "sales"), render: (row) => (row.has_opencart_sales ? "Yes" : "No") },
       { key: "action", header: "Action", ...sortable("feed", "action"), render: (row) => <StatusBadge value={row.audit_action} /> },
       { key: "reason", header: "Reason", ...sortable("feed", "reason"), render: (row) => row.reason }
@@ -1019,11 +1037,13 @@ export function AuditPage() {
       buildCsvSection("Merchant feed audit", sortedFeed, [
         { header: "Feed item", value: (row) => row.title || row.item_id },
         { header: "Item ID", value: (row) => row.item_id },
+        { header: "Category", value: (row) => feedCategory(row) || "-" },
         { header: "Clicks", value: (row) => row.clicks },
         { header: "Impressions", value: (row) => row.impressions },
         { header: "CTR", value: (row) => pct(row.ctr) },
         { header: "Availability", value: (row) => row.availability || "-" },
         { header: "Status", value: (row) => row.merchant_status || "-" },
+        { header: "Custom labels", value: (row) => feedLabels(row) || "-" },
         { header: "Sales match", value: (row) => row.has_opencart_sales },
         { header: "Action", value: (row) => row.audit_action },
         { header: "Reason", value: (row) => row.reason }

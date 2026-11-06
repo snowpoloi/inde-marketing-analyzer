@@ -528,6 +528,19 @@ export type AdvestiqReportSummary = {
   id: string; kind: AdvestiqReportKind; report_date: string; title: string; summary: string; updated_at: string;
 };
 export type AdvestiqReport = AdvestiqReportSummary & { markdown: string };
+export type FreshnessRun = {
+  status: string; sync_type: string; started_at: string | null; finished_at: string | null;
+  date_from: string | null; date_to: string | null; records_processed: number; has_error: boolean;
+};
+export type ProviderFreshness = {
+  provider: string; name: string; enabled: boolean | null; intraday: boolean;
+  latest_run: FreshnessRun | null; last_success: FreshnessRun | null; today_synced_at: string | null;
+};
+export type SyncFreshness = {
+  now: string; today: string; timezone: string; daily_sync_hour: number;
+  intraday: { hours: number[]; providers: string[]; next_run_at: string | null };
+  providers: ProviderFreshness[];
+};
 
 export const api = {
   promotionProducts: (date_from:string, date_to:string, search:string, minimum_margin:number, only_eligible:boolean) =>
@@ -559,6 +572,7 @@ export const api = {
   advestiqReports: (kind: AdvestiqReportKind) =>
     request<{data:{rows:AdvestiqReportSummary[]}}>(`/advestiq/reports?${new URLSearchParams({kind})}`),
   advestiqReport: (id: string) => request<{data:AdvestiqReport}>(`/advestiq/reports/${encodeURIComponent(id)}`),
+  syncFreshness: () => request<{data:SyncFreshness}>("/dashboard/freshness"),
   reviewReport: (id:string) => request<BusinessReview>(`/business-review/reports/${encodeURIComponent(id)}`),
   pendingSupplierCosts: (filters: Record<string, string>) => request<{data: PendingCostResult}>(`/suppliers/aade/pending-costs?${new URLSearchParams(filters)}`),
   confirmSupplierCostLine: (id: string, payload: ConfirmCostLine) => request<{data:{duplicate:boolean; costs_created:number; pending_lines:number}}>(

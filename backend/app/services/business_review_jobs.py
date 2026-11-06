@@ -118,7 +118,14 @@ def schedule_recent_history(db):
         setting = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == provider))
         if setting and setting.is_enabled:
             # Re-read recent days because API events can arrive with a delay.
-            queue_job(db, provider, "changes", today() - timedelta(days=3), today())
+            start, end = today() - timedelta(days=3), today()
+            if not queue_job(db, provider, "changes", start, end):
+                # Same day again (intraday syncs): re-run the window once its last run has finished.
+                # Events are de-duplicated by source_key, so a re-run only adds new changes.
+                db.execute(update(ReviewJob).where(
+                    ReviewJob.provider == provider, ReviewJob.kind == "changes", ReviewJob.date_from == start,
+                    ReviewJob.date_to == end, ReviewJob.status.in_(["success", "failed"]),
+                ).values(status="queued", error=None))
     db.commit()
 
 

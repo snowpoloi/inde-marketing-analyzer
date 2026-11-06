@@ -1,12 +1,13 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select, text, update
+from sqlalchemy.orm import Session, load_only
 
 from app.connectors.aade import AADEConnector, AADERateLimitError
-from app.connectors.ga4 import GA4Connector
+from app.connectors.ga4 import REFRESH_DAYS as GA4_REFRESH_DAYS, GA4Connector
 from app.connectors.google_ads import GoogleAdsConnector
 from app.connectors.merchant_center import MerchantCenterConnector
 from app.connectors.meta_ads import MetaAdsConnector
@@ -14,12 +15,15 @@ from app.connectors.opencart import OpenCartConnector
 from app.connectors.search_console import SearchConsoleConnector
 from app.connectors.shoply import ShoplyConnector
 from app.connectors.tiktok_ads import TikTokAdsConnector
+from app.core.config import settings
 from app.core.redaction import redact_sensitive
 from app.models import IntegrationSetting, SyncRun, SupplierCatalogFeed
 from app.services.supplier_catalog_settings import queue_cost_refresh
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
 from app.services.import_service import (
     import_aade_payload,
+    import_ga4_funnel_rows,
+    import_ga4_landing_page_rows,
     import_ga4_rows,
     import_google_ads_rows,
     import_merchant_rows,
@@ -32,6 +36,8 @@ from app.services.import_service import (
 )
 from app.services.parsing import as_decimal, as_int
 from app.services.product_catalog_service import enrich_order_products_from_catalog
+
+INTRADAY_SYNC_TYPE = "intraday"
 
 
 def default_sync_window() -> tuple[date, date]:
@@ -103,6 +109,41 @@ def ga4_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int | float]:
         "ga4_purchases": _json_number(purchases),
         "ga4_purchase_revenue": _json_number(revenue),
     }
+
+
+def ga4_sync_window(date_from: date, date_to: date) -> tuple[date, date]:
+    """GA4 attributes sources 24-48 hours late, so every GA4 sync re-reads at least the last
+    REFRESH_DAYS days up to date_to and replaces what was stored for them."""
+    return min(date_from, date_to - timedelta(days=GA4_REFRESH_DAYS - 1)), date_to
+
+
+def sync_ga4(db: Session, config: dict[str, Any], date_from: date, date_to: date) -> tuple[int, dict[str, Any], str | None]:
+    """Import GA4 channel metrics, then the funnel and landing-page reports.
+
+    The channel metrics decide success. A failed funnel or landing-page report keeps the run
+    successful but is named in the run's error and meta, and leaves that table's stored days as they were.
+    """
+    connector = GA4Connector(config)
+    rows = connector.fetch_daily_metrics(date_from, date_to)
+    count = import_ga4_rows(db, rows, date_from, date_to)
+    meta: dict[str, Any] = {**ga4_sync_meta(rows), "ga4_refresh_days": GA4_REFRESH_DAYS}
+    errors = []
+    for name, label, fetch, store in (
+        ("funnel", "funnel", connector.fetch_funnel_events, import_ga4_funnel_rows),
+        ("landing_page", "landing pages", connector.fetch_landing_pages, import_ga4_landing_page_rows),
+    ):
+        try:
+            stored = store(db, fetch(date_from, date_to), date_from, date_to)
+        except Exception as exc:
+            db.rollback()
+            message = redact_sensitive(str(exc)) or exc.__class__.__name__
+            meta[f"ga4_{name}_error"] = message
+            errors.append(f"GA4 {label} report failed: {message}")
+        else:
+            meta[f"ga4_{name}_rows"] = stored
+            count += stored
+    meta["ga4_quota"] = dict(connector.quota)
+    return count, meta, "; ".join(errors) or None
 
 
 def merchant_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -266,6 +307,8 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
     window_from, window_to = default_sync_window()
     date_from = date_from or window_from
     date_to = date_to or window_to
+    if provider == "ga4":
+        date_from, date_to = ga4_sync_window(date_from, date_to)
     run = start_run(db, provider, sync_type, date_from, date_to)
     integration = get_integration(db, provider)
     if not integration or not integration.is_enabled:
@@ -274,6 +317,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
     try:
         config = integration.config or {}
         meta = None
+        partial_error = None
         if provider == "opencart":
             connector = OpenCartConnector(config)
             product_count = 0
@@ -289,7 +333,8 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
                     db.rollback()
                     order_error = str(exc)
             should_fetch_product_feed = bool(connector.product_feed_url)
-            if sync_type == "backfill" or (sync_type == "manual" and connector.endpoint_url and not config.get("sync_product_feed_on_manual")):
+            # The full product feed is heavy; intraday runs only need today's orders.
+            if sync_type in {"backfill", INTRADAY_SYNC_TYPE} or (sync_type == "manual" and connector.endpoint_url and not config.get("sync_product_feed_on_manual")):
                 should_fetch_product_feed = False
             if should_fetch_product_feed:
                 try:
@@ -312,9 +357,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
             count = import_tiktok_ads_rows(db, rows, date_from)
             meta = tiktok_ads_sync_meta(rows)
         elif provider == "ga4":
-            rows = GA4Connector(config).fetch_daily_metrics(date_from, date_to)
-            count = import_ga4_rows(db, rows, date_from)
-            meta = ga4_sync_meta(rows)
+            count, meta, partial_error = sync_ga4(db, config, date_from, date_to)
         elif provider == "merchant_center":
             rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
             count = import_merchant_rows(db, rows, date_from)
@@ -379,12 +422,13 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
         if provider in {"opencart", "aade"}:
             queue_cost_refresh(db)
             meta = {**(meta or {}), "supplier_cost_refresh_queued": True}
-            if provider == "opencart" and sync_type != "backfill":
+            # Supplier XML feeds are re-read after the daily sync, not after every intraday run.
+            if provider == "opencart" and sync_type not in {"backfill", INTRADAY_SYNC_TYPE}:
                 db.execute(update(SupplierCatalogFeed).where(SupplierCatalogFeed.is_enabled.is_(True),
                     SupplierCatalogFeed.status != "running").values(
                         requested_at=datetime.now(timezone.utc), status="queued", error=None))
                 meta["supplier_xml_refresh_queued"] = True
-        return finish_run(db, run, "success", count, meta=meta)
+        return finish_run(db, run, "success", count, error=partial_error, meta=meta)
     except Exception as exc:
         db.rollback()
         run = db.get(SyncRun, run.id)
@@ -395,3 +439,112 @@ def run_many(db: Session, providers: list[str] | None, date_from: date | None, d
     expire_stale_runs(db)
     selected = providers or list(PROVIDERS.keys())
     return [run_provider_sync(db, provider, date_from, date_to, sync_type=sync_type) for provider in selected]
+
+
+def enabled_providers(db: Session, providers: list[str]) -> list[str]:
+    known = [provider for provider in dict.fromkeys(providers) if provider in PROVIDERS]
+    if not known:
+        return []
+    enabled = set(db.scalars(select(IntegrationSetting.provider).where(
+        IntegrationSetting.provider.in_(known), IntegrationSetting.is_enabled.is_(True))).all())
+    return [provider for provider in known if provider in enabled]
+
+
+def run_intraday_sync(db: Session, day: date, providers: list[str] | None = None) -> list[SyncRun]:
+    """Sync one day (today) for the intraday providers.
+
+    Imports replace a provider's rows for the day, so repeated runs never duplicate data. Disabled
+    providers are left out, so they add no skipped runs every two hours. A provider whose previous run
+    still holds its lock gets a skipped run (reason provider_busy), as for any other sync.
+    """
+    selected = enabled_providers(db, settings.sync_intraday_provider_list if providers is None else providers)
+    if not selected:
+        return []
+    return run_many(db, selected, day, day, sync_type=INTRADAY_SYNC_TYPE)
+
+
+def _local_time(value: datetime | None, zone: ZoneInfo) -> str | None:
+    return value.astimezone(zone).isoformat() if value else None
+
+
+def _run_summary(run: SyncRun | None, zone: ZoneInfo) -> dict[str, Any] | None:
+    """A run without its error text or meta: those can carry API details."""
+    if run is None:
+        return None
+    return {
+        "status": run.status,
+        "sync_type": run.sync_type,
+        "started_at": _local_time(run.started_at, zone),
+        "finished_at": _local_time(run.finished_at, zone),
+        "date_from": run.date_from.isoformat() if run.date_from else None,
+        "date_to": run.date_to.isoformat() if run.date_to else None,
+        "records_processed": run.records_processed,
+        "has_error": bool(run.error_message),
+    }
+
+
+def _latest_runs(db: Session, *conditions: Any) -> dict[str, SyncRun]:
+    ranked = (
+        select(
+            SyncRun.id,
+            func.row_number().over(partition_by=SyncRun.provider, order_by=SyncRun.started_at.desc()).label("rank"),
+        )
+        .where(SyncRun.provider.in_(list(PROVIDERS)), *conditions)
+        .subquery()
+    )
+    query = (
+        select(SyncRun)
+        .options(load_only(SyncRun.provider, SyncRun.status, SyncRun.sync_type, SyncRun.started_at, SyncRun.finished_at,
+                           SyncRun.date_from, SyncRun.date_to, SyncRun.records_processed, SyncRun.error_message))
+        .join(ranked, ranked.c.id == SyncRun.id)
+        .where(ranked.c.rank == 1)
+    )
+    return {run.provider: run for run in db.scalars(query).all()}
+
+
+def next_intraday_run(now: datetime, hours: list[int]) -> datetime | None:
+    if not hours:
+        return None
+    for hour in hours:
+        candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if candidate > now:
+            return candidate
+    return datetime.combine(now.date() + timedelta(days=1), time(hours[0]), tzinfo=now.tzinfo)
+
+
+def sync_freshness(db: Session, now: datetime | None = None) -> dict[str, Any]:
+    """Per provider: the latest run, the latest successful run and when today's data was last synced."""
+    zone = ZoneInfo(settings.sync_timezone)
+    now = (now or datetime.now(timezone.utc)).astimezone(zone)
+    today = now.date()
+    latest = _latest_runs(db)
+    succeeded = _latest_runs(db, SyncRun.status == "success")
+    covering_today = _latest_runs(db, SyncRun.status == "success", SyncRun.date_from <= today, SyncRun.date_to >= today)
+    enabled = dict(db.execute(select(IntegrationSetting.provider, IntegrationSetting.is_enabled)).all())
+    hours = settings.sync_intraday_hour_list
+    intraday = [provider for provider in settings.sync_intraday_provider_list if provider in PROVIDERS]
+    next_run = next_intraday_run(now, hours) if intraday else None
+    return {
+        "now": now.isoformat(),
+        "today": today.isoformat(),
+        "timezone": settings.sync_timezone,
+        "daily_sync_hour": settings.sync_daily_hour,
+        "intraday": {
+            "hours": hours if intraday else [],
+            "providers": intraday,
+            "next_run_at": next_run.isoformat() if next_run else None,
+        },
+        "providers": [
+            {
+                "provider": provider,
+                "name": name,
+                "enabled": enabled.get(provider),
+                "intraday": provider in intraday,
+                "latest_run": _run_summary(latest.get(provider), zone),
+                "last_success": _run_summary(succeeded.get(provider), zone),
+                "today_synced_at": _local_time(covering_today[provider].finished_at, zone)
+                if provider in covering_today else None,
+            }
+            for provider, name in PROVIDERS.items()
+        ],
+    }

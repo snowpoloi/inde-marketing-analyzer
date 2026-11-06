@@ -21,7 +21,7 @@ The app never writes to Meta Ads, Google Ads, Merchant Center, OpenCart, Shoply,
 
 - `db`: PostgreSQL 16
 - `backend`: FastAPI API on port 8000 inside the Compose network
-- `worker`: daily provider sync
+- `worker`: daily provider sync of yesterday at `SYNC_DAILY_HOUR`, plus same-day syncs of today at `SYNC_INTRADAY_HOURS` for `SYNC_INTRADAY_PROVIDERS` (see [docs/detail-reports.md](docs/detail-reports.md#intraday-sync))
 - `frontend`: Nginx static frontend and `/api` reverse proxy, exposed on port 3000
 
 ## Coolify Deployment
@@ -245,8 +245,12 @@ Dashboard:
 - `GET /api/dashboard/brand-category`
 - `GET /api/dashboard/product-profitability`
 - `GET /api/dashboard/products`
+- `GET /api/dashboard/funnel`
+- `GET /api/dashboard/landing-pages`
+- `GET /api/dashboard/meta-ads`
+- `GET /api/dashboard/freshness`
 
-All dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`.
+Dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD` (except `freshness`, which takes none). The funnel, landing-page, per-ad Meta and freshness reports are described in [docs/detail-reports.md](docs/detail-reports.md).
 
 ## CSV Imports
 
@@ -291,6 +295,8 @@ Initial Alembic migration creates:
 - `sync_runs`
 - `campaign_daily_metrics`
 - `ga4_daily_metrics`
+- `ga4_funnel_daily_metrics` (migration 0018)
+- `ga4_landing_page_daily_metrics` (migration 0019)
 - `merchant_product_metrics`
 - `search_console_daily_metrics`
 - `opencart_orders`
