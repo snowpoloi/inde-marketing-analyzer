@@ -831,6 +831,9 @@ def _change_text(value: Any) -> str | None:
 def _values_differ(old_value: Any, new_value: Any) -> bool:
     if isinstance(old_value, Decimal) or isinstance(new_value, Decimal):
         return as_decimal(old_value) != as_decimal(new_value)
+    if isinstance(old_value, datetime) and isinstance(new_value, datetime):
+        # Same moment, different offset (e.g. the database returns local time): not a change.
+        return old_value != new_value
     return _change_text(old_value) != _change_text(new_value)
 
 

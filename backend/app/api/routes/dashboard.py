@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models import User
 from app.schemas.dashboard import DashboardResponse
 from app.services.detail_reports import funnel_report, landing_page_report, meta_ad_report
+from app.services.sync_service import sync_freshness
 from app.services.dashboard_service import (
     aade_document_ledger,
     aade_report,
@@ -62,6 +63,12 @@ def landing_pages(
 def meta_ads(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
     start, end = _checked_window(date_from, date_to)
     return DashboardResponse(data=meta_ad_report(db, start, end))
+
+
+@router.get("/freshness", response_model=DashboardResponse)
+def freshness(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """When each provider was last synced. Read-only, and without error text or run meta."""
+    return DashboardResponse(data=sync_freshness(db))
 
 
 @router.get("/summary", response_model=DashboardResponse)

@@ -38,6 +38,8 @@ services:
       ADVESTIQ_API_KEY_SHA256: ${ADVESTIQ_API_KEY_SHA256:-}
       SYNC_DAILY_HOUR: ${SYNC_DAILY_HOUR:-4}
       SYNC_TIMEZONE: ${SYNC_TIMEZONE:-Europe/Athens}
+      SYNC_INTRADAY_HOURS: ${SYNC_INTRADAY_HOURS-8,10,12,14,16,18,20,22}
+      SYNC_INTRADAY_PROVIDERS: ${SYNC_INTRADAY_PROVIDERS-google_ads,meta_ads,tiktok_ads,opencart,ga4}
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +77,8 @@ services:
       SUPPLIER_GMAIL_REFRESH_TOKEN: ${SUPPLIER_GMAIL_REFRESH_TOKEN:-}
       SYNC_DAILY_HOUR: ${SYNC_DAILY_HOUR:-4}
       SYNC_TIMEZONE: ${SYNC_TIMEZONE:-Europe/Athens}
+      SYNC_INTRADAY_HOURS: ${SYNC_INTRADAY_HOURS-8,10,12,14,16,18,20,22}
+      SYNC_INTRADAY_PROVIDERS: ${SYNC_INTRADAY_PROVIDERS-google_ads,meta_ads,tiktok_ads,opencart,ga4}
     depends_on:
       db:
         condition: service_healthy

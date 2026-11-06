@@ -1,6 +1,6 @@
-# Detail reports: GA4 funnel, GA4 landing pages, Meta per ad
+# Detail reports, intraday sync and data freshness
 
-Three read-only dashboard endpoints and a change to the GA4 sync.
+Four read-only dashboard endpoints (GA4 funnel, GA4 landing pages, Meta per ad, sync freshness), a change to the GA4 sync, and same-day syncs of today.
 
 ## GA4 sync
 
@@ -71,3 +71,54 @@ Reach: Meta's daily reach counts unique people per day, so it cannot be added ac
 The Merchant API sync now also reads category levels 1–5 (Google product category and product type) and custom labels 0–4. Custom labels exist only in `product_performance_view` (`product_view` has no custom-label fields), so they come from there. Category levels come from both views, and `product_view` wins when product health is enabled. They are stored in each row's `raw`, so there is no migration. The audit `feed` rows (`GET /api/dashboard/audit` → `data.feed[]`) gain `category_levels`, `product_type_levels` and `custom_labels` (`{"custom_label_0": "…"}`, empty labels left out), from the latest day of the window. Rows synced before this change show empty values. The Audit page shows them as **Category** and **Custom labels** columns.
 
 If a product's custom labels change during a day, Merchant returns two rows for it that day. Clicks and impressions per product are still summed as before.
+
+## Intraday sync
+
+The worker syncs **today** during the day, so same-day spend and orders are visible without a manual sync.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SYNC_INTRADAY_HOURS` | `8,10,12,14,16,18,20,22` | Hours in `SYNC_TIMEZONE` (Europe/Athens). Empty or `off` turns the intraday sync off. |
+| `SYNC_INTRADAY_PROVIDERS` | `google_ads,meta_ads,tiktok_ads,opencart,ga4` | Providers to sync. Empty or `off` turns it off. |
+
+Both are set on the `backend` and `worker` services in `docker-compose.yaml` and `docker-compose.yml`. The worker runs the job; the backend shows the schedule in `GET /api/dashboard/freshness`. The compose files use `${VAR-default}` (no colon), so an empty value stays empty and really turns the job off.
+
+- The 04:00 daily sync of yesterday for all providers is unchanged and re-reads yesterday in full.
+- Intraday runs have `sync_type` `intraday`, so the Sync logs keep them apart.
+- Window: today. GA4 combines it with the 3-day re-sync, so it reads today and the 2 days before.
+- Disabled integrations are left out, so they add no skipped runs every two hours.
+- The job runs with `max_instances=1, coalesce=True`. A provider whose previous run still holds its lock (e.g. a long manual sync) gets a `skipped` run with reason `provider_busy`.
+- **Repeated runs are safe.** Ad rows are deleted and re-inserted per source and date. GA4 replaces its window. OpenCart upserts orders by `order_id` and replaces their products. The order change log now compares dates as moments, so a database in a non-UTC time zone no longer logs a false `date_added` change on every re-import.
+- OpenCart intraday runs read orders only. The full product feed and the supplier XML refresh stay with the 04:00 sync.
+- **Change history.** When `google_ads` or `meta_ads` is an intraday provider, each run also queues the recent change-history window (today and the 3 days before) again once its previous run has finished, so same-day account changes show up. This costs 5 small Google Ads queries (the account time zone, then one per day) and 1–3 Meta activity pages per run. Events are de-duplicated, so re-reading only adds new changes.
+
+Extra API calls per day with the defaults (8 runs), on top of the 04:00 sync:
+
+| Provider | Per intraday run | Extra per day |
+| --- | --- | --- |
+| Google Ads | 1 report query (`search_stream`), plus 5 change-history queries | about 8 + 40 |
+| Meta | 1 insights page (up to 500 ad rows), plus 1–3 activity pages | about 8 + 8–24 |
+| TikTok | 1 report page (up to 1,000 rows) | about 8 |
+| OpenCart | 1 orders call to the shop's own endpoint (no product feed) | 8 |
+| GA4 | 3 reports (channels, funnel, landing pages) over 3 days, about 1 page each | about 24, plus their tokens (see `ga4_quota` in each run) |
+
+**Today's numbers are early and keep changing.** Google Ads can be up to about 3 hours behind, and its conversions arrive later. Meta and TikTok are usually within an hour or two. GA4 can take several hours to process a standard property, and its source attribution settles 24–48 hours later. All of them change until the day ends and after, as conversions are attributed. Use intraday numbers to see that ads are running and spending, not to judge results. The 04:00 sync replaces yesterday with fuller numbers.
+
+## `GET /api/dashboard/freshness`
+
+When each provider was last synced. No parameters. It is a `GET` dashboard route, so the read-only `X-ADVESTIQ-Key` can read it. It never returns error text or run meta, because those can contain API details.
+
+| Field | Meaning |
+| --- | --- |
+| `now`, `today`, `timezone` | Server time and today's date in the sync time zone |
+| `daily_sync_hour` | The hour of the daily sync of yesterday |
+| `intraday` | `hours`, `providers` and `next_run_at` (ISO time of the next intraday run, or `null` when off) |
+| `providers[]` | One row per provider: `provider`, `name`, `enabled` (`null` when not configured), `intraday`, `latest_run`, `last_success`, `today_synced_at` |
+| `latest_run`, `last_success` | `status`, `sync_type`, `started_at`, `finished_at`, `date_from`, `date_to`, `records_processed`, `has_error` (true when the run stored an error message, e.g. a failed GA4 landing-page report), or `null` |
+| `today_synced_at` | When the latest successful run whose window includes today finished, or `null` |
+
+Times are ISO 8601 with the offset of the sync time zone.
+
+## "Ενημέρωση σήμερα" on the ADVESTIQ page
+
+The ADVESTIQ page (admins only) shows when today's data was last synced for each intraday provider, and the time of the next automatic run. Its **Ενημέρωση σήμερα** button runs today's sync for the enabled intraday providers through the existing `POST /api/sync/run` (a manual run, with the logged-in admin's session). The `X-ADVESTIQ-Key` stays blocked from `/api/sync`.
