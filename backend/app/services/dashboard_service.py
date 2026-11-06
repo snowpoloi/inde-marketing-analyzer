@@ -695,10 +695,23 @@ def _merchant_raw_value(metric: MerchantProductMetric, key: str) -> Any:
     return product_view.get(aliases.get(key, key))
 
 
+def _merchant_labels(row: MerchantProductMetric) -> dict[str, Any]:
+    """Category paths and custom labels, stored in raw by the Merchant API sync (empty for older rows)."""
+    labels = _merchant_raw_value(row, "custom_labels")
+    return {
+        "category_levels": list(_merchant_raw_value(row, "category_levels") or []),
+        "product_type_levels": list(_merchant_raw_value(row, "product_type_levels") or []),
+        "custom_labels": {key: value for key, value in labels.items() if value} if isinstance(labels, dict) else {},
+    }
+
+
 def _merchant_metrics(db: Session, date_from: date, date_to: date) -> dict[str, dict[str, Any]]:
     metrics: dict[str, dict[str, Any]] = {}
+    # Newest day first, so the first non-empty value of each field is the latest one.
     rows = db.scalars(
-        select(MerchantProductMetric).where(_period_filter(MerchantProductMetric.metric_date, date_from, date_to))
+        select(MerchantProductMetric)
+        .where(_period_filter(MerchantProductMetric.metric_date, date_from, date_to))
+        .order_by(MerchantProductMetric.metric_date.desc())
     ).all()
     for row in rows:
         item_id = str(row.item_id or "").strip()
@@ -717,8 +730,13 @@ def _merchant_metrics(db: Session, date_from: date, date_to: date) -> dict[str, 
                 "price": dec_to_float(row.price),
                 "clicks": 0,
                 "impressions": 0,
+                "category_levels": [],
+                "product_type_levels": [],
+                "custom_labels": {},
             },
         )
+        for key, value in _merchant_labels(row).items():
+            current[key] = current[key] or value
         current["clicks"] += int(row.clicks or 0)
         current["impressions"] += int(row.impressions or 0)
         current["title"] = current["title"] or row.title

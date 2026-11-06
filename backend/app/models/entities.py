@@ -104,6 +104,42 @@ class GA4DailyMetric(TimestampMixin, Base):
     raw: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class GA4FunnelDailyMetric(TimestampMixin, Base):
+    """Purchase-funnel event counts per day, device category and channel group."""
+
+    __tablename__ = "ga4_funnel_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "event_name", "device_category", "channel_group", name="uq_ga4_funnel_daily_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    event_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_category: Mapped[str] = mapped_column(String(40), nullable=False)
+    channel_group: Mapped[str] = mapped_column(String(160), nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    users: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class GA4LandingPageDailyMetric(TimestampMixin, Base):
+    """Top landing pages per day and channel group, with click IDs removed from the query string."""
+
+    __tablename__ = "ga4_landing_page_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "landing_page", "channel_group", name="uq_ga4_landing_page_daily_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    landing_page: Mapped[str] = mapped_column(String(1000), nullable=False)
+    channel_group: Mapped[str] = mapped_column(String(160), nullable=False)
+    sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    engaged_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    add_to_carts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    purchases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    purchase_revenue: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+
+
 class MerchantProductMetric(TimestampMixin, Base):
     __tablename__ = "merchant_product_metrics"
 

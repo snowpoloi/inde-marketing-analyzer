@@ -2,7 +2,7 @@ import csv
 import io
 import re
 import unicodedata
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -14,6 +14,8 @@ from app.models import (
     AADESummaryMetric,
     CampaignDailyMetric,
     GA4DailyMetric,
+    GA4FunnelDailyMetric,
+    GA4LandingPageDailyMetric,
     MerchantProductMetric,
     OpenCartOrder,
     OpenCartOrderChange,
@@ -510,9 +512,22 @@ def import_tiktok_ads_csv(db: Session, text: str, fallback_date: date) -> int:
     return import_tiktok_ads_rows(db, rows, fallback_date)
 
 
-def import_ga4_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date) -> int:
-    touched_dates = {as_date(row.get("date"), fallback_date) for row in rows} or {fallback_date}
-    db.execute(delete(GA4DailyMetric).where(GA4DailyMetric.metric_date.in_(touched_dates)))
+def _ga4_days_to_replace(rows: list[dict[str, Any]], date_from: date, date_to: date | None) -> set[date]:
+    """Days whose stored rows a GA4 import replaces: the whole synced window, so a day that GA4 now
+    reports with fewer rows (or none) loses its stale rows too."""
+    touched = {as_date(row.get("date"), date_from) for row in rows}
+    if date_to is None:
+        return touched or {date_from}
+    return touched | {date_from + timedelta(days=offset) for offset in range((date_to - date_from).days + 1)}
+
+
+def _ga4_label(value: Any, max_length: int) -> str:
+    return (str(value or "").strip() or "(not set)")[:max_length]
+
+
+def import_ga4_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date, date_to: date | None = None) -> int:
+    replaced_days = _ga4_days_to_replace(rows, fallback_date, date_to)
+    db.execute(delete(GA4DailyMetric).where(GA4DailyMetric.metric_date.in_(replaced_days)))
     for row in rows:
         db.add(
             GA4DailyMetric(
@@ -529,6 +544,60 @@ def import_ga4_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date
         )
     db.commit()
     return len(rows)
+
+
+def import_ga4_funnel_rows(db: Session, rows: list[dict[str, Any]], date_from: date, date_to: date) -> int:
+    replaced_days = _ga4_days_to_replace(rows, date_from, date_to)
+    db.execute(delete(GA4FunnelDailyMetric).where(GA4FunnelDailyMetric.metric_date.in_(replaced_days)))
+    latest: dict[tuple[date, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            as_date(row.get("date"), date_from),
+            _ga4_label(row.get("event_name"), 64),
+            _ga4_label(row.get("device_category"), 40),
+            _ga4_label(row.get("channel_group"), 160),
+        )
+        latest[key] = row
+    for (metric_date, event_name, device_category, channel_group), row in latest.items():
+        db.add(
+            GA4FunnelDailyMetric(
+                metric_date=metric_date,
+                event_name=event_name,
+                device_category=device_category,
+                channel_group=channel_group,
+                event_count=as_int(row.get("event_count")),
+                users=as_int(row.get("users")),
+            )
+        )
+    db.commit()
+    return len(latest)
+
+
+def import_ga4_landing_page_rows(db: Session, rows: list[dict[str, Any]], date_from: date, date_to: date) -> int:
+    replaced_days = _ga4_days_to_replace(rows, date_from, date_to)
+    db.execute(delete(GA4LandingPageDailyMetric).where(GA4LandingPageDailyMetric.metric_date.in_(replaced_days)))
+    merged: dict[tuple[date, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            as_date(row.get("date"), date_from),
+            _ga4_label(row.get("landing_page"), 1000),
+            _ga4_label(row.get("channel_group"), 160),
+        )
+        values = merged.setdefault(
+            key,
+            {"sessions": 0, "engaged_sessions": 0, "add_to_carts": 0, "purchases": 0, "purchase_revenue": Decimal("0")},
+        )
+        for field in ("sessions", "engaged_sessions", "add_to_carts", "purchases"):
+            values[field] += as_int(row.get(field))
+        values["purchase_revenue"] += as_decimal(row.get("purchase_revenue"))
+    for (metric_date, landing_page, channel_group), values in merged.items():
+        db.add(
+            GA4LandingPageDailyMetric(
+                metric_date=metric_date, landing_page=landing_page, channel_group=channel_group, **values
+            )
+        )
+    db.commit()
+    return len(merged)
 
 
 def import_merchant_rows(db: Session, rows: list[dict[str, Any]], fallback_date: date) -> int:

@@ -54,6 +54,18 @@ function syncDetails(row: SyncRun) {
   if (meta.ga4_purchase_revenue !== undefined) {
     details.push(`GA4 revenue: ${currency.format(Number(meta.ga4_purchase_revenue) || 0)}`);
   }
+  if (meta.ga4_funnel_rows !== undefined) {
+    details.push(`Funnel rows: ${number.format(Number(meta.ga4_funnel_rows) || 0)}`);
+  }
+  if (meta.ga4_landing_page_rows !== undefined) {
+    details.push(`Landing page rows: ${number.format(Number(meta.ga4_landing_page_rows) || 0)}`);
+  }
+  const ga4Quota = meta.ga4_quota as Record<string, unknown> | undefined;
+  if (ga4Quota && typeof ga4Quota === "object") {
+    const left = ga4Quota.tokens_per_day_remaining;
+    details.push(`GA4 tokens: ${number.format(Number(ga4Quota.tokens_used) || 0)}`
+      + (left === null || left === undefined ? "" : ` (${number.format(Number(left) || 0)} left today)`));
+  }
   if (meta.tiktok_ads_rows !== undefined) {
     details.push(`TikTok rows: ${number.format(Number(meta.tiktok_ads_rows) || 0)}`);
   }

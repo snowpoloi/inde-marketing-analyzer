@@ -245,8 +245,11 @@ Dashboard:
 - `GET /api/dashboard/brand-category`
 - `GET /api/dashboard/product-profitability`
 - `GET /api/dashboard/products`
+- `GET /api/dashboard/funnel`
+- `GET /api/dashboard/landing-pages`
+- `GET /api/dashboard/meta-ads`
 
-All dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`.
+All dashboard routes accept `date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`. The funnel, landing-page and per-ad Meta reports are described in [docs/detail-reports.md](docs/detail-reports.md).
 
 ## CSV Imports
 
@@ -291,6 +294,8 @@ Initial Alembic migration creates:
 - `sync_runs`
 - `campaign_daily_metrics`
 - `ga4_daily_metrics`
+- `ga4_funnel_daily_metrics` (migration 0018)
+- `ga4_landing_page_daily_metrics` (migration 0019)
 - `merchant_product_metrics`
 - `search_console_daily_metrics`
 - `opencart_orders`

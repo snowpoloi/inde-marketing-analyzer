@@ -6,7 +6,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.connectors.aade import AADEConnector, AADERateLimitError
-from app.connectors.ga4 import GA4Connector
+from app.connectors.ga4 import REFRESH_DAYS as GA4_REFRESH_DAYS, GA4Connector
 from app.connectors.google_ads import GoogleAdsConnector
 from app.connectors.merchant_center import MerchantCenterConnector
 from app.connectors.meta_ads import MetaAdsConnector
@@ -20,6 +20,8 @@ from app.services.supplier_catalog_settings import queue_cost_refresh
 from app.services.constants import PROVIDERS, READ_ONLY_NOTICE
 from app.services.import_service import (
     import_aade_payload,
+    import_ga4_funnel_rows,
+    import_ga4_landing_page_rows,
     import_ga4_rows,
     import_google_ads_rows,
     import_merchant_rows,
@@ -103,6 +105,41 @@ def ga4_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int | float]:
         "ga4_purchases": _json_number(purchases),
         "ga4_purchase_revenue": _json_number(revenue),
     }
+
+
+def ga4_sync_window(date_from: date, date_to: date) -> tuple[date, date]:
+    """GA4 attributes sources 24-48 hours late, so every GA4 sync re-reads at least the last
+    REFRESH_DAYS days up to date_to and replaces what was stored for them."""
+    return min(date_from, date_to - timedelta(days=GA4_REFRESH_DAYS - 1)), date_to
+
+
+def sync_ga4(db: Session, config: dict[str, Any], date_from: date, date_to: date) -> tuple[int, dict[str, Any], str | None]:
+    """Import GA4 channel metrics, then the funnel and landing-page reports.
+
+    The channel metrics decide success. A failed funnel or landing-page report keeps the run
+    successful but is named in the run's error and meta, and leaves that table's stored days as they were.
+    """
+    connector = GA4Connector(config)
+    rows = connector.fetch_daily_metrics(date_from, date_to)
+    count = import_ga4_rows(db, rows, date_from, date_to)
+    meta: dict[str, Any] = {**ga4_sync_meta(rows), "ga4_refresh_days": GA4_REFRESH_DAYS}
+    errors = []
+    for name, label, fetch, store in (
+        ("funnel", "funnel", connector.fetch_funnel_events, import_ga4_funnel_rows),
+        ("landing_page", "landing pages", connector.fetch_landing_pages, import_ga4_landing_page_rows),
+    ):
+        try:
+            stored = store(db, fetch(date_from, date_to), date_from, date_to)
+        except Exception as exc:
+            db.rollback()
+            message = redact_sensitive(str(exc)) or exc.__class__.__name__
+            meta[f"ga4_{name}_error"] = message
+            errors.append(f"GA4 {label} report failed: {message}")
+        else:
+            meta[f"ga4_{name}_rows"] = stored
+            count += stored
+    meta["ga4_quota"] = dict(connector.quota)
+    return count, meta, "; ".join(errors) or None
 
 
 def merchant_sync_meta(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -266,6 +303,8 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
     window_from, window_to = default_sync_window()
     date_from = date_from or window_from
     date_to = date_to or window_to
+    if provider == "ga4":
+        date_from, date_to = ga4_sync_window(date_from, date_to)
     run = start_run(db, provider, sync_type, date_from, date_to)
     integration = get_integration(db, provider)
     if not integration or not integration.is_enabled:
@@ -274,6 +313,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
     try:
         config = integration.config or {}
         meta = None
+        partial_error = None
         if provider == "opencart":
             connector = OpenCartConnector(config)
             product_count = 0
@@ -312,9 +352,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
             count = import_tiktok_ads_rows(db, rows, date_from)
             meta = tiktok_ads_sync_meta(rows)
         elif provider == "ga4":
-            rows = GA4Connector(config).fetch_daily_metrics(date_from, date_to)
-            count = import_ga4_rows(db, rows, date_from)
-            meta = ga4_sync_meta(rows)
+            count, meta, partial_error = sync_ga4(db, config, date_from, date_to)
         elif provider == "merchant_center":
             rows = MerchantCenterConnector(config).fetch_product_metrics(date_from, date_to)
             count = import_merchant_rows(db, rows, date_from)
@@ -384,7 +422,7 @@ def _run_provider_sync(db, provider, date_from, date_to, sync_type):
                     SupplierCatalogFeed.status != "running").values(
                         requested_at=datetime.now(timezone.utc), status="queued", error=None))
                 meta["supplier_xml_refresh_queued"] = True
-        return finish_run(db, run, "success", count, meta=meta)
+        return finish_run(db, run, "success", count, error=partial_error, meta=meta)
     except Exception as exc:
         db.rollback()
         run = db.get(SyncRun, run.id)

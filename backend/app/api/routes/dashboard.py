@@ -1,13 +1,14 @@
 from datetime import date, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import User
 from app.schemas.dashboard import DashboardResponse
+from app.services.detail_reports import funnel_report, landing_page_report, meta_ad_report
 from app.services.dashboard_service import (
     aade_document_ledger,
     aade_report,
@@ -29,6 +30,38 @@ def _window(date_from: date | None, date_to: date | None) -> tuple[date, date]:
     end = date_to or date.today()
     start = date_from or end - timedelta(days=30)
     return start, end
+
+
+def _checked_window(date_from: date | None, date_to: date | None) -> tuple[date, date]:
+    start, end = _window(date_from, date_to)
+    if start > end:
+        raise HTTPException(status_code=400, detail="date_from must be on or before date_to.")
+    return start, end
+
+
+@router.get("/funnel", response_model=DashboardResponse)
+def funnel(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _checked_window(date_from, date_to)
+    return DashboardResponse(data=funnel_report(db, start, end))
+
+
+@router.get("/landing-pages", response_model=DashboardResponse)
+def landing_pages(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+    channel_group: str | None = Query(None, max_length=160),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    start, end = _checked_window(date_from, date_to)
+    return DashboardResponse(data=landing_page_report(db, start, end, limit=limit, channel_group=channel_group))
+
+
+@router.get("/meta-ads", response_model=DashboardResponse)
+def meta_ads(date_from: date | None = None, date_to: date | None = None, _: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    start, end = _checked_window(date_from, date_to)
+    return DashboardResponse(data=meta_ad_report(db, start, end))
 
 
 @router.get("/summary", response_model=DashboardResponse)

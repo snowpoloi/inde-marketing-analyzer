@@ -4,6 +4,28 @@ from typing import Any
 CONTENT_SCOPE = "https://www.googleapis.com/auth/content"
 MERCHANT_API_BASE = "https://merchantapi.googleapis.com"
 
+LEVELS = range(1, 6)
+CUSTOM_LABELS = range(5)
+CATEGORY_FIELDS = ",\n              ".join(
+    [f"category_l{level}" for level in LEVELS] + [f"product_type_l{level}" for level in LEVELS]
+)
+# Custom labels exist only in product_performance_view; product_view has no custom label fields.
+CUSTOM_LABEL_FIELDS = ",\n              ".join(f"custom_label{index}" for index in CUSTOM_LABELS)
+
+
+def category_details(view: dict[str, Any]) -> dict[str, Any]:
+    """Google product category and product type paths (levels 1-5, empty levels dropped)."""
+    details: dict[str, Any] = {}
+    for key, prefix in (("category_levels", "categoryL"), ("product_type_levels", "productTypeL")):
+        levels = [str(view[f"{prefix}{level}"]) for level in LEVELS if view.get(f"{prefix}{level}")]
+        if levels:
+            details[key] = levels
+    return details
+
+
+def custom_labels(view: dict[str, Any]) -> dict[str, str | None]:
+    return {f"custom_label_{index}": view.get(f"customLabel{index}") or None for index in CUSTOM_LABELS}
+
 
 class MerchantCenterConnector:
     def __init__(self, config: dict[str, Any]) -> None:
@@ -113,8 +135,8 @@ class MerchantCenterConnector:
               offer_id,
               title,
               brand,
-              category_l1,
-              product_type_l1,
+              {CATEGORY_FIELDS},
+              {CUSTOM_LABEL_FIELDS},
               clicks,
               impressions,
               click_through_rate
@@ -136,6 +158,8 @@ class MerchantCenterConnector:
                     "category": view.get("productTypeL1") or view.get("categoryL1"),
                     "google_product_category": view.get("categoryL1"),
                     "product_type": view.get("productTypeL1"),
+                    **category_details(view),
+                    "custom_labels": custom_labels(view),
                     "clicks": view.get("clicks"),
                     "impressions": view.get("impressions"),
                     "ctr": view.get("clickThroughRate"),
@@ -145,14 +169,13 @@ class MerchantCenterConnector:
         return rows
 
     def _fetch_product_health(self, account_id: str, *, limit: int | None = None) -> dict[str, dict[str, Any]]:
-        query = """
+        query = f"""
             SELECT
               id,
               offer_id,
               title,
               brand,
-              category_l1,
-              product_type_l1,
+              {CATEGORY_FIELDS},
               availability,
               price,
               aggregated_reporting_context_status,
@@ -175,6 +198,8 @@ class MerchantCenterConnector:
                 "category": view.get("productTypeL1") or view.get("categoryL1"),
                 "google_product_category": view.get("categoryL1"),
                 "product_type": view.get("productTypeL1"),
+                # Only non-empty paths are set, so merging health into a performance row never blanks them.
+                **category_details(view),
                 "availability": view.get("availability"),
                 "price": self._price_value(view.get("price")),
                 "merchant_status": view.get("aggregatedReportingContextStatus"),
