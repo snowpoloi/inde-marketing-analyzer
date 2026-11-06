@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Date, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,6 +10,9 @@ from app.models.entities import Base, TimestampMixin
 
 class ReviewEvent(TimestampMixin, Base):
     __tablename__ = "review_events"
+    # Covers the change-history grouping, so a 93-day window never reads the wide payload rows.
+    __table_args__ = (Index("ix_review_events_changes", "occurred_at", "id",
+                            postgresql_include=["source", "actor", "evidence_type", "title"]),)
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     source_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     source: Mapped[str] = mapped_column(String(40), index=True)

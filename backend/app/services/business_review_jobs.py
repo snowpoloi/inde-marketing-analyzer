@@ -68,10 +68,17 @@ def store_event(db, *, source, occurred_at, title, evidence_type, actor=None,
                                         ensure_ascii=False, sort_keys=True)
     key = hashlib.sha256(f"{source}:{evidence_type}:{identity}".encode()).hexdigest()
     return int(db.scalar(insert(ReviewEvent).values(source_key=key, source=source,
-        occurred_at=occurred_at, title=sanitize_evidence(title)[:500], evidence_type=evidence_type,
-        actor=sanitize_evidence(actor), object_id=object_id, detail=sanitize_evidence(detail),
+        occurred_at=occurred_at, title=clip_bytes(sanitize_evidence(title)[:500], 1000), evidence_type=evidence_type,
+        actor=clip_bytes(sanitize_evidence(actor), 500), object_id=object_id, detail=sanitize_evidence(detail),
         reference_url=sanitize_evidence(reference_url), payload=safe_payload).on_conflict_do_nothing(
             index_elements=["source_key"]).returning(ReviewEvent.id)) is not None)
+
+
+def clip_bytes(value, limit):
+    """Title and actor are part of ix_review_events_changes, whose entries must stay under ~2.7 kB."""
+    if not isinstance(value, str) or len(value.encode("utf-8")) <= limit:
+        return value
+    return value.encode("utf-8")[:limit].decode("utf-8", "ignore")
 
 
 def sanitize_evidence(value):

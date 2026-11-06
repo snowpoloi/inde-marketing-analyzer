@@ -1,9 +1,20 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { RefreshCw, Zap } from "lucide-react";
 import { api } from "../api/client";
 import type { AdvestiqReport, AdvestiqReportKind, AdvestiqReportSummary, SyncFreshness } from "../api/client";
 import { MarkdownView } from "../components/MarkdownView";
 import "../styles/advestiq.css";
+
+// Loaded when the tab opens, so the main bundle stays as small as before.
+const AdvestiqProposals = lazy(() => import("../components/AdvestiqProposals").then((module) => ({ default: module.AdvestiqProposals })));
+
+type Tab = AdvestiqReportKind | "proposals";
+
+// #advestiq/proposals opens the proposals tab, #advestiq/proposals/P-009 one proposal.
+function linkedProposal() {
+  const match = /^#advestiq\/proposals(?:\/([A-Za-z0-9-]+))?$/.exec(window.location.hash);
+  return match ? { tab: "proposals" as const, code: match[1]?.toUpperCase() } : null;
+}
 
 const dateLabel = new Intl.DateTimeFormat("el-GR", { weekday: "short", day: "numeric", month: "numeric", year: "numeric" });
 
@@ -22,7 +33,9 @@ function todayProviders(freshness: SyncFreshness | null) {
 }
 
 export function AdvestiqPage() {
-  const [kind, setKind] = useState<AdvestiqReportKind>("daily");
+  const [linked] = useState(linkedProposal);
+  const [kind, setKind] = useState<Tab>(linked?.tab ?? "daily");
+  const [proposalsReload, setProposalsReload] = useState(0);
   const [rows, setRows] = useState<AdvestiqReportSummary[]>([]);
   const [selected, setSelected] = useState<AdvestiqReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,8 +100,18 @@ export function AdvestiqPage() {
   }
 
   useEffect(() => {
-    void load(kind);
+    if (kind !== "proposals") void load(kind);
   }, [kind]);
+
+  // Keeps the address in step with the tab, without a new history entry.
+  function showProposal(code: string | null) {
+    window.history.replaceState(null, "", code ? `#advestiq/proposals/${code}` : "#advestiq/proposals");
+  }
+
+  function switchTab(next: Tab) {
+    setKind(next);
+    window.history.replaceState(null, "", next === "proposals" ? "#advestiq/proposals" : "#advestiq");
+  }
 
   useEffect(() => {
     void loadFreshness();
@@ -101,14 +124,16 @@ export function AdvestiqPage() {
       <header className="page-header">
         <div>
           <h1>ADVESTIQ</h1>
-          <p>Οι αναφορές του διαφημιστικού γραφείου. Μόνο ανάγνωση και προτάσεις, καμία αλλαγή στους λογαριασμούς.</p>
+          <p>Οι αναφορές και οι προτάσεις του διαφημιστικού γραφείου. Μόνο ανάγνωση, καμία αλλαγή στους λογαριασμούς.</p>
         </div>
         <div className="advestiq-actions">
           <div className="advestiq-kinds">
-            <button className={kind === "daily" ? "active" : ""} onClick={() => setKind("daily")}>Πρωινές</button>
-            <button className={kind === "weekly" ? "active" : ""} onClick={() => setKind("weekly")}>Εβδομαδιαίες</button>
+            <button className={kind === "daily" ? "active" : ""} onClick={() => switchTab("daily")}>Πρωινές</button>
+            <button className={kind === "weekly" ? "active" : ""} onClick={() => switchTab("weekly")}>Εβδομαδιαίες</button>
+            <button className={kind === "proposals" ? "active" : ""} onClick={() => switchTab("proposals")}>Προτάσεις</button>
           </div>
-          <button onClick={() => void load(kind)} disabled={loading}><RefreshCw size={16} />Ανανέωση</button>
+          <button onClick={() => (kind === "proposals" ? setProposalsReload((value) => value + 1) : void load(kind))}
+            disabled={loading}><RefreshCw size={16} />Ανανέωση</button>
           <button onClick={() => void syncToday()} disabled={syncing || !freshness || sources.length === 0}
             title="Φέρνει τα σημερινά νούμερα από διαφημίσεις, παραγγελίες και GA4.">
             <Zap size={16} />{syncing ? "Ενημέρωση…" : "Ενημέρωση σήμερα"}
@@ -122,8 +147,12 @@ export function AdvestiqPage() {
         </p>
       ) : null}
       {syncNotice ? <div className="notice" role="status">{syncNotice}</div> : null}
-      {error ? <div className="notice">{error}</div> : null}
-      <div className="advestiq-layout">
+      {error && kind !== "proposals" ? <div className="notice">{error}</div> : null}
+      {kind === "proposals" ? (
+        <Suspense fallback={<p className="advestiq-empty">Φόρτωση…</p>}>
+          <AdvestiqProposals reloadKey={proposalsReload} initialCode={linked?.code} onOpen={showProposal} />
+        </Suspense>
+      ) : <div className="advestiq-layout">
         <aside className="advestiq-list panel">
           {rows.length === 0 && !loading ? <p className="advestiq-empty">Δεν υπάρχουν ακόμα αναφορές.</p> : null}
           {rows.map((row) => (
@@ -137,7 +166,7 @@ export function AdvestiqPage() {
         <article className="advestiq-report panel">
           {selected ? <MarkdownView source={selected.markdown} /> : <p className="advestiq-empty">Διάλεξε μια αναφορά.</p>}
         </article>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { api, clearToken } from "./api/client";
 import { Layout } from "./components/Layout";
 import { AadePage } from "./pages/AadePage";
@@ -20,12 +20,16 @@ import { BusinessReviewPage } from "./pages/BusinessReviewPage";
 import { PromotionsPage } from "./pages/PromotionsPage";
 import { AdvestiqPage } from "./pages/AdvestiqPage";
 
-type View = "dashboard" | "advestiq" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+// Loaded on first use, so the main bundle stays as small as before.
+const ChangeHistoryPage = lazy(() => import("./pages/ChangeHistoryPage").then((module) => ({ default: module.ChangeHistoryPage })));
+
+type View = "dashboard" | "advestiq" | "changes" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "").split("/")[0];
   if (
     hash === "advestiq" ||
+    hash === "changes" ||
     hash === "audit" ||
     hash === "business-review" ||
     hash === "promotions" ||
@@ -95,6 +99,9 @@ export function App() {
       {view === "dashboard" ? <DashboardPage /> : null}
       {view === "audit" ? <AuditPage /> : null}
       {view === "advestiq" ? (isAdmin ? <AdvestiqPage /> : <div className="notice">Admin access required.</div>) : null}
+      {view === "changes" ? (isAdmin ? (
+        <Suspense fallback={<div className="notice">Φόρτωση…</div>}><ChangeHistoryPage /></Suspense>
+      ) : <div className="notice">Admin access required.</div>) : null}
       {view === "business-review" ? (isAdmin ? <BusinessReviewPage /> : <div className="notice">Admin access required.</div>) : null}
       {view === "promotions" ? (isAdmin ? <PromotionsPage /> : <div className="notice">Admin access required.</div>) : null}
       {recordMatch ? <RecordDetailPage kind={view === "aade" ? "invoice" : "order"} id={recordMatch[2]} onBack={()=>navigate(view)}/> : null}

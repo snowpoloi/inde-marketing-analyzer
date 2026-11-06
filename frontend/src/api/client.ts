@@ -1,6 +1,14 @@
 import type { ShippingContext, ShippingInputs, ShippingParcel, ShippingResult, ShippingSettings } from "./orderShipping";
 import type { BusinessReview, ReviewEvidence, ReviewJobs, ReviewParameters } from "./businessReview";
 import type { PromotionCampaign, PromotionCampaignSummary, PromotionFormat, PromotionInput, PromotionPriceCheck, PromotionProduct, PromotionReview } from "./promotions";
+import type { Proposal, ProposalFilter, ProposalList, ProposalNote, ProposalStatus } from "./proposals";
+import type { ChangeHistory, ChangeQuery } from "./changes";
+
+// Only the parameters that are set, as text.
+function queryString(values: Record<string, string | number | boolean | undefined>) {
+  return new URLSearchParams(Object.entries(values).filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => [key, String(value)])).toString();
+}
 
 export type SupplierCatalogFeed = {
   id: string; code: string; name: string; adapter: string; configured: boolean;
@@ -573,6 +581,16 @@ export const api = {
     request<{data:{rows:AdvestiqReportSummary[]}}>(`/advestiq/reports?${new URLSearchParams({kind})}`),
   advestiqReport: (id: string) => request<{data:AdvestiqReport}>(`/advestiq/reports/${encodeURIComponent(id)}`),
   syncFreshness: () => request<{data:SyncFreshness}>("/dashboard/freshness"),
+  advestiqProposals: (filter: ProposalFilter = {}) =>
+    request<{data:ProposalList}>(`/advestiq/proposals?${queryString(filter)}`),
+  advestiqProposal: (code: string) => request<{data:Proposal}>(`/advestiq/proposals/${encodeURIComponent(code)}`),
+  setAdvestiqProposalStatus: (code: string, status: ProposalStatus, note = "") =>
+    request<{data:Proposal}>(`/advestiq/proposals/${encodeURIComponent(code)}/status`,
+      {method:"PATCH", body:JSON.stringify({status, note})}),
+  addAdvestiqProposalNote: (code: string, text: string) =>
+    request<{data:ProposalNote}>(`/advestiq/proposals/${encodeURIComponent(code)}/notes`,
+      {method:"POST", body:JSON.stringify({text})}),
+  changeHistory: (query: ChangeQuery) => request<ChangeHistory>(`/business-review/changes?${queryString(query)}`),
   reviewReport: (id:string) => request<BusinessReview>(`/business-review/reports/${encodeURIComponent(id)}`),
   pendingSupplierCosts: (filters: Record<string, string>) => request<{data: PendingCostResult}>(`/suppliers/aade/pending-costs?${new URLSearchParams(filters)}`),
   confirmSupplierCostLine: (id: string, payload: ConfirmCostLine) => request<{data:{duplicate:boolean; costs_created:number; pending_lines:number}}>(
