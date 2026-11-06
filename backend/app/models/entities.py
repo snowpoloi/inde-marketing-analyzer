@@ -140,6 +140,137 @@ class GA4LandingPageDailyMetric(TimestampMixin, Base):
     purchase_revenue: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
 
 
+class GoogleAdsDetailMetricsMixin:
+    """Google Ads results as reported by Google Ads (platform conversions, not OpenCart orders)."""
+
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    clicks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    conversions: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    conversion_value: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+
+
+class GoogleAdsSearchTermDailyMetric(GoogleAdsDetailMetricsMixin, TimestampMixin, Base):
+    """The costliest search terms per day: Search and Shopping per ad group, Performance Max per campaign."""
+
+    __tablename__ = "google_ads_search_term_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "campaign_id", "ad_group_id", "search_term", "match_type",
+                         name="uq_google_ads_search_term_daily_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    campaign_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    campaign_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    campaign_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Empty for Performance Max: its search terms are reported per campaign, without an ad group.
+    ad_group_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    ad_group_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    search_term: Mapped[str] = mapped_column(String(500), nullable=False)
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # ADDED, EXCLUDED, ADDED_EXCLUDED or NONE (Search and Shopping only).
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class GoogleAdsProductDailyMetric(GoogleAdsDetailMetricsMixin, TimestampMixin, Base):
+    """The costliest Shopping and Performance Max product rows per day and campaign."""
+
+    __tablename__ = "google_ads_product_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "campaign_id", "item_id", name="uq_google_ads_product_daily_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    campaign_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    campaign_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    campaign_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    item_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    brand: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_label_0: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_label_1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_label_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_label_3: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_label_4: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class GoogleAdsAssetGroupDailyMetric(GoogleAdsDetailMetricsMixin, TimestampMixin, Base):
+    """Performance Max results per asset group and day."""
+
+    __tablename__ = "google_ads_asset_group_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("metric_date", "asset_group_id", name="uq_google_ads_asset_group_daily_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    campaign_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    campaign_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    asset_group_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    asset_group_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class MerchantProductStatus(TimestampMixin, Base):
+    """Latest Merchant Center approval status per product and destination (reporting context).
+
+    Replaced by every status sync. A product without destination statuses has one row with an empty
+    reporting_context and status "unknown", so every product of the snapshot is counted.
+    """
+
+    __tablename__ = "merchant_product_statuses"
+    __table_args__ = (
+        UniqueConstraint("offer_id", "feed_label", "content_language", "reporting_context",
+                         name="uq_merchant_product_status_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    offer_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    feed_label: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_language: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reporting_context: Mapped[str] = mapped_column(String(64), nullable=False)
+    # approved, pending, disapproved, partly_disapproved (approved in some countries) or unknown.
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    approved_countries: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    pending_countries: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    disapproved_countries: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    # First snapshot with this status; kept while the status stays the same.
+    status_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MerchantProductIssue(TimestampMixin, Base):
+    """Latest item-level Merchant Center issues per product. Replaced by every status sync."""
+
+    __tablename__ = "merchant_product_issues"
+    __table_args__ = (
+        UniqueConstraint("offer_id", "feed_label", "content_language", "code", "reporting_context", "attribute",
+                         name="uq_merchant_product_issue_key"),
+    )
+
+    id: Mapped[PyUUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    offer_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    feed_label: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_language: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    code: Mapped[str] = mapped_column(String(255), nullable=False)
+    # DISAPPROVED, DEMOTED or NOT_IMPACTED.
+    severity: Mapped[str] = mapped_column(String(32), nullable=False)
+    resolution: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attribute: Mapped[str] = mapped_column(String(160), nullable=False)
+    reporting_context: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    documentation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    applicable_countries: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    # First snapshot with this issue; kept while the issue stays.
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class MerchantProductMetric(TimestampMixin, Base):
     __tablename__ = "merchant_product_metrics"
 
