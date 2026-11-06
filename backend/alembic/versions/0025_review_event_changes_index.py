@@ -6,8 +6,8 @@ the wide event rows (their payload holds the full changed resource).
 """
 from alembic import op
 
-revision = "0021_review_event_changes_index"
-down_revision = "0020_advestiq_proposals"
+revision = "0025_review_event_changes_index"
+down_revision = "0024_advestiq_proposals"
 branch_labels = None
 depends_on = None
 

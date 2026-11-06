@@ -157,7 +157,7 @@ A bulk group is 50 or more changes on the same Athens day with the same source, 
 - `bulk_groups` are newest first, one per day and key, at most 1,000 (`bulk_groups_truncated`).
 - `coverage` tells, for the providers whose change history is read, how many days of the window the history jobs have read, and when they last read it. Job error texts are not returned.
 
-Speed: the grouping and the search for individual changes read only the index `ix_review_events_changes` (migration 0021), never the stored payloads. On a test database with 608,220 made-up events (93 nights of 6,500 feed rows plus 40 manual changes a day, 1.1 GB), a 30-day window answered in about 0.2 s, a 93-day window in about 0.5 s and a 93-day text search in about 0.6 s.
+Speed: the grouping and the search for individual changes read only the index `ix_review_events_changes` (migration 0025), never the stored payloads. On a test database with 608,220 made-up events (93 nights of 6,500 feed rows plus 40 manual changes a day, 1.1 GB), a 30-day window answered in about 0.2 s, a 93-day window in about 0.5 s and a 93-day text search in about 0.6 s.
 
 ### Platforms without change history
 

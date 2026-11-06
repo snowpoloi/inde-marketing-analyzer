@@ -18,7 +18,7 @@ def db():
     with engine.connect() as connection:
         transaction = connection.begin()
         session = Session(connection, autoflush=False, join_transaction_mode="create_savepoint")
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0021_review_event_changes_index"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0025_review_event_changes_index"
         yield session
         session.close()
         transaction.rollback()
