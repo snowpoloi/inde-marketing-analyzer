@@ -13,7 +13,9 @@ budgets, shop products or bank transactions are changed by this feature.
   across manual, scheduled and historical syncs.
 - `review_events` stores API change events and supporting email/manual/export
   evidence. Every event keeps its evidence type and optional source link. Secrets
-  are redacted; links with embedded credentials are rejected.
+  are redacted; links with embedded credentials are rejected. The admin page
+  `#changes` («Ιστορικό αλλαγών») and `GET /api/business-review/changes` show them
+  per Athens day, with large automated batches folded (see `docs/advestiq.md`).
 - `review_reports` stores immutable comparison snapshots. Live reports can change
   as orders are cancelled, conversions mature or cost evidence arrives.
 

@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.models import ReviewEvent, ReviewJob, ReviewReport, User
 from app.services.business_review_jobs import HISTORICAL_PROVIDERS, enqueue_history, store_event
 from app.services.business_review_service import build_review, serialize_event
+from app.services.change_history import MAX_DAYS, change_history
 
 router = APIRouter(prefix="/business-review", tags=["business-review"])
 
@@ -151,6 +152,23 @@ def events_summary(date_from: date, date_to: date, _: User = Depends(require_adm
                   if (row.source, row.actor, row.evidence_type, row.title) not in bulk_keys][:300]
     return {"date_from": date_from, "date_to": date_to, "total": len(rows), "truncated": len(rows) >= SUMMARY_SCAN_LIMIT,
             "groups": ordered, "events": individual}
+
+
+@router.get("/changes")
+def changes(date_from: date, date_to: date, source: str | None = Query(None, max_length=40),
+            actor: str | None = Query(None, max_length=255), q: str | None = Query(None, max_length=200),
+            include_bulk: bool = False, offset: int = Query(0, ge=0, le=100_000), limit: int = Query(200, ge=1, le=1000),
+            _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """The change history of one window (at most 93 Athens days), grouped in SQL.
+
+    Bulk groups (50+ rows with the same day, source, actor, type and title) are folded; the other changes are listed
+    newest first. Totals cover the whole window before the source, actor and search filters.
+    """
+    try:
+        return change_history(db, date_from, date_to, source=source or None, actor=actor or None,
+                              q=(q or "").strip() or None, include_bulk=include_bulk, offset=offset, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/events")

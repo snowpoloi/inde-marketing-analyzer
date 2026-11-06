@@ -36,12 +36,12 @@ from app.models.entities import (
     User,
 )
 
-from app.models.advestiq import AdvestiqReport
+from app.models.advestiq import AdvestiqProposal, AdvestiqProposalNote, AdvestiqReport
 from app.models.business_review import ReviewEvent, ReviewJob, ReviewReport
 from app.models.promotions import PromotionCampaign, PromotionAsset, PromotionRenderJob
 
 __all__ = [
-    "AdvestiqReport",
+    "AdvestiqProposal", "AdvestiqProposalNote", "AdvestiqReport",
     "PromotionCampaign", "PromotionAsset", "PromotionRenderJob",
     "ReviewEvent", "ReviewJob", "ReviewReport",
     "AADEDocument",

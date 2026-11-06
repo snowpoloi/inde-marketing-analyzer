@@ -3,12 +3,13 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.api.deps import get_current_user, require_admin
-from app.api.routes import advestiq, business_review
+from app.api.routes import advestiq, business_review, sync
 from app.api.routes.settings import MASK_PREFIX, mask_config, merge_masked_config
 from app.db.session import get_db
 from app.models import ReviewEvent
@@ -114,3 +115,64 @@ def test_advestiq_reports_are_replaced_per_day(db):
         assert http.get(f"/api/advestiq/reports/{created['id']}").json()["data"]["markdown"] == "# Β"
         assert http.get(f"/api/advestiq/reports/{uuid4()}").status_code == 404
         assert http.post("/api/advestiq/reports", json={**first, "markdown": ""}).status_code == 422
+
+
+# The key may write on exactly three routes. Everything it could not write before stays forbidden.
+@pytest.mark.parametrize(("method", "path", "allowed"), [
+    ("POST", "/api/advestiq/reports", True),
+    ("PUT", "/api/advestiq/proposals/P-009", True),
+    ("PUT", "/api/advestiq/proposals/d-03", True),
+    ("POST", "/api/advestiq/proposals/P-009/notes", True),
+    ("PUT", "/api/advestiq/reports", False),
+    ("DELETE", "/api/advestiq/reports", False),
+    ("PATCH", "/api/advestiq/proposals/P-009/status", False),
+    ("PUT", "/api/advestiq/proposals/P-009/status", False),
+    ("POST", "/api/advestiq/proposals/P-009/status", False),
+    ("POST", "/api/advestiq/proposals/P-009", False),
+    ("PATCH", "/api/advestiq/proposals/P-009", False),
+    ("DELETE", "/api/advestiq/proposals/P-009", False),
+    ("POST", "/api/advestiq/proposals", False),
+    ("PUT", "/api/advestiq/proposals", False),
+    ("PUT", "/api/advestiq/proposals/P-009/notes", False),
+    ("DELETE", "/api/advestiq/proposals/P-009/notes", False),
+    ("POST", "/api/advestiq/proposals/P-009/notes/1", False),
+    ("PUT", "/api/advestiq/proposals/P-009/", False),
+    ("PUT", "/api/advestiq/proposals/P-009/../../../sync/run", False),
+    ("PUT", "/api/advestiq/proposals/P%2F009", False),
+    ("PUT", "/api/advestiq/proposals/" + "P" * 21, False),
+    ("POST", "/api/advestiq/reports/extra", False),
+    ("POST", "/api/dashboard/summary", False),
+    ("POST", "/api/business-review/events", False),
+    ("POST", "/api/business-review/history", False),
+    ("PUT", "/api/settings/integrations/google_ads", False),
+    ("POST", "/api/sync/run", False),
+])
+def test_advestiq_write_rules(method, path, allowed):
+    assert deps.advestiq_may_write(method, path) is allowed
+
+
+def real_routes_with_key(monkeypatch):
+    monkeypatch.setattr(deps.settings, "advestiq_api_key_sha256", hashlib.sha256(KEY.encode()).hexdigest())
+    application = FastAPI()
+    for module in (advestiq, business_review, sync):
+        application.include_router(module.router, prefix="/api")
+    application.dependency_overrides[get_db] = lambda: None
+    http = TestClient(application)
+    http.headers[deps.ADVESTIQ_KEY_HEADER] = KEY
+    return http
+
+
+@pytest.mark.parametrize(("method", "path"), [
+    ("PATCH", "/api/advestiq/proposals/P-009/status"),
+    ("POST", "/api/business-review/events"),
+    ("POST", "/api/business-review/history"),
+    ("POST", "/api/business-review/jobs/retry"),
+    ("POST", "/api/business-review/jobs/pause"),
+    ("POST", "/api/business-review/reports"),
+    ("POST", "/api/business-review/compare"),
+    ("POST", "/api/sync/run"),
+    ("GET", "/api/sync/runs"),
+])
+def test_advestiq_key_is_refused_on_the_real_routes(monkeypatch, method, path):
+    http = real_routes_with_key(monkeypatch)
+    assert http.request(method, path, json={"status": "done"}).status_code == 403

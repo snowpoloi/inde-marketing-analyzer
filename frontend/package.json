@@ -8,6 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test:dates": "node tests/date-range.cjs",
+    "test:changes": "node tests/change-periods.cjs && node tests/change-text.cjs && node tests/proposal-email.cjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

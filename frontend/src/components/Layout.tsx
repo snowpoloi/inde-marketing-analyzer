@@ -3,6 +3,7 @@ import {
   BarChart3,
   GitCompareArrows,
   FileClock,
+  History,
   Landmark,
   ListChecks,
   LogOut,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "advestiq" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "advestiq" | "changes" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -53,6 +54,9 @@ export function Layout({
           </button>
           {isAdmin ? <button className={active === "advestiq" ? "active" : ""} onClick={() => onNavigate("advestiq")}>
             <Megaphone size={18} />ADVESTIQ
+          </button> : null}
+          {isAdmin ? <button title="Ιστορικό αλλαγών" className={active === "changes" ? "active" : ""} onClick={() => onNavigate("changes")}>
+            <History size={18} />Ιστορικό αλλαγών
           </button> : null}
           {isAdmin ? <button className={active === "business-review" ? "active" : ""} onClick={() => onNavigate("business-review")}>
             <GitCompareArrows size={18} />Business review
