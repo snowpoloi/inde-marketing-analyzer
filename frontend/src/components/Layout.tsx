@@ -6,6 +6,7 @@ import {
   Landmark,
   ListChecks,
   LogOut,
+  Megaphone,
   Clapperboard,
   PackageSearch,
   SearchCheck,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type View = "dashboard" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "advestiq" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 export function Layout({
   active,
@@ -50,6 +51,9 @@ export function Layout({
             <SearchCheck size={18} />
             Audit
           </button>
+          {isAdmin ? <button className={active === "advestiq" ? "active" : ""} onClick={() => onNavigate("advestiq")}>
+            <Megaphone size={18} />ADVESTIQ
+          </button> : null}
           {isAdmin ? <button className={active === "business-review" ? "active" : ""} onClick={() => onNavigate("business-review")}>
             <GitCompareArrows size={18} />Business review
           </button> : null}

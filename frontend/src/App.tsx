@@ -18,12 +18,14 @@ import { RecordDetailPage } from "./pages/RecordDetailPage";
 import { DateRangeProvider } from "./components/DateRangeControls";
 import { BusinessReviewPage } from "./pages/BusinessReviewPage";
 import { PromotionsPage } from "./pages/PromotionsPage";
+import { AdvestiqPage } from "./pages/AdvestiqPage";
 
-type View = "dashboard" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
+type View = "dashboard" | "advestiq" | "business-review" | "promotions" | "audit" | "aade" | "banks" | "orders" | "order-analytics" | "products" | "supplier-catalog" | "suppliers" | "settings" | "sync";
 
 function hashToView(): View {
   const hash = window.location.hash.replace("#", "").split("/")[0];
   if (
+    hash === "advestiq" ||
     hash === "audit" ||
     hash === "business-review" ||
     hash === "promotions" ||
@@ -92,6 +94,7 @@ export function App() {
     >
       {view === "dashboard" ? <DashboardPage /> : null}
       {view === "audit" ? <AuditPage /> : null}
+      {view === "advestiq" ? (isAdmin ? <AdvestiqPage /> : <div className="notice">Admin access required.</div>) : null}
       {view === "business-review" ? (isAdmin ? <BusinessReviewPage /> : <div className="notice">Admin access required.</div>) : null}
       {view === "promotions" ? (isAdmin ? <PromotionsPage /> : <div className="notice">Admin access required.</div>) : null}
       {recordMatch ? <RecordDetailPage kind={view === "aade" ? "invoice" : "order"} id={recordMatch[2]} onBack={()=>navigate(view)}/> : null}

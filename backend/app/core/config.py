@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     supplier_gmail_refresh_token: str | None = None
     supplier_gmail_auto_enabled: bool = True
     supplier_gmail_interval_minutes: int = Field(default=15, ge=5, le=1440)
+    # SHA-256 (hex) of the ADVESTIQ access key. The key itself is never stored here.
+    advestiq_api_key_sha256: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

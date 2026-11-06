@@ -1,12 +1,12 @@
 import csv
 import io
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -105,10 +105,52 @@ def pause(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     return {"paused": count}
 
 
+EVENT_TIMEZONE = ZoneInfo("Europe/Athens")
+BULK_GROUP_SIZE = 50
+SUMMARY_SCAN_LIMIT = 20000
+
+
+def _event_window(query, date_from: date | None, date_to: date | None):
+    if date_from:
+        query = query.where(ReviewEvent.occurred_at >= datetime.combine(date_from, time.min, tzinfo=EVENT_TIMEZONE))
+    if date_to:
+        query = query.where(ReviewEvent.occurred_at < datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=EVENT_TIMEZONE))
+    return query
+
+
 @router.get("/events")
-def events(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return {"rows": [serialize_event(r) for r in db.scalars(
-        select(ReviewEvent).order_by(ReviewEvent.occurred_at.desc()).limit(1000))]}
+def events(date_from: date | None = None, date_to: date | None = None, limit: int = Query(1000, ge=1, le=5000),
+           _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if date_from and date_to and date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to must not be before date_from.")
+    query = _event_window(select(ReviewEvent), date_from, date_to)
+    return {"rows": [serialize_event(r) for r in db.scalars(query.order_by(ReviewEvent.occurred_at.desc()).limit(limit))]}
+
+
+@router.get("/events/summary")
+def events_summary(date_from: date, date_to: date, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Changes per Athens day, with large automated batches (e.g. nightly feed uploads) folded into groups."""
+    if date_to < date_from or (date_to - date_from).days > 92:
+        raise HTTPException(status_code=400, detail="The window must contain between 1 and 93 days.")
+    rows = db.scalars(_event_window(select(ReviewEvent), date_from, date_to)
+                      .order_by(ReviewEvent.occurred_at.desc()).limit(SUMMARY_SCAN_LIMIT)).all()
+    groups: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row.source, row.actor, row.evidence_type, row.title)
+        group = groups.setdefault(key, {"source": row.source, "actor": row.actor, "evidence_type": row.evidence_type,
+                                        "title": row.title, "count": 0, "first": row.occurred_at, "last": row.occurred_at})
+        group["count"] += 1
+        group["first"] = min(group["first"], row.occurred_at)
+        group["last"] = max(group["last"], row.occurred_at)
+    ordered = sorted(groups.values(), key=lambda item: item["count"], reverse=True)
+    for group in ordered:
+        group["bulk"] = group["count"] >= BULK_GROUP_SIZE
+        group["first"], group["last"] = group["first"].isoformat(), group["last"].isoformat()
+    bulk_keys = {(g["source"], g["actor"], g["evidence_type"], g["title"]) for g in ordered if g["bulk"]}
+    individual = [serialize_event(row) for row in rows
+                  if (row.source, row.actor, row.evidence_type, row.title) not in bulk_keys][:300]
+    return {"date_from": date_from, "date_to": date_to, "total": len(rows), "truncated": len(rows) >= SUMMARY_SCAN_LIMIT,
+            "groups": ordered, "events": individual}
 
 
 @router.post("/events")
