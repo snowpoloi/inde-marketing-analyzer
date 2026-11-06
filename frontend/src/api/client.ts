@@ -523,6 +523,12 @@ export type ConfirmCostLine = {
   preview_confirm_missing_units: boolean; confirm_missing_units: boolean; confirm_products_and_units: boolean; remember_match: boolean;
 };
 
+export type AdvestiqReportKind = "daily" | "weekly";
+export type AdvestiqReportSummary = {
+  id: string; kind: AdvestiqReportKind; report_date: string; title: string; summary: string; updated_at: string;
+};
+export type AdvestiqReport = AdvestiqReportSummary & { markdown: string };
+
 export const api = {
   promotionProducts: (date_from:string, date_to:string, search:string, minimum_margin:number, only_eligible:boolean) =>
     request<{rows:PromotionProduct[]}>(`/promotions/products?${new URLSearchParams({date_from,date_to,search,minimum_margin:String(minimum_margin),only_eligible:String(only_eligible)})}`),
@@ -550,6 +556,9 @@ export const api = {
     return request<{created:number; duplicates:number}>("/business-review/events/import", {method:"POST",body:form}); },
   reviewSave: (payload: ReviewParameters) => request<{id:string}>("/business-review/reports", {method:"POST",body:JSON.stringify(payload)}),
   reviewReports: () => request<{rows:Array<{id:string;title:string;created_at:string}>}>("/business-review/reports"),
+  advestiqReports: (kind: AdvestiqReportKind) =>
+    request<{data:{rows:AdvestiqReportSummary[]}}>(`/advestiq/reports?${new URLSearchParams({kind})}`),
+  advestiqReport: (id: string) => request<{data:AdvestiqReport}>(`/advestiq/reports/${encodeURIComponent(id)}`),
   reviewReport: (id:string) => request<BusinessReview>(`/business-review/reports/${encodeURIComponent(id)}`),
   pendingSupplierCosts: (filters: Record<string, string>) => request<{data: PendingCostResult}>(`/suppliers/aade/pending-costs?${new URLSearchParams(filters)}`),
   confirmSupplierCostLine: (id: string, payload: ConfirmCostLine) => request<{data:{duplicate:boolean; costs_created:number; pending_lines:number}}>(

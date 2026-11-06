@@ -20,6 +20,40 @@ from app.services.seed import ensure_default_integrations
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
+# Secrets never leave the server: responses carry a masked placeholder, and a placeholder sent back
+# on save keeps the stored value.
+SECRET_KEY_PARTS = (
+    "token", "secret", "password", "api_key", "apikey", "subscription_key",
+    "credentials_json", "service_account_json", "private_key",
+)
+MASK_PREFIX = "••••"
+
+
+def is_secret_config_key(name: str) -> bool:
+    lowered = name.lower()
+    return any(part in lowered for part in SECRET_KEY_PARTS)
+
+
+def _masked(value):
+    if value in (None, "") or value == {} or value == []:
+        return value
+    if isinstance(value, str) and len(value) > 12:
+        return MASK_PREFIX + value[-4:]
+    return MASK_PREFIX
+
+
+def mask_config(config: dict | None) -> dict:
+    return {key: (_masked(value) if is_secret_config_key(key) else value) for key, value in (config or {}).items()}
+
+
+def merge_masked_config(incoming: dict | None, stored: dict | None) -> dict:
+    merged = dict(incoming or {})
+    stored = stored or {}
+    for key, value in merged.items():
+        if key in stored and is_secret_config_key(key) and isinstance(value, str) and value.startswith(MASK_PREFIX):
+            merged[key] = stored[key]
+    return merged
+
 
 def _tiktok_integration(db: Session) -> IntegrationSetting:
     integration = db.scalar(select(IntegrationSetting).where(IntegrationSetting.provider == "tiktok_ads"))
@@ -77,7 +111,7 @@ def list_integrations(_: User = Depends(require_admin), db: Session = Depends(ge
             provider=item.provider,
             display_name=item.display_name,
             is_enabled=item.is_enabled,
-            config=item.config or {},
+            config=mask_config(item.config),
         )
         for item in integrations
     ]
@@ -97,14 +131,14 @@ def update_integration(
         integration = IntegrationSetting(provider=provider, display_name=PROVIDERS[provider])
         db.add(integration)
     integration.is_enabled = payload.is_enabled
-    integration.config = payload.config
+    integration.config = merge_masked_config(payload.config, integration.config)
     db.commit()
     db.refresh(integration)
     return IntegrationSettingResponse(
         provider=integration.provider,
         display_name=integration.display_name,
         is_enabled=integration.is_enabled,
-        config=integration.config or {},
+        config=mask_config(integration.config),
     )
 
 

@@ -1,0 +1,91 @@
+.advestiq-actions,
+.advestiq-kinds {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.advestiq-kinds button.active {
+  font-weight: 600;
+  outline: 2px solid currentColor;
+}
+
+.advestiq-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.advestiq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.advestiq-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.advestiq-list button.active {
+  outline: 2px solid currentColor;
+}
+
+.advestiq-list small,
+.advestiq-empty {
+  opacity: 0.75;
+}
+
+.markdown-view {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.markdown-view h2 { margin: 0 0 12px; }
+.markdown-view h3 { margin: 24px 0 8px; }
+.markdown-view h4 { margin: 16px 0 6px; }
+.markdown-view p,
+.markdown-view ul,
+.markdown-view ol,
+.markdown-view blockquote { margin: 0 0 10px; }
+
+.markdown-view blockquote {
+  border-left: 3px solid currentColor;
+  padding-left: 12px;
+  opacity: 0.85;
+}
+
+.markdown-view pre {
+  overflow-x: auto;
+  padding: 12px;
+}
+
+.markdown-table {
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.markdown-table table {
+  border-collapse: collapse;
+  min-width: 100%;
+}
+
+.markdown-table th,
+.markdown-table td {
+  border-bottom: 1px solid rgba(127, 127, 127, 0.3);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+@media (max-width: 860px) {
+  .advestiq-layout { grid-template-columns: 1fr; }
+  .advestiq-list { max-height: none; }
+}

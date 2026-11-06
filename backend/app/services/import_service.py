@@ -371,6 +371,7 @@ def import_meta_ads_rows(db: Session, rows: list[dict[str, Any]], fallback_date:
         action_values = row.get("action_values") if isinstance(row.get("action_values"), list) else None
         purchases = as_decimal(row.get("purchases") or _action_value(actions, "purchase"))
         purchase_value = as_decimal(row.get("purchase_value") or _money_action_value(action_values, "purchase"))
+        link_clicks = as_int(row.get("link_clicks") or row.get("inline_link_clicks") or _action_value(actions, "link_click"))
         db.add(
             CampaignDailyMetric(
                 source="meta_ads",
@@ -385,7 +386,9 @@ def import_meta_ads_rows(db: Session, rows: list[dict[str, Any]], fallback_date:
                 impressions=as_int(row.get("impressions")),
                 reach=as_int(row.get("reach")),
                 frequency=as_decimal(row.get("frequency")),
-                link_clicks=as_int(row.get("link_clicks") or row.get("inline_link_clicks") or _action_value(actions, "link_click")),
+                # Reports read `clicks`; for Meta that is link clicks, like Google's clicks.
+                clicks=link_clicks or as_int(row.get("clicks")),
+                link_clicks=link_clicks,
                 landing_page_views=as_int(row.get("landing_page_views") or _action_value(actions, "landing_page_view")),
                 add_to_cart=as_int(row.get("add_to_cart") or _action_value(actions, "add_to_cart")),
                 initiate_checkout=as_int(row.get("initiate_checkout") or _action_value(actions, "initiate_checkout")),
